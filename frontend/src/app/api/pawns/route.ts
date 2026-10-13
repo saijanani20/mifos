@@ -320,15 +320,17 @@ export async function POST(request: Request) {
           const itemMg = parseFloat(item.weightMg || item.weight_mg) || 0;
           const itemAppraised = parseFloat(item.appraisedValue || item.appraised_value) || (finalAppraised / items.length);
           const subBillNo = items.length > 1 ? `${baseBill}-${idx + 1}` : baseBill;
-          const rawType = item.itemType || item.item_type || itemType || 'Gold Collateral';
-          const customText = item.customType || item.description || '';
-          const itemDescText = (rawType === 'OTHER' || rawType === 'Other') ? (customText || 'Other Gold Collateral') : customText || rawType;
+          const rawType = item.itemType || item.item_type || itemType || 'CH';
+          const is18K = item.purity === '18K' || String(item.purity || '').toUpperCase().startsWith('18');
+          const cleanCode = (rawType === 'OTHER' || rawType === 'Other') 
+            ? (item.customType || 'OTHER') 
+            : (is18K ? `18K-${rawType}` : rawType);
 
           return {
             id: crypto.randomUUID(),
             bill_no: subBillNo,
             branch_id: targetBranchId,
-            item_type: `${itemDescText} (${item.purity || '22K'})`,
+            item_type: cleanCode,
             weight: itemMg / 1000,
             price: itemAppraised,
             status: 'Active',
@@ -343,11 +345,12 @@ export async function POST(request: Request) {
     } else {
       // Single default stock item if items array is empty
       try {
+        const defaultCode = (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || 'CH');
         await adminSupabase.from('stock_items').insert([{
           id: crypto.randomUUID(),
           bill_no: baseBill,
           branch_id: targetBranchId,
-          item_type: description || 'Pawned Gold Collateral',
+          item_type: defaultCode,
           weight: finalWeightMg / 1000 || finalWeightGrams,
           price: finalAppraised,
           status: 'Active',

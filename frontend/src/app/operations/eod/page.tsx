@@ -80,17 +80,80 @@ const ITEM_TYPES = [
   { code: 'SPJ', name: 'Spring Gyspy (SPJ)' }
 ];
 
+const VALID_STOCK_CODES = new Set(ITEM_TYPES.map(it => it.code));
+
+// Helper to normalize any messy or legacy item token into standard abbreviation (e.g. EAR, PR, CH, 18K-PP)
+const normalizeItemToken = (rawToken: string): string => {
+  if (!rawToken) return "";
+  let clean = rawToken.trim();
+  if (!clean) return "";
+
+  // Check 18K / 18C prefix
+  let is18K = false;
+  if (/^18[KC][ -]/i.test(clean)) {
+    is18K = true;
+    clean = clean.replace(/^18[KC][ -]/i, '').trim();
+  }
+
+  // 1. Check parenthesized item code e.g. (EAR), (PR), (CH), (PP)
+  const paren = clean.match(/\((EAR|PR|CH|PP|NL|BRC|PB|CR|WJ|BJ|ANK|DCH|SPCH|VCH|BKT|COIN|NA|TS|SPJ|BPR)\)/i);
+  if (paren) {
+    const code = paren[1].toUpperCase();
+    return is18K ? `18K-${code}` : code;
+  }
+
+  // 2. Strip purity annotation like (22K), (20K), (24K), (9K), etc.
+  clean = clean.replace(/\s*\(\d+K\)/gi, '').trim();
+
+  // 3. Strip trailing sub-item numbering like -1, -2 or _1, _2
+  clean = clean.replace(/[-_]\d+$/g, '').trim();
+
+  // 4. Exact match of known code or code + count (e.g. EAR3, PR2)
+  const codeMatch = clean.match(/^([A-Za-z]+)(\d*)$/);
+  if (codeMatch && VALID_STOCK_CODES.has(codeMatch[1].toUpperCase())) {
+    const code = codeMatch[1].toUpperCase();
+    const count = codeMatch[2] || '';
+    return (is18K ? `18K-${code}` : code) + count;
+  }
+
+  // 5. Keyword match in English or Sinhala descriptions
+  const upper = clean.toUpperCase();
+  if (upper.includes('CHAIN') || upper.includes('මාලය')) return is18K ? '18K-CH' : 'CH';
+  if (upper.includes('BABY RING')) return is18K ? '18K-BPR' : 'BPR';
+  if (upper.includes('RING') || upper.includes('මුද්ද')) return is18K ? '18K-PR' : 'PR';
+  if (upper.includes('EAR') || upper.includes('කරාබු')) return is18K ? '18K-EAR' : 'EAR';
+  if (upper.includes('PENDANT') || upper.includes('පෙන්ඩන්ට්')) return is18K ? '18K-PP' : 'PP';
+  if (upper.includes('BRACELET') || upper.includes('බ්‍රේස්ලට්')) return is18K ? '18K-BRC' : 'BRC';
+  if (upper.includes('BANGLE') || upper.includes('වළලු') || upper.includes('වලලු')) return is18K ? '18K-PB' : 'PB';
+  if (upper.includes('NECKLACE')) return is18K ? '18K-NL' : 'NL';
+  if (upper.includes('COIN')) return is18K ? '18K-COIN' : 'COIN';
+
+  return is18K ? `18K-${clean.toUpperCase()}` : clean.toUpperCase();
+};
+
 // Helper to compress item type codes into short format (e.g., EAR, EAR, EAR -> EAR3, or 18C-PP, 18C-PP -> 18C-PP2)
 const compressItemTypeString = (str: string): string => {
   if (!str) return "";
-  const tokens = str.split(/[, ]+/).map(t => t.trim()).filter(Boolean);
-  if (tokens.length === 0) return "";
+
+  // Split primarily by comma
+  let rawTokens = str.split(',').map(s => s.trim()).filter(Boolean);
+
+  // If only 1 token and it contains multiple space-separated known codes (e.g. 'PR PR' or 'CH PP')
+  if (rawTokens.length === 1 && !rawTokens[0].includes('|') && !rawTokens[0].includes('(')) {
+    const spaceParts = rawTokens[0].split(/\s+/).filter(Boolean);
+    if (spaceParts.length > 1 && spaceParts.every(p => VALID_STOCK_CODES.has(p.replace(/\d+$/, '').toUpperCase()))) {
+      rawTokens = spaceParts;
+    }
+  }
 
   const counts: { [code: string]: number } = {};
   const order: string[] = [];
 
-  for (const token of tokens) {
-    const match = token.match(/^([A-Za-z0-9-]+?)(\d*)$/);
+  for (const token of rawTokens) {
+    const norm = normalizeItemToken(token);
+    if (!norm) continue;
+
+    const match = norm.match(/^([A-Za-z0-9-]+?)(\d*)$/);
     if (match && match[1]) {
       const baseCode = match[1].toUpperCase();
       const num = match[2] ? parseInt(match[2], 10) : 1;
@@ -100,7 +163,7 @@ const compressItemTypeString = (str: string): string => {
       }
       counts[baseCode] += num;
     } else {
-      const upperToken = token.toUpperCase();
+      const upperToken = norm.toUpperCase();
       if (!counts[upperToken]) {
         counts[upperToken] = 0;
         order.push(upperToken);
@@ -118,7 +181,10 @@ const compressItemTypeString = (str: string): string => {
 // Helper to expand compressed string (e.g. EAR3, 18C-PP2) into array of individual item objects
 const expandItemTypeCodes = (str: string): Array<{ id: string, code: string }> => {
   if (!str) return [];
-  const tokens = str.split(/[, ]+/).map(t => t.trim()).filter(Boolean);
+  const compressed = compressItemTypeString(str);
+  if (!compressed) return [];
+
+  const tokens = compressed.split(',').map(t => t.trim()).filter(Boolean);
   const result: Array<{ id: string, code: string }> = [];
 
   for (const token of tokens) {
