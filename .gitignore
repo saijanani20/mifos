@@ -60,3 +60,6 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# Local runtime data
+data/

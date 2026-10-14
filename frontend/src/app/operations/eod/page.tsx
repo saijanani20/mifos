@@ -429,6 +429,8 @@ function EndOfDayContent() {
   const [stockCustomers, setStockCustomers] = useState<any[]>([]);
   const [showBillCustomerModal, setShowBillCustomerModal] = useState(false);
   const [selectedBillForCustomerView, setSelectedBillForCustomerView] = useState<string | null>(null);
+  const [selectedBranchForCustomerView, setSelectedBranchForCustomerView] = useState<string | null>(null);
+  const [selectedStockItemForCustomerView, setSelectedStockItemForCustomerView] = useState<any | null>(null);
 
   // Bill Item Image States
   const [billImages, setBillImages] = useState<Record<string, string>>({});
@@ -455,6 +457,7 @@ function EndOfDayContent() {
   const [interestDate, setInterestDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [interestValue, setInterestValue] = useState<string>("");
   const [interestBranch, setInterestBranch] = useState<string>("DMT");
+  const [interestItemId, setInterestItemId] = useState<string>("");
   const [interestNotes, setInterestNotes] = useState<string>("");
   const [isSubmittingInterest, setIsSubmittingInterest] = useState(false);
 
@@ -463,7 +466,7 @@ function EndOfDayContent() {
       const res = await fetch('/api/stock/interest');
       if (res.ok) {
         const json = await res.json();
-        if (json.data && Array.isArray(json.data)) {
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
           setStockInterests(json.data);
           localStorage.setItem('local_stock_interests', JSON.stringify(json.data));
           return;
@@ -474,7 +477,12 @@ function EndOfDayContent() {
     }
     const local = localStorage.getItem('local_stock_interests');
     if (local) {
-      try { setStockInterests(JSON.parse(local)); } catch (e) {}
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setStockInterests(parsed);
+        }
+      } catch (e) {}
     }
   };
 
@@ -482,10 +490,19 @@ function EndOfDayContent() {
     fetchStockInterests();
   }, []);
 
-  const openAddInterestModal = (billNoStr: string) => {
+  const openAddInterestModal = (billNoStr: string, branchStr?: string, itemId?: string) => {
     setInterestDate(new Date().toISOString().split('T')[0]);
     setInterestValue("");
-    setInterestBranch(selectedBranch || "DMT");
+    const targetBranch = normalizeBranchId(
+      branchStr ||
+      selectedStockItemForCustomerView?.branch_id ||
+      selectedBranchForCustomerView ||
+      (selectedBranch !== 'ALL' ? selectedBranch : null) ||
+      currentUser?.branchId ||
+      "DMT"
+    );
+    setInterestBranch(targetBranch);
+    setInterestItemId(itemId || selectedStockItemForCustomerView?.id || "");
     setInterestNotes("");
     setShowAddInterestModal(true);
   };
@@ -503,11 +520,19 @@ function EndOfDayContent() {
     }
 
     setIsSubmittingInterest(true);
+    const targetBranch = normalizeBranchId(
+      interestBranch || 
+      selectedStockItemForCustomerView?.branch_id ||
+      selectedBranchForCustomerView || 
+      currentUser?.branchId || 
+      "DMT"
+    );
     const newEntry = {
       bill_no: selectedBillForCustomerView,
+      item_id: interestItemId || selectedStockItemForCustomerView?.id || undefined,
       date: interestDate,
       interest_value: val,
-      branch: interestBranch.toUpperCase(),
+      branch: targetBranch,
       notes: interestNotes,
       created_at: new Date().toISOString()
     };
@@ -520,7 +545,7 @@ function EndOfDayContent() {
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        toast.success(`Interest of LKR ${val.toLocaleString()} added for bill ${selectedBillForCustomerView}!`);
+        toast.success(`Interest of LKR ${val.toLocaleString()} added for bill ${selectedBillForCustomerView} (${targetBranch})!`);
         setShowAddInterestModal(false);
         setInterestValue("");
         setInterestNotes("");
@@ -530,7 +555,7 @@ function EndOfDayContent() {
         const updated = [localEntry, ...stockInterests];
         setStockInterests(updated);
         localStorage.setItem('local_stock_interests', JSON.stringify(updated));
-        toast.success(`Interest of LKR ${val.toLocaleString()} saved!`);
+        toast.success(`Interest of LKR ${val.toLocaleString()} saved for ${targetBranch}!`);
         setShowAddInterestModal(false);
         setInterestValue("");
         setInterestNotes("");
@@ -1351,21 +1376,25 @@ function EndOfDayContent() {
   };
 
   // Stock Customer operations & logic
-  const getCustomerForBill = (billNo: string) => {
+  const getCustomerForBill = (billNo: string, branchStr?: string) => {
     if (!billNo) return null;
     const cleanBill = billNo.trim().toLowerCase();
-    const foundInNew = stockCustomers.find(c => {
+    const targetBranch = branchStr ? normalizeBranchId(branchStr) : null;
+
+    const matchFn = (c: any) => {
       if (!c.bill_numbers) return false;
       const bills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
-      return bills.includes(cleanBill);
-    });
+      if (!bills.includes(cleanBill)) return false;
+      if (targetBranch && (c.branch_id || c.branch)) {
+        return normalizeBranchId(c.branch_id || c.branch) === targetBranch;
+      }
+      return true;
+    };
+
+    const foundInNew = stockCustomers.find(matchFn);
     if (foundInNew) return foundInNew;
 
-    return oldStockCustomers.find(c => {
-      if (!c.bill_numbers) return false;
-      const bills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
-      return bills.includes(cleanBill);
-    });
+    return oldStockCustomers.find(matchFn);
   };
 
   const handleAddBillPrefix = (prefix: string) => {
@@ -2423,81 +2452,85 @@ function EndOfDayContent() {
           </div>
 
           {/* Filtering, Search & Add Section */}
-          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 lg:p-5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
             
-            {/* Filter Toggle Buttons */}
-            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full md:w-fit shrink-0 gap-1">
-              <button 
-                onClick={() => setStockFilter('Active')}
-                className={cn(
-                  "flex-1 md:flex-initial px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
-                  stockFilter === 'Active' ? "bg-white text-slate-900 shadow-sm font-bold" : "text-slate-500 hover:text-slate-800"
-                )}
-              >
-                Active Vault Stock ({totalActiveCount})
-              </button>
-              <button 
-                onClick={() => setStockFilter('Withdrawn')}
-                className={cn(
-                  "flex-1 md:flex-initial px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
-                  stockFilter === 'Withdrawn' ? "bg-white text-slate-900 shadow-sm font-bold" : "text-slate-500 hover:text-slate-800"
-                )}
-              >
-                Withdrawn ({stockItems.filter(item => isItemWithdrawnOrRedeemed(item)).length})
-              </button>
-              <button 
-                onClick={() => setStockFilter('OldData')}
-                className={cn(
-                  "flex-1 md:flex-initial px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-1.5",
-                  stockFilter === 'OldData' 
-                    ? "bg-amber-500 text-white shadow-sm shadow-amber-500/20 font-bold" 
-                    : "text-amber-800 bg-amber-50/80 hover:bg-amber-100/80 border border-amber-200/50"
-                )}
-              >
-                <span>Old Data</span>
-                <span className={cn(
-                  "px-1.5 py-0.5 rounded text-[9px] font-black",
-                  stockFilter === 'OldData' ? "bg-amber-600 text-white" : "bg-amber-200/80 text-amber-900"
-                )}>
-                  {totalOldCount}
-                </span>
-              </button>
+            {/* Left Controls: Filter Toggles & Branch Selector */}
+            <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+              {/* Filter Toggle Buttons */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-fit shrink-0 gap-1">
+                <button 
+                  onClick={() => setStockFilter('Active')}
+                  className={cn(
+                    "flex-1 sm:flex-initial px-4 lg:px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap",
+                    stockFilter === 'Active' ? "bg-white text-slate-900 shadow-sm font-bold" : "text-slate-500 hover:text-slate-800"
+                  )}
+                >
+                  Active Vault Stock ({totalActiveCount})
+                </button>
+                <button 
+                  onClick={() => setStockFilter('Withdrawn')}
+                  className={cn(
+                    "flex-1 sm:flex-initial px-4 lg:px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap",
+                    stockFilter === 'Withdrawn' ? "bg-white text-slate-900 shadow-sm font-bold" : "text-slate-500 hover:text-slate-800"
+                  )}
+                >
+                  Withdrawn ({stockItems.filter(item => isItemWithdrawnOrRedeemed(item)).length})
+                </button>
+                <button 
+                  onClick={() => setStockFilter('OldData')}
+                  className={cn(
+                    "flex-1 sm:flex-initial px-4 lg:px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap",
+                    stockFilter === 'OldData' 
+                      ? "bg-amber-500 text-white shadow-sm shadow-amber-500/20 font-bold" 
+                      : "text-amber-800 bg-amber-50/80 hover:bg-amber-100/80 border border-amber-200/50"
+                  )}
+                >
+                  <span>Old Data</span>
+                  <span className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-black",
+                    stockFilter === 'OldData' ? "bg-amber-600 text-white" : "bg-amber-200/80 text-amber-900"
+                  )}>
+                    {totalOldCount}
+                  </span>
+                </button>
+              </div>
+
+              {/* Branch Selector for Admin */}
+              {currentUser?.role === 'ADMIN' && (
+                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto shrink-0">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 pl-2 whitespace-nowrap">Branch:</span>
+                  <Select value={selectedBranch} onValueChange={(val) => val && setSelectedBranch(val)}>
+                    <SelectTrigger className="h-8 w-44 bg-white border-slate-200 rounded-lg font-bold text-xs shadow-sm">
+                      <SelectValue placeholder="All Branches" />
+                    </SelectTrigger>
+                    <SelectContent className="glass max-h-48 overflow-y-auto">
+                      <SelectItem value="ALL" className="font-semibold text-xs">All Branches</SelectItem>
+                      {branches.map((b: any) => (
+                        <SelectItem key={b.id} value={b.id} className="font-semibold text-xs">{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
-            {/* Branch Selector for Admin */}
-            {currentUser?.role === 'ADMIN' && (
-              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full md:w-auto shrink-0">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 pl-2">Branch:</span>
-                <Select value={selectedBranch} onValueChange={(val) => val && setSelectedBranch(val)}>
-                  <SelectTrigger className="h-8 w-44 bg-white border-slate-200 rounded-lg font-bold text-xs shadow-sm">
-                    <SelectValue placeholder="All Branches" />
-                  </SelectTrigger>
-                  <SelectContent className="glass max-h-48 overflow-y-auto">
-                    <SelectItem value="ALL" className="font-semibold text-xs">All Branches</SelectItem>
-                    {branches.map((b: any) => (
-                      <SelectItem key={b.id} value={b.id} className="font-semibold text-xs">{b.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Search Input & Action Button */}
-            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-center">
-              <div className="relative w-full sm:w-64">
+            {/* Right Controls: Search Input & Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto justify-start xl:justify-end">
+              <div className="relative w-full sm:w-56 lg:w-64 shrink-0">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <Input 
                   placeholder="Search by Bill No or Item Code..." 
-                  className="pl-9 h-9 rounded-xl bg-slate-50 border-slate-200 font-medium"
+                  className="pl-9 h-9 rounded-xl bg-slate-50 border-slate-200 font-medium text-xs"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+
+              <div className="flex flex-wrap items-center gap-2">
                 <Button 
                   onClick={handleExportExcel}
                   variant="outline"
-                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-4 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 whitespace-nowrap"
                   title="Export Filtered Stock to Excel"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" /> Excel
@@ -2506,14 +2539,14 @@ function EndOfDayContent() {
                 <Button 
                   onClick={handleExportPDF}
                   variant="outline"
-                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-4 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 whitespace-nowrap"
                   title="Print PDF Report"
                 >
                   <Printer className="w-3.5 h-3.5 text-blue-600" /> Print
                 </Button>
 
                 {/* Normal Cache-First Reload with Auditor Force Expire check button */}
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <Button 
                     onClick={async () => {
                       if (forceExpireChecked && (currentUser?.role === 'AUDITOR' || currentUser?.role === 'ADMIN')) {
@@ -2525,7 +2558,7 @@ function EndOfDayContent() {
                     }}
                     variant="outline"
                     className={cn(
-                      "border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm transition-all",
+                      "border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm transition-all whitespace-nowrap",
                       forceExpireChecked && "border-amber-400 bg-amber-50 text-amber-900"
                     )}
                     title={forceExpireChecked ? "Reload and force-expire Redis cache" : "Reload inventory using cache by default"}
@@ -2542,7 +2575,7 @@ function EndOfDayContent() {
                   {(currentUser?.role === 'AUDITOR' || currentUser?.role === 'ADMIN') && (
                     <label 
                       className={cn(
-                        "flex items-center gap-1.5 cursor-pointer border px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all select-none h-9 shadow-xs",
+                        "flex items-center gap-1.5 cursor-pointer border px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all select-none h-9 shadow-xs whitespace-nowrap",
                         forceExpireChecked 
                           ? "bg-amber-500 border-amber-600 text-white shadow-amber-500/20" 
                           : "bg-amber-50/80 hover:bg-amber-100 border-amber-200/80 text-amber-800"
@@ -2562,7 +2595,7 @@ function EndOfDayContent() {
 
                 <Button 
                   onClick={() => setShowAddModal(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] h-9 px-6 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-lg shadow-blue-500/10 shrink-0"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] h-9 px-5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-lg shadow-blue-500/20 shrink-0 whitespace-nowrap"
                 >
                   <PlusCircle className="w-4 h-4" /> Add Stock Item
                 </Button>
@@ -2712,21 +2745,44 @@ function EndOfDayContent() {
                           <button 
                             onClick={() => {
                               setSelectedBillForCustomerView(item.bill_no);
+                              setSelectedStockItemForCustomerView(item);
+                              setSelectedBranchForCustomerView(item.branch_id || item.branch || (selectedBranch !== 'ALL' ? selectedBranch : null) || currentUser?.branchId || null);
                               setShowBillCustomerModal(true);
                             }}
                             className="font-black text-slate-800 text-sm hover:text-blue-600 underline decoration-dotted transition-colors text-left flex items-center gap-1.5 cursor-pointer flex-wrap"
                             title="Click to view details & interest"
                           >
                             <span>{item.bill_no}</span>
-                            {getCustomerForBill(item.bill_no) && (
+                            {getCustomerForBill(item.bill_no, item.branch_id || item.branch) && (
                               <span className="w-1.5 h-1.5 bg-blue-600 rounded-full inline-block" title="Customer Linked" />
                             )}
                             {(() => {
-                              const bInts = stockInterests.filter(i => (i.bill_no || '').trim().toUpperCase() === (item.bill_no || '').trim().toUpperCase());
+                              const itemBranch = normalizeBranchId(item.branch_id || item.branch || currentUser?.branchId || '');
+                              const bInts = stockInterests.filter(i => {
+                                // 1. Direct item ID match if available
+                                if (i.item_id && item.id && i.item_id === item.id) {
+                                  return true;
+                                }
+                                // 2. Bill number match
+                                const billMatches = (i.bill_no || '').trim().toUpperCase() === (item.bill_no || '').trim().toUpperCase();
+                                if (!billMatches) return false;
+
+                                // If this interest record was explicitly assigned to another item, do not cross-apply
+                                if (i.item_id && item.id && i.item_id !== item.id) {
+                                  return false;
+                                }
+
+                                // 3. Strict branch isolation: interest branch MUST match this stock item's branch
+                                const iBranch = normalizeBranchId(i.branch || '');
+                                if (iBranch && itemBranch) {
+                                  return iBranch === itemBranch;
+                                }
+                                return false;
+                              });
                               const sumInt = bInts.reduce((sum, x) => sum + (parseFloat(x.interest_value) || 0), 0);
                               if (sumInt > 0) {
                                 return (
-                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[9px] px-1.5 py-0.5 rounded-full" title={`Recorded Interest: LKR ${sumInt.toLocaleString()}`}>
+                                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[9px] px-1.5 py-0.5 rounded-full" title={`Recorded Interest: LKR ${sumInt.toLocaleString()} (${itemBranch || 'Branch'})`}>
                                     +LKR {sumInt.toLocaleString()}
                                   </span>
                                 );
@@ -3672,8 +3728,13 @@ function EndOfDayContent() {
               <DialogTitle className="text-xl font-black tracking-tighter text-slate-900">
                 Pawn Bill Details
               </DialogTitle>
-              <DialogDescription className="font-semibold text-slate-400 text-xs mt-1">
-                Customer association for Bill No: <span className="text-slate-700 font-black">{selectedBillForCustomerView}</span>
+              <DialogDescription className="font-semibold text-slate-400 text-xs mt-1 flex items-center gap-2">
+                <span>Customer association for Bill No: <span className="text-slate-700 font-black">{selectedBillForCustomerView}</span></span>
+                {selectedBranchForCustomerView && (
+                  <span className="bg-blue-50 text-blue-800 border border-blue-200/50 font-black px-2 py-0.5 rounded-md text-[9px] uppercase tracking-wide">
+                    {normalizeBranchId(selectedBranchForCustomerView)}
+                  </span>
+                )}
               </DialogDescription>
             </DialogHeader>
 
@@ -3689,7 +3750,7 @@ function EndOfDayContent() {
             <div className="mt-6 space-y-4">
               {(() => {
                 if (!selectedBillForCustomerView) return null;
-                const cust = getCustomerForBill(selectedBillForCustomerView);
+                const cust = getCustomerForBill(selectedBillForCustomerView, selectedBranchForCustomerView || undefined);
                 const currentBillImage = billImages[selectedBillForCustomerView];
 
                 if (cust) {
@@ -3763,7 +3824,11 @@ function EndOfDayContent() {
                       <div className="flex flex-wrap justify-end gap-2 pt-2">
                         <Button 
                           onClick={() => {
-                            openAddInterestModal(selectedBillForCustomerView);
+                            openAddInterestModal(
+                              selectedBillForCustomerView, 
+                              selectedStockItemForCustomerView?.branch_id || selectedBranchForCustomerView || undefined,
+                              selectedStockItemForCustomerView?.id
+                            );
                           }}
                           className="bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl shadow-md flex items-center justify-center cursor-pointer transition-all active:scale-95 gap-1.5"
                         >
@@ -3808,7 +3873,36 @@ function EndOfDayContent() {
 
                       {/* Recorded Interest Section */}
                       {(() => {
-                        const billInterests = stockInterests.filter(i => (i.bill_no || '').trim().toUpperCase() === (selectedBillForCustomerView || '').trim().toUpperCase());
+                        const targetBranch = normalizeBranchId(
+                          selectedStockItemForCustomerView?.branch_id ||
+                          selectedBranchForCustomerView || 
+                          (selectedBranch !== 'ALL' ? selectedBranch : '') || 
+                          currentUser?.branchId || 
+                          ''
+                        );
+                        const currentItemId = selectedStockItemForCustomerView?.id;
+
+                        const billInterests = stockInterests.filter(i => {
+                          // 1. Direct item ID match
+                          if (i.item_id && currentItemId && i.item_id === currentItemId) {
+                            return true;
+                          }
+                          // 2. Bill number match
+                          const billMatches = (i.bill_no || '').trim().toUpperCase() === (selectedBillForCustomerView || '').trim().toUpperCase();
+                          if (!billMatches) return false;
+
+                          // If this interest record belongs to another item ID, do not cross-apply
+                          if (i.item_id && currentItemId && i.item_id !== currentItemId) {
+                            return false;
+                          }
+
+                          // 3. Strict branch isolation
+                          const iBranch = normalizeBranchId(i.branch || '');
+                          if (iBranch && targetBranch) {
+                            return iBranch === targetBranch;
+                          }
+                          return false;
+                        });
                         const totalBillInterest = billInterests.reduce((sum, item) => sum + (parseFloat(item.interest_value) || 0), 0);
                         return (
                           <div className="mt-4 pt-4 border-t border-slate-200/60 space-y-2.5">
@@ -3908,7 +4002,11 @@ function EndOfDayContent() {
                       <div className="flex flex-wrap justify-center gap-2 pt-2">
                         <Button 
                           onClick={() => {
-                            openAddInterestModal(selectedBillForCustomerView);
+                            openAddInterestModal(
+                              selectedBillForCustomerView, 
+                              selectedStockItemForCustomerView?.branch_id || selectedBranchForCustomerView || undefined,
+                              selectedStockItemForCustomerView?.id
+                            );
                           }}
                           className="bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[9px] h-10 px-4 rounded-xl shadow-md flex items-center justify-center cursor-pointer transition-all active:scale-95 gap-1.5"
                         >
@@ -3946,7 +4044,36 @@ function EndOfDayContent() {
 
                       {/* Recorded Interest Section */}
                       {(() => {
-                        const billInterests = stockInterests.filter(i => (i.bill_no || '').trim().toUpperCase() === (selectedBillForCustomerView || '').trim().toUpperCase());
+                        const targetBranch = normalizeBranchId(
+                          selectedStockItemForCustomerView?.branch_id ||
+                          selectedBranchForCustomerView || 
+                          (selectedBranch !== 'ALL' ? selectedBranch : '') || 
+                          currentUser?.branchId || 
+                          ''
+                        );
+                        const currentItemId = selectedStockItemForCustomerView?.id;
+
+                        const billInterests = stockInterests.filter(i => {
+                          // 1. Direct item ID match
+                          if (i.item_id && currentItemId && i.item_id === currentItemId) {
+                            return true;
+                          }
+                          // 2. Bill number match
+                          const billMatches = (i.bill_no || '').trim().toUpperCase() === (selectedBillForCustomerView || '').trim().toUpperCase();
+                          if (!billMatches) return false;
+
+                          // If this interest record belongs to another item ID, do not cross-apply
+                          if (i.item_id && currentItemId && i.item_id !== currentItemId) {
+                            return false;
+                          }
+
+                          // 3. Strict branch isolation
+                          const iBranch = normalizeBranchId(i.branch || '');
+                          if (iBranch && targetBranch) {
+                            return iBranch === targetBranch;
+                          }
+                          return false;
+                        });
                         const totalBillInterest = billInterests.reduce((sum, item) => sum + (parseFloat(item.interest_value) || 0), 0);
                         return (
                           <div className="mt-4 pt-4 border-t border-slate-200/60 text-left space-y-2.5">
@@ -4225,8 +4352,13 @@ function EndOfDayContent() {
                 </div>
                 Add Interest
               </DialogTitle>
-              <DialogDescription className="font-semibold text-slate-400 text-xs mt-1">
-                Record interest for Bill No: <span className="text-slate-800 font-black">{selectedBillForCustomerView}</span>
+              <DialogDescription className="font-semibold text-slate-400 text-xs mt-1 flex items-center gap-2">
+                <span>Record interest for Bill No: <span className="text-slate-800 font-black">{selectedBillForCustomerView}</span></span>
+                {selectedBranchForCustomerView && (
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200/50 font-black px-2 py-0.5 rounded-md text-[9px] uppercase tracking-wide">
+                    {normalizeBranchId(selectedBranchForCustomerView)}
+                  </span>
+                )}
               </DialogDescription>
             </DialogHeader>
 
@@ -4267,26 +4399,35 @@ function EndOfDayContent() {
                 <Label className="text-[10px] uppercase font-black tracking-wider text-slate-500">
                   Branch <span className="text-rose-500">*</span>
                 </Label>
-                <select
-                  value={interestBranch}
-                  onChange={(e) => setInterestBranch(e.target.value)}
-                  className="h-10 border border-slate-200 rounded-xl font-bold text-slate-800 text-xs px-3 bg-white w-full focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                >
-                  <option value="DMT">Dematagoda (DMT)</option>
-                  <option value="KIR">Kiribathgoda (KIR)</option>
-                  <option value="BRL">Borella (BRL)</option>
-                  <option value="DHW">Dehiwala (DHW)</option>
-                  <option value="HMG">Homagama (HMG)</option>
-                  <option value="KDW">Kadawatha (KDW)</option>
-                  <option value="KOT">Kotikawatta (KOT)</option>
-                  <option value="KTW">Kottawa (KTW)</option>
-                  <option value="PND">Panadura (PND)</option>
-                  <option value="W2">Wattala 2 (W2)</option>
-                  <option value="W3">Wattala 3 (W3)</option>
-                  <option value="W4">Wattala 4 (W4)</option>
-                  <option value="KHT">Kahathuduwa (KHT)</option>
-                  <option value="HQ">Head Office (HQ)</option>
-                </select>
+                {currentUser?.role !== 'ADMIN' ? (
+                  <div className="h-10 border border-slate-200 rounded-xl font-black text-slate-800 text-xs px-3 bg-slate-50 flex items-center justify-between">
+                    <span>{branches.find(b => normalizeBranchId(b.id) === normalizeBranchId(interestBranch))?.name || interestBranch}</span>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded">
+                      {normalizeBranchId(interestBranch)}
+                    </span>
+                  </div>
+                ) : (
+                  <select
+                    value={interestBranch}
+                    onChange={(e) => setInterestBranch(e.target.value)}
+                    className="h-10 border border-slate-200 rounded-xl font-bold text-slate-800 text-xs px-3 bg-white w-full focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                  >
+                    <option value="DMT">Dematagoda (DMT)</option>
+                    <option value="KIR">Kiribathgoda (KIR)</option>
+                    <option value="BRL">Borella (BRL)</option>
+                    <option value="DHW">Dehiwala (DHW)</option>
+                    <option value="HMG">Homagama (HMG)</option>
+                    <option value="KDW">Kadawatha (KDW)</option>
+                    <option value="KOT">Kotikawatta (KOT)</option>
+                    <option value="KTW">Kottawa (KTW)</option>
+                    <option value="PND">Panadura (PND)</option>
+                    <option value="W2">Wattala 2 (W2)</option>
+                    <option value="W3">Wattala 3 (W3)</option>
+                    <option value="W4">Wattala 4 (W4)</option>
+                    <option value="KHT">Kahathuduwa (KHT)</option>
+                    <option value="HQ">Head Office (HQ)</option>
+                  </select>
+                )}
               </div>
 
               {/* Notes (Optional) */}
