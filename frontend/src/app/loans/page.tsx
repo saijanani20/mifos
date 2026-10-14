@@ -283,12 +283,31 @@ export default function PawnesPage() {
 
   const getClientNic = (pawn: any) => {
     if (!pawn) return '—';
-    const cid = String(pawn.client_id || '').toLowerCase();
-    return clientsNicMap[cid] || String(pawn.client_id || '—');
+    const cid = String(pawn.client_id || '').toLowerCase().trim();
+    if (clientsNicMap[cid]) return clientsNicMap[cid];
+    if (pawn.clients?.national_id) return pawn.clients.national_id;
+    if (pawn.clients?.nationalId) return pawn.clients.nationalId;
+    if (pawn.clients?.nic) return pawn.clients.nic;
+
+    // Check clientsList directly if map didn't resolve it
+    if (clientsList && clientsList.length > 0) {
+      const matchClient = clientsList.find((c: any) => {
+        const cId = String(c.id || '').toLowerCase().trim();
+        const cNic = String(c.nationalId || c.national_id || c.nic || '').toLowerCase().trim();
+        const cNum = String(c.clientNumber || c.client_number || '').toLowerCase().trim();
+        return (cId && cId === cid) || (cNic && cNic === cid) || (cNum && cNum === cid);
+      });
+      if (matchClient) {
+        const foundNic = matchClient.nationalId || matchClient.national_id || matchClient.nic;
+        if (foundNic) return foundNic;
+      }
+    }
+    return String(pawn.client_id || '—');
   };
 
   const getBillNo = (pawn: any) => {
     if (!pawn) return '—';
+    if (pawn.bill_no && String(pawn.bill_no).trim()) return String(pawn.bill_no).trim();
     const desc = String(pawn.description || '');
     const match = desc.match(/^([A-Za-z0-9]+\s+[0-9A-Za-z]+)\s*\|?\s*(.*)/);
     if (match && match[1]) return match[1].trim();
@@ -395,6 +414,16 @@ export default function PawnesPage() {
             const cidStr = String(c.id).toLowerCase().trim();
             map[cidStr] = name;
             nMap[cidStr] = nic;
+          }
+          if (c.clientNumber != null) {
+            const cNumStr = String(c.clientNumber).toLowerCase().trim();
+            map[cNumStr] = name;
+            nMap[cNumStr] = nic;
+          }
+          if (c.client_number != null) {
+            const cNumStr = String(c.client_number).toLowerCase().trim();
+            map[cNumStr] = name;
+            nMap[cNumStr] = nic;
           }
         });
         setClientsMap(map);
@@ -1091,20 +1120,53 @@ export default function PawnesPage() {
     // 4. Search Query Filter
     if (!searchLower) return true;
 
+    const searchClean = searchLower.replace(/[^a-z0-9]/gi, '');
+
+    // Bill Number matching (supports exact bill_no, display bill #, description prefix, and normalized alphanumeric)
+    const displayBill = getBillNo(p).toLowerCase();
+    const rawBill = String(p.bill_no || '').toLowerCase();
+    const descBillMatch = (p.description || '').match(/^([A-Za-z0-9]+\s+[0-9A-Za-z]+)/);
+    const descBill = descBillMatch ? descBillMatch[1].toLowerCase() : '';
+    const billMatches = (
+      displayBill.includes(searchLower) ||
+      rawBill.includes(searchLower) ||
+      descBill.includes(searchLower) ||
+      (searchClean.length > 0 && (
+        displayBill.replace(/[^a-z0-9]/gi, '').includes(searchClean) ||
+        rawBill.replace(/[^a-z0-9]/gi, '').includes(searchClean) ||
+        descBill.replace(/[^a-z0-9]/gi, '').includes(searchClean)
+      ))
+    );
+
+    // NIC Number matching (supports mapped NIC, display NIC, client join NIC, client ID, and normalized alphanumeric)
     const cleanId = String(p.client_id || '').toLowerCase().trim();
-    const clientName = (clientsMap[cleanId] || p.clients?.first_name || p.clients?.firstName || p.clients?.name || '').toLowerCase();
-    const clientNic = (clientsNicMap[cleanId] || p.clients?.national_id || p.clients?.nationalId || p.client_id || '').toLowerCase();
-    const clientPhone = String(p.clients?.phone || '').toLowerCase();
-    const billNo = String(p.bill_no || '').toLowerCase();
+    const displayNic = String(getClientNic(p) || '').toLowerCase();
+    const rawNic = String(p.clients?.national_id || p.clients?.nationalId || p.clients?.nic || '').toLowerCase();
+    const mapNic = String(clientsNicMap[cleanId] || '').toLowerCase();
+    const nicMatches = (
+      displayNic.includes(searchLower) ||
+      rawNic.includes(searchLower) ||
+      mapNic.includes(searchLower) ||
+      cleanId.includes(searchLower) ||
+      (searchClean.length > 0 && (
+        displayNic.replace(/[^a-z0-9]/gi, '').includes(searchClean) ||
+        rawNic.replace(/[^a-z0-9]/gi, '').includes(searchClean) ||
+        mapNic.replace(/[^a-z0-9]/gi, '').includes(searchClean) ||
+        cleanId.replace(/[^a-z0-9]/gi, '').includes(searchClean)
+      ))
+    );
+
+    const clientName = (getCustomerName(p) || clientsMap[cleanId] || p.clients?.first_name || p.clients?.firstName || p.clients?.name || '').toLowerCase();
+    const clientPhone = String(p.clients?.phone || p.phone || '').toLowerCase();
     const description = String(p.description || '').toLowerCase();
     const id = String(p.id || '').toLowerCase();
     const branch = String(p.branch_id || p.branchId || '').toLowerCase();
     const status = String(p.status || '').toLowerCase();
 
     return (
-      billNo.includes(searchLower) ||
+      billMatches ||
+      nicMatches ||
       clientName.includes(searchLower) ||
-      clientNic.includes(searchLower) ||
       clientPhone.includes(searchLower) ||
       description.includes(searchLower) ||
       branch.includes(searchLower) ||

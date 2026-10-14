@@ -49,8 +49,13 @@ export function WebcamCapture({ onCapture, onClose }: WebcamCaptureProps) {
   }, []);
 
   useEffect(() => {
-    startCamera();
-    return () => stopCamera();
+    const timer = setTimeout(() => {
+      startCamera();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      stopCamera();
+    };
   }, [startCamera, stopCamera]);
 
   useEffect(() => {

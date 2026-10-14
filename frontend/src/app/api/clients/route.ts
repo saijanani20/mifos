@@ -7,23 +7,82 @@ export const dynamic = 'force-dynamic';
 const isUUID = (str: string) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
 const HARDCODED_FALLBACK_USER_ID = '1423f690-f46a-455d-bc25-a778d2bd9e47'; // Guaranteed valid profile UUID
 
+// In-memory cache for clients directory to prevent multi-megabyte socket timeouts
+interface CacheEntry {
+  data: any[];
+  expiresAt: number;
+}
+const clientsMemoryCache = new Map<string, CacheEntry>();
+
+export function invalidateClientsCache() {
+  clientsMemoryCache.clear();
+}
+
 export async function GET(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
     const { searchParams } = new URL(request.url);
     const requestedBranch = searchParams.get('branchId');
 
-    let query = adminSupabase.from('clients').select('*');
-
-    // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
-    if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
-      const terms = getBranchSearchTerms(requestedBranch);
-      const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-      query = query.or(orClause);
+    const cacheKey = requestedBranch ? requestedBranch.trim().toUpperCase() : 'ALL';
+    const cached = clientsMemoryCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return NextResponse.json(cached.data);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    let data: any[] | null = null;
+    let queryError: any = null;
+
+    try {
+      let query = adminSupabase.from('clients').select('*');
+
+      // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
+      if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
+        const terms = getBranchSearchTerms(requestedBranch);
+        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
+        query = query.or(orClause);
+      }
+
+      const res = await query;
+      data = res.data;
+      queryError = res.error;
+    } catch (e: any) {
+      queryError = e;
+    }
+
+    // Fallback: If network socket drop/timeout happens due to massive base64 image strings, query lightweight client metadata
+    if (queryError || !data) {
+      console.warn('[Clients API] Full query failed or timed out, using resilient fallback:', queryError?.message || queryError);
+      
+      if (cached && cached.data) {
+        return NextResponse.json(cached.data);
+      }
+
+      let fallbackQuery = adminSupabase
+        .from('clients')
+        .select('id, national_id, first_name, last_name, phone, address, branch_id, status, created_at, created_by_user_id');
+
+      if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
+        const terms = getBranchSearchTerms(requestedBranch);
+        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
+        fallbackQuery = fallbackQuery.or(orClause);
+      }
+
+      const { data: lightData, error: lightErr } = await fallbackQuery;
+      if (lightErr) {
+        throw queryError || lightErr;
+      }
+      data = lightData || [];
+    }
+
+    // Cache valid data for 3 minutes (180,000 ms)
+    if (data) {
+      clientsMemoryCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + 180_000
+      });
+    }
+
     return NextResponse.json(data || []);
   } catch (error: any) {
     console.error("API GET Error:", error);
@@ -175,6 +234,7 @@ export async function POST(request: Request) {
       .single();
 
     if (!snakeErr && snakeData) {
+      invalidateClientsCache();
       return NextResponse.json(snakeData, { status: 201 });
     }
 
@@ -201,6 +261,7 @@ export async function POST(request: Request) {
       .single();
 
     if (!camelErr && camelData) {
+      invalidateClientsCache();
       return NextResponse.json(camelData, { status: 201 });
     }
 

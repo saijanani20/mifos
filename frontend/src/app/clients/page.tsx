@@ -376,10 +376,12 @@ export default function ClientsPage() {
       setLoading(true);
       const storedUser = localStorage.getItem('user');
       if (storedUser) {
-        const user = JSON.parse(storedUser);
-        setBranchId(user.branchId || 'HQ');
-        setUserId(user.id || '');
-        setUserRole(user.role || 'TELLER');
+        try {
+          const user = JSON.parse(storedUser);
+          setBranchId(user.branchId || 'HQ');
+          setUserId(user.id || '');
+          setUserRole(user.role || 'TELLER');
+        } catch {}
       }
 
       // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
@@ -390,13 +392,15 @@ export default function ClientsPage() {
       const res = await fetch(`/api/clients${queryParam}`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setClients(data);
+        setClients(Array.isArray(data) ? data : []);
       } else {
-        throw new Error("Failed to fetch");
+        const errJson = await res.json().catch(() => ({}));
+        console.warn("Client directory fetch response:", res.status, errJson);
+        toast.error(errJson.error || "Failed to load customer directory. Please retry.");
       }
-    } catch(err) {
-      console.error(err);
-      toast.error("Failed to load customer directory.");
+    } catch(err: any) {
+      console.error("Client directory network error:", err);
+      toast.error("Network connection issue while loading customer directory.");
     } finally {
       setLoading(false);
     }

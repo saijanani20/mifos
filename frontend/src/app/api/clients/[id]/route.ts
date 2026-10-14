@@ -1,7 +1,27 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
+import { invalidateClientsCache } from '../route';
 
 export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request, context: any) {
+  try {
+    const { id } = await context.params;
+    let query = adminSupabase.from('clients').select('*');
+    if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id)) {
+      query = query.eq('id', id);
+    } else {
+      query = query.or(`national_id.eq.${id},nationalId.eq.${id}`);
+    }
+    const { data, error } = await query.maybeSingle();
+    if (error || !data) {
+      return NextResponse.json({ error: 'Client not found' }, { status: 404 });
+    }
+    return NextResponse.json(data);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
 
 export async function PATCH(request: Request, context: any) {
   try {
@@ -76,6 +96,7 @@ export async function PATCH(request: Request, context: any) {
       .single();
 
     if (camelErr) throw error || camelErr;
+    invalidateClientsCache();
     return NextResponse.json(camelData);
   } catch (error: any) {
     console.error("API PATCH Error:", error);
@@ -97,6 +118,7 @@ export async function DELETE(request: Request, context: any) {
       .eq('id', id);
 
     if (error) throw error;
+    invalidateClientsCache();
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("API DELETE Error:", error);
