@@ -212,7 +212,7 @@ export async function POST(request: Request) {
         const clientPayload: any = {
           id: newClientId,
           national_id: clientId,
-          first_name: clientName || customerName || 'Valued Customer',
+          first_name: (clientName && clientName !== 'Valued Customer') ? clientName : (customerName && customerName !== 'Valued Customer') ? customerName : null,
           last_name: '.',
           phone: clientPhone || null,
           address: clientAddress || null,
