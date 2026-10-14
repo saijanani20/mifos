@@ -1332,7 +1332,17 @@ export default function ClientsPage() {
                   <TableCell className="px-8 py-6 font-black text-slate-900 group-hover:text-primary transition-colors underline decoration-primary/10 underline-offset-4">{client.national_id || client.nationalId || 'N/A'}</TableCell>
                   <TableCell className="px-8 py-6">
                     <div className="flex flex-col">
-                      <span className="font-bold text-slate-800 leading-none mb-1">{client.first_name || client.firstName}</span>
+                      {(() => {
+                        const rawName = (client.first_name || client.firstName || '').trim();
+                        const lastName = (client.last_name || client.lastName || '').trim();
+                        const isPlaceholder = !rawName || rawName === 'Valued Customer' || rawName === '.';
+                        const fullName = isPlaceholder ? '' : [rawName, lastName === '.' ? '' : lastName].filter(Boolean).join(' ');
+                        return isPlaceholder ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 border border-dashed border-slate-300 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">No Name</span>
+                        ) : (
+                          <span className="font-bold text-slate-800 leading-none mb-1">{fullName}</span>
+                        );
+                      })()}
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{client.phone || 'No Phone'}</span>
                     </div>
                   </TableCell>
