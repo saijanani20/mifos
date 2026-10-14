@@ -462,27 +462,52 @@ function EndOfDayContent() {
   const [isSubmittingInterest, setIsSubmittingInterest] = useState(false);
 
   const fetchStockInterests = async () => {
+    let remoteRecords: any[] = [];
     try {
       const res = await fetch('/api/stock/interest');
       if (res.ok) {
         const json = await res.json();
-        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-          setStockInterests(json.data);
-          localStorage.setItem('local_stock_interests', JSON.stringify(json.data));
-          return;
+        if (json.data && Array.isArray(json.data)) {
+          remoteRecords = json.data;
         }
       }
     } catch (e) {
       console.error("Failed to fetch stock interests:", e);
     }
+
+    // Merge with any local interest entries stored in browser localStorage
     const local = localStorage.getItem('local_stock_interests');
+    let localRecords: any[] = [];
     if (local) {
       try {
         const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setStockInterests(parsed);
+        if (Array.isArray(parsed)) {
+          localRecords = parsed;
         }
       } catch (e) {}
+    }
+
+    // Combine remote + local deduplicated by id / key
+    const map = new Map<string, any>();
+    remoteRecords.forEach(r => {
+      if (r) {
+        const key = r.id || `${r.bill_no}_${r.branch}_${r.date}_${r.interest_value}`;
+        map.set(key, r);
+      }
+    });
+    localRecords.forEach(r => {
+      if (r) {
+        const key = r.id || `${r.bill_no}_${r.branch}_${r.date}_${r.interest_value}`;
+        if (!map.has(key)) {
+          map.set(key, r);
+        }
+      }
+    });
+
+    const combined = Array.from(map.values());
+    if (combined.length > 0) {
+      setStockInterests(combined);
+      localStorage.setItem('local_stock_interests', JSON.stringify(combined));
     }
   };
 
@@ -544,27 +569,30 @@ function EndOfDayContent() {
         body: JSON.stringify(newEntry)
       });
       const json = await res.json();
+      const savedEntry = (json && json.data) ? json.data : { ...newEntry, id: 'loc_' + Date.now() };
+
+      // Update state and localStorage IMMEDIATELY so it never shows 0 or disappears
+      setStockInterests(prev => {
+        const updated = [savedEntry, ...prev.filter(i => i.id !== savedEntry.id)];
+        localStorage.setItem('local_stock_interests', JSON.stringify(updated));
+        return updated;
+      });
+
       if (res.ok && json.success) {
         toast.success(`Interest of LKR ${val.toLocaleString()} added for bill ${selectedBillForCustomerView} (${targetBranch})!`);
-        setShowAddInterestModal(false);
-        setInterestValue("");
-        setInterestNotes("");
-        fetchStockInterests();
       } else {
-        const localEntry = { ...newEntry, id: 'loc_' + Date.now() };
-        const updated = [localEntry, ...stockInterests];
-        setStockInterests(updated);
-        localStorage.setItem('local_stock_interests', JSON.stringify(updated));
         toast.success(`Interest of LKR ${val.toLocaleString()} saved for ${targetBranch}!`);
-        setShowAddInterestModal(false);
-        setInterestValue("");
-        setInterestNotes("");
       }
+      setShowAddInterestModal(false);
+      setInterestValue("");
+      setInterestNotes("");
     } catch (err: any) {
       const localEntry = { ...newEntry, id: 'loc_' + Date.now() };
-      const updated = [localEntry, ...stockInterests];
-      setStockInterests(updated);
-      localStorage.setItem('local_stock_interests', JSON.stringify(updated));
+      setStockInterests(prev => {
+        const updated = [localEntry, ...prev.filter(i => i.id !== localEntry.id)];
+        localStorage.setItem('local_stock_interests', JSON.stringify(updated));
+        return updated;
+      });
       toast.success(`Interest of LKR ${val.toLocaleString()} saved!`);
       setShowAddInterestModal(false);
       setInterestValue("");
@@ -578,9 +606,11 @@ function EndOfDayContent() {
     try {
       await fetch(`/api/stock/interest?id=${id}`, { method: 'DELETE' });
     } catch (e) {}
-    const updated = stockInterests.filter(i => i.id !== id);
-    setStockInterests(updated);
-    localStorage.setItem('local_stock_interests', JSON.stringify(updated));
+    setStockInterests(prev => {
+      const updated = prev.filter(i => i.id !== id);
+      localStorage.setItem('local_stock_interests', JSON.stringify(updated));
+      return updated;
+    });
     toast.success("Interest entry removed.");
   };
 

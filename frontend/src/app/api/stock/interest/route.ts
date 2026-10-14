@@ -111,19 +111,23 @@ export async function POST(req: Request) {
     }
 
     const cleanBranch = branch.trim().toUpperCase();
-    const payload = {
-      id: 'si_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    const id = 'si_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const payload: any = {
+      id: id,
       bill_no: bill_no.trim(),
-      item_id: item_id || undefined,
       date: date,
       interest_value: numericValue,
       branch: cleanBranch,
       notes: notes || '',
       created_at: new Date().toISOString()
     };
+    if (item_id) {
+      payload.item_id = item_id;
+    }
 
     let insertedData: any = payload;
     let savedToSupabase = false;
+    let supabaseError: string | null = null;
 
     if (adminSupabase) {
       try {
@@ -136,16 +140,24 @@ export async function POST(req: Request) {
         if (!error && data) {
           insertedData = data;
           savedToSupabase = true;
+        } else if (error) {
+          supabaseError = error.message;
+          console.warn('[Supabase stock_interests insert warning]:', error.message);
         }
-      } catch (e) {
+      } catch (e: any) {
+        supabaseError = e?.message || 'Exception during Supabase insert';
         savedToSupabase = false;
       }
     }
 
-    // Always keep server-side JSON file in sync for offline/local resilience
-    const localRecords = await getLocalStockInterests();
-    const updated = [insertedData, ...localRecords.filter(r => r.id !== insertedData.id)];
-    await saveLocalStockInterests(updated);
+    // Server-side JSON file sync if filesystem is available
+    try {
+      const localRecords = await getLocalStockInterests();
+      const updated = [insertedData, ...localRecords.filter(r => r.id !== insertedData.id)];
+      await saveLocalStockInterests(updated);
+    } catch (fsErr) {
+      // Ignored in read-only / serverless environments
+    }
 
     // Invalidate Redis inventory cache
     try {
@@ -154,7 +166,12 @@ export async function POST(req: Request) {
       console.warn('[Cache Invalidation Warning]:', cErr);
     }
 
-    return NextResponse.json({ success: true, data: insertedData, savedToSupabase });
+    return NextResponse.json({ 
+      success: true, 
+      data: insertedData, 
+      savedToSupabase,
+      warning: supabaseError ? `Supabase: ${supabaseError}` : undefined 
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
   }
