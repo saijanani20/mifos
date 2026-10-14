@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -14,7 +15,10 @@ if (supabaseUrl && supabaseKey) {
 
 export const dynamic = 'force-dynamic';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+// In serverless environments (e.g. Vercel, AWS Lambda), /var/task is read-only.
+// Use os.tmpdir() which is writable on serverless, or local data/ for development.
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NODE_ENV === 'production');
+const DATA_DIR = isServerless ? os.tmpdir() : path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'stock_interests.json');
 
 async function getLocalStockInterests(): Promise<any[]> {
@@ -34,7 +38,7 @@ async function saveLocalStockInterests(data: any[]) {
     }
     await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } catch (e) {
-    console.error('Failed to write local stock interests file:', e);
+    // Gracefully ignore local file write errors in serverless environments
   }
 }
 
