@@ -47,7 +47,7 @@ interface PacketQrScannerModalProps {
   customerName?: string;
   weightFormatted?: string;
   availablePawns?: PawnRecord[];
-  onSuccess?: (packetQr: string, billNo: string) => void;
+  onSuccess?: (packetQr: string, billNo: string, pawnId?: string) => void;
 }
 
 export default function PacketQrScannerModal({
@@ -327,7 +327,8 @@ export default function PacketQrScannerModal({
         },
         body: JSON.stringify({
           packet_qr: codeToSave,
-          bill_no: billToSave
+          bill_no: billToSave,
+          branch_id: selectedPawn?.branch_id
         })
       });
 
@@ -338,7 +339,7 @@ export default function PacketQrScannerModal({
 
       toast.success(`Packet sticker attached to Bill #${billToSave}!`, { id: toastId });
       if (onSuccess) {
-        onSuccess(codeToSave, billToSave);
+        onSuccess(codeToSave, billToSave, selectedPawn?.id || targetPawnId);
       }
       onClose();
     } catch (err: any) {
@@ -368,7 +369,8 @@ export default function PacketQrScannerModal({
 
     try {
       const targetId = selectedPawn?.id || targetPawnId || billToDelete;
-      const res = await fetch(`/api/pawns/${encodeURIComponent(targetId)}/packet-qr`, {
+      const branchParam = selectedPawn?.branch_id ? `?branch_id=${encodeURIComponent(selectedPawn.branch_id)}` : '';
+      const res = await fetch(`/api/pawns/${encodeURIComponent(targetId)}/packet-qr${branchParam}`, {
         method: 'DELETE',
         headers: getAuthHeaders()
       });
@@ -385,7 +387,7 @@ export default function PacketQrScannerModal({
         setSelectedPawn({ ...selectedPawn, packet_qr: null });
       }
       if (onSuccess) {
-        onSuccess('', billToDelete);
+        onSuccess('', billToDelete, selectedPawn?.id || targetPawnId);
       }
       onClose();
     } catch (err: any) {

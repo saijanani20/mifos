@@ -35,7 +35,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { packet_qr, notes } = body;
+    const { packet_qr, notes, branch_id } = body;
 
     if (!packet_qr || typeof packet_qr !== 'string' || packet_qr.trim() === '') {
       return NextResponse.json({ error: 'Valid packet QR or barcode content is required.' }, { status: 400 });
@@ -43,17 +43,21 @@ export async function POST(
 
     const cleanPacketQr = packet_qr.trim();
 
-    // 1. Fetch Pawn Details by UUID or bill_no
+    // 1. Fetch Pawn Details by unique UUID or (bill_no + branch_id)
     let query = adminSupabase.from('pawns').select('*');
     if (isUUID(id)) {
       query = query.eq('id', id);
     } else {
       query = query.eq('bill_no', id);
+      const targetBranch = branch_id || (session.branchId && session.branchId !== 'HQ' && session.branchId !== 'ALL' ? session.branchId : null);
+      if (targetBranch) {
+        query = query.eq('branch_id', targetBranch);
+      }
     }
     const { data: pawn, error: fetchErr } = await query.maybeSingle();
 
     if (fetchErr || !pawn) {
-      return NextResponse.json({ error: 'Pawn ticket not found.' }, { status: 404 });
+      return NextResponse.json({ error: 'Pawn ticket not found in specified branch.' }, { status: 404 });
     }
 
     const cleanBill = pawn.bill_no || pawn.id.substring(0, 8).toUpperCase();
@@ -135,12 +139,19 @@ export async function DELETE(
       }, { status: 403 });
     }
 
-    // 1. Fetch Pawn Details
+    const { searchParams } = new URL(request.url);
+    const branch_id = searchParams.get('branch_id');
+
+    // 1. Fetch Pawn Details by UUID or (bill_no + branch_id)
     let query = adminSupabase.from('pawns').select('*');
     if (isUUID(id)) {
       query = query.eq('id', id);
     } else {
       query = query.eq('bill_no', id);
+      const targetBranch = branch_id || (session.branchId && session.branchId !== 'HQ' && session.branchId !== 'ALL' ? session.branchId : null);
+      if (targetBranch) {
+        query = query.eq('branch_id', targetBranch);
+      }
     }
     const { data: pawn, error: fetchErr } = await query.maybeSingle();
 
@@ -205,6 +216,8 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const branch_id = searchParams.get('branch_id');
 
     // 1. Fetch Pawn Details
     let query = adminSupabase.from('pawns').select('*');
@@ -212,6 +225,9 @@ export async function GET(
       query = query.eq('id', id);
     } else {
       query = query.eq('bill_no', id);
+      if (branch_id) {
+        query = query.eq('branch_id', branch_id);
+      }
     }
     const { data: pawn, error: fetchErr } = await query.maybeSingle();
 
@@ -221,16 +237,19 @@ export async function GET(
 
     const cleanBill = pawn.bill_no || pawn.id.substring(0, 8).toUpperCase();
 
-    // Check latest audit_logs for this bill to check if deleted or attached
+    // Check latest audit_logs strictly for this pawn's UUID or branch + bill
     const { data: logs } = await adminSupabase
       .from('audit_logs')
       .select('*')
       .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
-      .eq('resource', cleanBill)
       .order('created_at', { ascending: false })
-      .limit(1);
+      .limit(50);
 
-    const latest = logs && logs[0];
+    const latest = (logs || []).find((l: any) => {
+      if (l.details?.pawn_id && l.details.pawn_id === pawn.id) return true;
+      if (l.branch_id === pawn.branch_id && (l.resource === cleanBill || l.details?.bill_no === cleanBill)) return true;
+      return false;
+    });
     if (latest) {
       if (latest.action === 'PACKET_STICKER_DELETED') {
         return NextResponse.json({

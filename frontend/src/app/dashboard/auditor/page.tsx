@@ -1868,10 +1868,10 @@ export default function AuditorDashboard() {
         customerName={scannerTargetPawn?.clients?.first_name || scannerTargetPawn?.customer_name}
         weightFormatted={scannerTargetPawn?.weight ? `${scannerTargetPawn.weight.toFixed(3)} g` : undefined}
         availablePawns={pawns}
-        onSuccess={(scannedQr, billNo) => {
-          // Immediately update pawns state in place
+        onSuccess={(scannedQr, billNo, pawnId) => {
+          // Immediately update pawns state in place strictly by unique pawn ID to prevent cross-branch bill leakage
           setPawns((prev) => prev.map((p) => {
-            if (p.bill_no === billNo || (scannerTargetPawn && p.id === scannerTargetPawn.id)) {
+            if ((pawnId && p.id === pawnId) || (scannerTargetPawn && p.id === scannerTargetPawn.id)) {
               return { ...p, packet_qr: scannedQr };
             }
             return p;

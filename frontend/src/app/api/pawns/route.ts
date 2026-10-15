@@ -88,25 +88,44 @@ export async function GET(request: Request) {
       console.warn('Could not fetch evaluation photos for pawns:', e);
     }
 
-    // Fetch packet sticker QR from audit_logs
+    // Fetch packet sticker QR from audit_logs with strict branch and pawn_id isolation
+    let packetQrByPawnIdMap: Record<string, string | null> = {};
+    let packetQrByBranchBillMap: Record<string, string | null> = {};
     let packetQrByBillMap: Record<string, string | null> = {};
+
     try {
       const { data: packetLogs } = await adminSupabase
         .from('audit_logs')
-        .select('resource, details, action')
+        .select('resource, details, action, branch_id')
         .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
         .order('created_at', { ascending: true });
 
       if (packetLogs) {
         packetLogs.forEach((l: any) => {
           const b = (l.resource || l.details?.bill_no || '').trim();
-          if (b) {
-            if (l.action === 'PACKET_STICKER_DELETED') {
+          const pawnId = l.details?.pawn_id;
+          const branch = (l.branch_id || l.details?.branch_id || '').trim();
+
+          if (l.action === 'PACKET_STICKER_DELETED') {
+            if (pawnId) packetQrByPawnIdMap[pawnId] = null;
+            if (branch && b) {
+              packetQrByBranchBillMap[`${branch}::${b}`] = null;
+              packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = null;
+            }
+            if (b) {
               packetQrByBillMap[b] = null;
               packetQrByBillMap[b.toUpperCase()] = null;
-            } else if (l.action === 'PACKET_STICKER_ATTACHED' && l.details?.packet_qr) {
-              packetQrByBillMap[b] = l.details.packet_qr;
-              packetQrByBillMap[b.toUpperCase()] = l.details.packet_qr;
+            }
+          } else if (l.action === 'PACKET_STICKER_ATTACHED' && l.details?.packet_qr) {
+            const qrVal = l.details.packet_qr;
+            if (pawnId) packetQrByPawnIdMap[pawnId] = qrVal;
+            if (branch && b) {
+              packetQrByBranchBillMap[`${branch}::${b}`] = qrVal;
+              packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = qrVal;
+            }
+            if (b) {
+              packetQrByBillMap[b] = qrVal;
+              packetQrByBillMap[b.toUpperCase()] = qrVal;
             }
           }
         });
@@ -153,13 +172,28 @@ export async function GET(request: Request) {
          pawn.evaluation_water_weight = matchedEval.water_weight;
        }
 
-       if (packetQrByBillMap[cleanBill] === null || packetQrByBillMap[cleanBill.toUpperCase()] === null) {
-         pawn.packet_qr = null;
-       } else {
-         pawn.packet_qr = packetQrByBillMap[cleanBill] || packetQrByBillMap[cleanBill.toUpperCase()] || pawn.packet_qr || null;
-       }
+       // Strict Branch & Pawn-ID Isolation:
+        // 1. Direct UUID match (guaranteed unique per pawn record)
+        // 2. Branch-scoped bill key (branch_id + "::" + bill_no)
+        // 3. Fallback to direct column or legacy un-scoped map
+        const branchKey = `${pawn.branch_id || ''}::${cleanBill}`;
+        const branchKeyUpper = `${pawn.branch_id || ''}::${cleanBill.toUpperCase()}`;
 
-       return pawn;
+        if (pawn.id && packetQrByPawnIdMap[pawn.id] !== undefined) {
+          pawn.packet_qr = packetQrByPawnIdMap[pawn.id];
+        } else if (pawn.branch_id && packetQrByBranchBillMap[branchKey] !== undefined) {
+          pawn.packet_qr = packetQrByBranchBillMap[branchKey];
+        } else if (pawn.branch_id && packetQrByBranchBillMap[branchKeyUpper] !== undefined) {
+          pawn.packet_qr = packetQrByBranchBillMap[branchKeyUpper];
+        } else if (pawn.packet_qr !== undefined && pawn.packet_qr !== null) {
+          pawn.packet_qr = pawn.packet_qr;
+        } else if (packetQrByBillMap[cleanBill] === null || packetQrByBillMap[cleanBill.toUpperCase()] === null) {
+          pawn.packet_qr = null;
+        } else {
+          pawn.packet_qr = packetQrByBillMap[cleanBill] || packetQrByBillMap[cleanBill.toUpperCase()] || null;
+        }
+
+        return pawn;
     });
 
     return NextResponse.json(mappedData);
