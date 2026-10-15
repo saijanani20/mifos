@@ -1867,6 +1867,7 @@ export default function AuditorDashboard() {
         currentPacketQr={scannerTargetPawn?.packet_qr}
         customerName={scannerTargetPawn?.clients?.first_name || scannerTargetPawn?.customer_name}
         weightFormatted={scannerTargetPawn?.weight ? `${scannerTargetPawn.weight.toFixed(3)} g` : undefined}
+        availablePawns={pawns}
         onSuccess={(scannedQr, billNo) => {
           // Immediately update pawns state in place
           setPawns((prev) => prev.map((p) => {

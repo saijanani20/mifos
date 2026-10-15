@@ -28,6 +28,12 @@ export async function GET(request: Request) {
       query = query.or(orClause);
     }
 
+    const searchFilter = searchParams.get('search');
+    if (searchFilter && searchFilter.trim() !== '') {
+      const q = searchFilter.trim();
+      query = query.or(`bill_no.ilike.%${q}%,description.ilike.%${q}%`);
+    }
+
     const { data, error } = await query;
     if (error) throw error;
 

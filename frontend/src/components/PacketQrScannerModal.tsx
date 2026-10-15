@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle 
@@ -10,12 +10,33 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { 
   QrCode, Camera, CheckCircle2, AlertTriangle, X, 
-  RefreshCw, ShieldCheck, Search, Tag, Sparkles, ExternalLink,
-  Trash2, Lock
+  RefreshCw, ShieldCheck, Search, Tag, Sparkles, 
+  Trash2, Lock, ArrowLeft, ChevronRight, User, Scale, 
+  Filter, Check, AlertCircle, Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import Link from 'next/link';
+
+interface PawnRecord {
+  id: string;
+  bill_no: string;
+  client_id?: string;
+  customer_name?: string;
+  phone?: string;
+  branch_id?: string;
+  clients?: {
+    first_name?: string;
+    last_name?: string;
+    national_id?: string;
+    phone?: string;
+  };
+  weight?: number;
+  weight_grams?: number;
+  weight_mg?: number;
+  disbursed_amount?: number;
+  description?: string;
+  packet_qr?: string | null;
+}
 
 interface PacketQrScannerModalProps {
   isOpen: boolean;
@@ -25,6 +46,7 @@ interface PacketQrScannerModalProps {
   currentPacketQr?: string;
   customerName?: string;
   weightFormatted?: string;
+  availablePawns?: PawnRecord[];
   onSuccess?: (packetQr: string, billNo: string) => void;
 }
 
@@ -36,19 +58,33 @@ export default function PacketQrScannerModal({
   currentPacketQr,
   customerName,
   weightFormatted,
+  availablePawns = [],
   onSuccess
 }: PacketQrScannerModalProps) {
+  // Stepper State: 'SEARCH' (Select Bill) or 'SCAN' (Scan/Attach QR)
+  const [step, setStep] = useState<'SEARCH' | 'SCAN'>('SEARCH');
+  
+  // Selected Bill State
+  const [selectedPawn, setSelectedPawn] = useState<PawnRecord | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [filterStickerStatus, setFilterStickerStatus] = useState<'ALL' | 'NO_STICKER' | 'HAS_STICKER'>('ALL');
+  const [remotePawns, setRemotePawns] = useState<PawnRecord[]>([]);
+  const [isSearchingRemote, setIsSearchingRemote] = useState<boolean>(false);
+
+  // Scanner & Input State
   const [activeTab, setActiveTab] = useState<'camera' | 'manual'>('camera');
   const [scannedCode, setScannedCode] = useState<string>('');
   const [manualCode, setManualCode] = useState<string>('');
-  const [manualBillNo, setManualBillNo] = useState<string>(targetBillNo || '');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [matchedPawn, setMatchedPawn] = useState<any>(null);
-  const [isLookingUp, setIsLookingUp] = useState<boolean>(false);
+
+  // User Role Guard
   const [userRole, setUserRole] = useState<string>('');
+
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const readerElementId = 'packet-qr-reader-window';
 
   useEffect(() => {
     try {
@@ -62,35 +98,131 @@ export default function PacketQrScannerModal({
 
   const isAuditorOrAdmin = userRole === 'AUDITOR' || userRole === 'ADMIN';
 
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const readerElementId = 'packet-qr-reader';
-
-  // Sound feedback on scan
+  // Sound feedback on successful scan
   const playBeep = () => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // High pleasant A5
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.15);
-    } catch (e) {
-      // AudioContext may be blocked before gesture
-    }
+    } catch (e) {}
   };
 
-  // Start Camera Scanner
+  // Initialize or Reset Modal when opened/closed
+  useEffect(() => {
+    if (isOpen) {
+      setScannedCode('');
+      setManualCode('');
+      setSearchQuery('');
+      setFilterStickerStatus('ALL');
+      setCameraError(null);
+
+      if (targetBillNo) {
+        // Pre-targeted bill passed from row or verify page
+        setSelectedPawn({
+          id: targetPawnId || targetBillNo,
+          bill_no: targetBillNo,
+          customer_name: customerName,
+          packet_qr: currentPacketQr || null
+        });
+        setStep('SCAN');
+        if (activeTab === 'camera') {
+          const timer = setTimeout(() => startCamera(), 300);
+          return () => clearTimeout(timer);
+        }
+      } else {
+        // Search first workflow requested by user
+        setSelectedPawn(null);
+        setStep('SEARCH');
+      }
+    } else {
+      stopCamera();
+    }
+
+    return () => {
+      stopCamera();
+    };
+  }, [isOpen, targetBillNo, targetPawnId, currentPacketQr]);
+
+  // Handle switching tabs inside Step 2
+  useEffect(() => {
+    if (isOpen && step === 'SCAN') {
+      if (activeTab === 'camera') {
+        const timer = setTimeout(() => startCamera(), 250);
+        return () => clearTimeout(timer);
+      } else {
+        stopCamera();
+      }
+    }
+  }, [activeTab, step]);
+
+  // Fetch search results if availablePawns is empty and query is typed
+  useEffect(() => {
+    if (!isOpen || step !== 'SEARCH') return;
+    if (availablePawns.length > 0) return; // Use in-memory list if available
+
+    const timer = setTimeout(async () => {
+      if (!searchQuery.trim()) {
+        setRemotePawns([]);
+        return;
+      }
+      setIsSearchingRemote(true);
+      try {
+        const res = await fetch(`/api/pawns?search=${encodeURIComponent(searchQuery.trim())}`, {
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          const list = await res.json();
+          setRemotePawns(Array.isArray(list) ? list : []);
+        }
+      } catch (err) {
+        console.warn('Search remote pawns error:', err);
+      } finally {
+        setIsSearchingRemote(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, isOpen, step, availablePawns.length]);
+
+  // Filtered pawns for Step 1
+  const searchResults = useMemo(() => {
+    const pawnsSource = availablePawns.length > 0 ? availablePawns : remotePawns;
+    const q = searchQuery.toLowerCase().trim();
+
+    return pawnsSource.filter((p) => {
+      // 1. Sticker status filter
+      if (filterStickerStatus === 'NO_STICKER' && p.packet_qr) return false;
+      if (filterStickerStatus === 'HAS_STICKER' && !p.packet_qr) return false;
+
+      // 2. Query filter
+      if (!q) return true;
+      const b = (p.bill_no || '').toLowerCase();
+      const c = (p.clients?.first_name || p.customer_name || '').toLowerCase();
+      const nic = (p.clients?.national_id || '').toLowerCase();
+      const phone = (p.clients?.phone || p.phone || '').toLowerCase();
+      const desc = (p.description || '').toLowerCase();
+      return b.includes(q) || c.includes(q) || nic.includes(q) || phone.includes(q) || desc.includes(q);
+    }).slice(0, 30);
+  }, [availablePawns, remotePawns, searchQuery, filterStickerStatus]);
+
+  // Start Camera Scanner with mobile-optimized resolution & aspect
   const startCamera = async () => {
     setCameraError(null);
     try {
       if (scannerRef.current) {
         try {
-          await scannerRef.current.stop();
+          if (scannerRef.current.isScanning) {
+            await scannerRef.current.stop();
+          }
+          await scannerRef.current.clear();
         } catch (e) {}
       }
 
@@ -99,7 +231,13 @@ export default function PacketQrScannerModal({
 
       const config = {
         fps: 10,
-        qrbox: { width: 250, height: 250 },
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+          return {
+            width: Math.floor(minDim * 0.8),
+            height: Math.floor(minDim * 0.8)
+          };
+        },
         aspectRatio: 1.0
       };
 
@@ -109,14 +247,12 @@ export default function PacketQrScannerModal({
         (decodedText) => {
           handleCodeDetected(decodedText);
         },
-        () => {
-          // Frame scan error ignored
-        }
+        () => {}
       );
       setIsCameraActive(true);
     } catch (err: any) {
       console.warn('Camera start error:', err);
-      setCameraError(err?.message || 'Unable to access camera. Please allow camera permissions or use the barcode scanner input.');
+      setCameraError(err?.message || 'Unable to access camera. Please allow camera permissions or use the Barcode Scanner Gun / Input option.');
       setIsCameraActive(false);
     }
   };
@@ -129,93 +265,52 @@ export default function PacketQrScannerModal({
           await scannerRef.current.stop();
         }
         await scannerRef.current.clear();
-      } catch (e) {
-        console.warn('Error stopping scanner:', e);
-      }
+      } catch (e) {}
       scannerRef.current = null;
     }
     setIsCameraActive(false);
   };
 
-  // When modal opens/closes
-  useEffect(() => {
-    if (isOpen) {
-      setScannedCode('');
-      setManualCode('');
-      setMatchedPawn(null);
-      setManualBillNo(targetBillNo || '');
-      if (activeTab === 'camera') {
-        const timer = setTimeout(() => {
-          startCamera();
-        }, 300);
-        return () => clearTimeout(timer);
-      }
-    } else {
-      stopCamera();
-    }
-    return () => {
-      stopCamera();
-    };
-  }, [isOpen, activeTab]);
-
   // Handle scanned code
   const handleCodeDetected = async (code: string) => {
     if (!code || code.trim() === '') return;
     playBeep();
-    setScannedCode(code);
-    setManualCode(code);
+    setScannedCode(code.trim());
+    setManualCode(code.trim());
 
-    // Stop scanning while displaying result
     await stopCamera();
+    toast.success(`Packet Sticker Scanned: "${code.length > 25 ? code.substring(0, 25) + '...' : code}"`);
+  };
 
-    // If target bill is already provided, immediately offer to save or auto-save
-    if (targetBillNo || targetPawnId) {
-      toast.success(`Packet Sticker Scanned: "${code.length > 25 ? code.substring(0, 25) + '...' : code}"`);
-    } else {
-      // Global audit lookup
-      performLookup(code);
+  // Select Bill from Search (Step 1 -> Step 2)
+  const handleSelectBill = (pawn: PawnRecord) => {
+    setSelectedPawn(pawn);
+    setScannedCode(pawn.packet_qr || '');
+    setManualCode(pawn.packet_qr || '');
+    setStep('SCAN');
+    if (activeTab === 'camera') {
+      setTimeout(() => startCamera(), 250);
     }
   };
 
-  // Lookup pawn by scanned code
-  const performLookup = async (code: string) => {
-    setIsLookingUp(true);
-    try {
-      const res = await fetch(`/api/pawns/packet-lookup?qr=${encodeURIComponent(code)}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.found && json.pawn) {
-          setMatchedPawn(json.pawn);
-          setManualBillNo(json.pawn.bill_no);
-          toast.success(`Found matching Bill #${json.pawn.bill_no}!`);
-        }
-      } else {
-        setMatchedPawn(null);
-        toast.info('No existing bill paired with this sticker yet. You can pair it now below.');
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLookingUp(false);
-    }
-  };
-
-  // Save / Bind Packet QR to Bill
+  // Save / Bind Packet QR to Selected Bill
   const handleSavePacketQr = async () => {
     if (!isAuditorOrAdmin) {
       toast.error('Forbidden. Only Auditor accounts can assign packet stickers.');
       return;
     }
 
-    const codeToSave = manualCode || scannedCode;
-    const billToSave = manualBillNo || targetBillNo;
+    const codeToSave = (manualCode || scannedCode).trim();
+    const billToSave = (selectedPawn?.bill_no || targetBillNo || '').trim();
 
-    if (!codeToSave || codeToSave.trim() === '') {
-      toast.error('Please scan or enter a packet sticker QR code');
+    if (!billToSave) {
+      toast.error('Please select a bill number first');
+      setStep('SEARCH');
       return;
     }
-    if (!billToSave || billToSave.trim() === '') {
-      toast.error('Please enter or select a Bill Number to pair this sticker with');
+
+    if (!codeToSave) {
+      toast.error('Please scan or enter a packet sticker QR code');
       return;
     }
 
@@ -223,7 +318,7 @@ export default function PacketQrScannerModal({
     const toastId = toast.loading(`Binding packet sticker to Bill #${billToSave}...`);
 
     try {
-      const targetId = targetPawnId || billToSave;
+      const targetId = selectedPawn?.id || targetPawnId || billToSave;
       const res = await fetch(`/api/pawns/${encodeURIComponent(targetId)}/packet-qr`, {
         method: 'POST',
         headers: {
@@ -231,8 +326,8 @@ export default function PacketQrScannerModal({
           ...getAuthHeaders()
         },
         body: JSON.stringify({
-          packet_qr: codeToSave.trim(),
-          bill_no: billToSave.trim()
+          packet_qr: codeToSave,
+          bill_no: billToSave
         })
       });
 
@@ -243,7 +338,7 @@ export default function PacketQrScannerModal({
 
       toast.success(`Packet sticker attached to Bill #${billToSave}!`, { id: toastId });
       if (onSuccess) {
-        onSuccess(codeToSave.trim(), billToSave.trim());
+        onSuccess(codeToSave, billToSave);
       }
       onClose();
     } catch (err: any) {
@@ -256,7 +351,7 @@ export default function PacketQrScannerModal({
 
   // Delete / Unlink Packet QR from Bill
   const handleDeletePacketQr = async () => {
-    const billToDelete = manualBillNo || targetBillNo;
+    const billToDelete = selectedPawn?.bill_no || targetBillNo;
     if (!billToDelete) return;
 
     if (!isAuditorOrAdmin) {
@@ -264,7 +359,7 @@ export default function PacketQrScannerModal({
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete and unlink the packet sticker QR for Bill #${billToDelete}? Only Auditors can perform this.`)) {
+    if (!confirm(`Are you sure you want to remove and unlink the packet sticker QR for Bill #${billToDelete}?`)) {
       return;
     }
 
@@ -272,7 +367,7 @@ export default function PacketQrScannerModal({
     const toastId = toast.loading(`Deleting packet sticker for Bill #${billToDelete}...`);
 
     try {
-      const targetId = targetPawnId || billToDelete;
+      const targetId = selectedPawn?.id || targetPawnId || billToDelete;
       const res = await fetch(`/api/pawns/${encodeURIComponent(targetId)}/packet-qr`, {
         method: 'DELETE',
         headers: getAuthHeaders()
@@ -283,9 +378,12 @@ export default function PacketQrScannerModal({
         throw new Error(json.error || 'Failed to delete packet sticker QR');
       }
 
-      toast.success(`Packet sticker QR deleted for Bill #${billToDelete}`, { id: toastId });
+      toast.success(`Packet sticker QR removed from Bill #${billToDelete}`, { id: toastId });
       setScannedCode('');
       setManualCode('');
+      if (selectedPawn) {
+        setSelectedPawn({ ...selectedPawn, packet_qr: null });
+      }
       if (onSuccess) {
         onSuccess('', billToDelete);
       }
@@ -298,245 +396,470 @@ export default function PacketQrScannerModal({
     }
   };
 
+  const effectiveBillNo = selectedPawn?.bill_no || targetBillNo || '';
+  const effectiveCustomer = selectedPawn?.clients?.first_name || selectedPawn?.customer_name || customerName || '';
+  const effectiveWeight = selectedPawn?.weight 
+    ? `${selectedPawn.weight.toFixed(3)} g` 
+    : (weightFormatted || (selectedPawn?.weight_grams ? `${Number(selectedPawn.weight_grams).toFixed(2)} g` : ''));
+  const effectiveQr = selectedPawn?.packet_qr || currentPacketQr;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-xl bg-white/95 backdrop-blur-2xl border-white/60 shadow-2xl rounded-3xl p-6 overflow-hidden">
-        <DialogHeader className="pb-3 border-b border-slate-100">
+      <DialogContent 
+        className="w-[96vw] max-w-lg sm:max-w-xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col p-3.5 sm:p-5 md:p-6 bg-white/95 backdrop-blur-2xl border border-white/60 shadow-2xl rounded-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+      >
+        {/* Scoped CSS for html5-qrcode responsive scaling on mobile & tablets */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          #${readerElementId} {
+            width: 100% !important;
+            border: none !important;
+          }
+          #${readerElementId} video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            border-radius: 1rem !important;
+          }
+          #${readerElementId}__scan_region {
+            min-height: 180px !important;
+          }
+          #${readerElementId}__dashboard_section {
+            display: none !important;
+          }
+        `}} />
+
+        {/* MODAL HEADER */}
+        <DialogHeader className="pb-3 border-b border-slate-100 shrink-0">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-lg shadow-amber-500/25">
-                <QrCode className="w-6 h-6" />
-              </div>
+            <div className="flex items-center gap-2.5 sm:gap-3">
+              {step === 'SCAN' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopCamera();
+                    setStep('SEARCH');
+                  }}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-amber-50 hover:bg-amber-100 text-amber-800 flex items-center justify-center transition-all cursor-pointer shadow-2xs border border-amber-200/60 active:scale-95"
+                  title="Back to Bill Search"
+                >
+                  <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 text-amber-700" />
+                </button>
+              ) : (
+                <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center text-white shadow-lg shadow-amber-500/25 shrink-0">
+                  <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+              )}
+
               <div>
-                <DialogTitle className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                  Vault Packet Sticker Scanner
-                  <Sparkles className="w-4 h-4 text-amber-500" />
+                <DialogTitle className="text-base sm:text-xl font-black text-slate-900 tracking-tight flex items-center gap-1.5">
+                  {step === 'SEARCH' ? '1. Search & Select Bill' : '2. Scan Vault Packet Sticker'}
+                  <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
                 </DialogTitle>
-                <DialogDescription className="text-xs font-semibold text-slate-500">
-                  Scan packet sticker QR code to pair or verify physical gold packet in vault
+                <DialogDescription className="text-[11px] sm:text-xs font-semibold text-slate-500 line-clamp-1">
+                  {step === 'SEARCH' 
+                    ? 'Search bill number, customer or NIC to select ticket' 
+                    : `Attach vault sticker QR to Bill #${effectiveBillNo}`
+                  }
                 </DialogDescription>
               </div>
             </div>
           </div>
         </DialogHeader>
 
-        {/* Target Bill Info Banner (if attached to specific bill) */}
-        {targetBillNo && (
-          <div className="my-2 p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-700">Target Pawn Ticket</span>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-black text-slate-900">Bill #{targetBillNo}</span>
-                {customerName && (
-                  <Badge variant="outline" className="bg-white/80 text-slate-700 border-amber-300 font-bold text-[11px]">
-                    {customerName}
-                  </Badge>
-                )}
-              </div>
-            </div>
-            {weightFormatted && (
-              <div className="text-right">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Weight</span>
-                <div className="text-sm font-black text-amber-900">{weightFormatted}</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab Toggle: Camera vs Barcode / Manual */}
-        <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl my-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab('camera')}
-            className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
-              activeTab === 'camera' 
-                ? 'bg-white text-slate-900 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Camera className="w-4 h-4" /> Live Camera Scan
-          </button>
+        {/* STEPPER PILLS (MOBILE / TABLET TOUCH TARGETS) */}
+        <div className="flex items-center gap-1.5 sm:gap-2 pt-2 pb-1 shrink-0">
           <button
             type="button"
             onClick={() => {
-              setActiveTab('manual');
-              stopCamera();
+              if (step === 'SCAN') {
+                stopCamera();
+                setStep('SEARCH');
+              }
             }}
-            className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
-              activeTab === 'manual' 
-                ? 'bg-white text-slate-900 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-800'
+            className={`flex-1 py-2 px-3 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer min-h-[38px] active:scale-[0.99] ${
+              step === 'SEARCH'
+                ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-500/30'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            <Tag className="w-4 h-4" /> Barcode Gun / Manual Input
+            <Search className="w-3.5 h-3.5" />
+            1. Search Bill
+          </button>
+
+          <button
+            type="button"
+            disabled={!selectedPawn && !targetBillNo}
+            onClick={() => {
+              setStep('SCAN');
+              if (activeTab === 'camera') setTimeout(() => startCamera(), 250);
+            }}
+            className={`flex-1 py-2 px-3 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer min-h-[38px] disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] ${
+              step === 'SCAN'
+                ? 'bg-amber-500 text-slate-950 shadow-xs ring-2 ring-amber-500/30'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            2. Add QR Code
           </button>
         </div>
 
-        {/* Camera View */}
-        {activeTab === 'camera' && (
-          <div className="space-y-3">
-            <div className="relative w-full aspect-square max-h-[260px] bg-slate-900 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-dashed border-amber-400/40">
-              <div id={readerElementId} className="w-full h-full" />
-              
-              {!isCameraActive && !cameraError && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-white gap-2 z-10">
-                  <Camera className="w-8 h-8 text-amber-400 animate-pulse" />
-                  <p className="text-xs font-semibold text-slate-300">Initializing camera feed...</p>
-                </div>
-              )}
-
-              {cameraError && (
-                <div className="absolute inset-0 p-4 flex flex-col items-center justify-center bg-slate-950/90 text-center gap-2 z-10">
-                  <AlertTriangle className="w-8 h-8 text-rose-400" />
-                  <p className="text-xs text-rose-200 font-medium px-4">{cameraError}</p>
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={startCamera}
-                    className="mt-2 bg-white/10 text-white border-white/20 hover:bg-white/20 text-xs font-bold"
-                  >
-                    Retry Camera
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium px-1">
-              <span>Hold the gold packet sticker inside the square</span>
-              {isCameraActive && (
+        {/* ================= STEP 1: SEARCH BILL NUMBER ================= */}
+        {step === 'SEARCH' && (
+          <div className="flex-1 overflow-y-auto overscroll-contain space-y-3 py-1 pr-1 -mr-1">
+            {/* Search Input Box */}
+            <div className="relative">
+              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Input
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Type Bill No (e.g. BRL-0001), Customer, NIC..."
+                className="h-12 pl-10 pr-10 bg-slate-50 border-slate-200 text-slate-900 font-bold text-sm sm:text-base rounded-2xl focus:bg-white focus:ring-amber-500"
+              />
+              {searchQuery && (
                 <button
                   type="button"
-                  onClick={startCamera}
-                  className="text-amber-600 hover:text-amber-700 font-bold flex items-center gap-1 cursor-pointer"
+                  onClick={() => setSearchQuery('')}
+                  className="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center absolute right-2.5 top-1/2 -translate-y-1/2 cursor-pointer"
                 >
-                  <RefreshCw className="w-3 h-3" /> Refresh Feed
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
-          </div>
-        )}
 
-        {/* Barcode Gun / Manual Entry */}
-        {activeTab === 'manual' && (
-          <div className="space-y-3 py-2">
-            <div>
-              <label className="text-xs font-black uppercase tracking-wider text-slate-700 block mb-1.5">
-                Scan with Barcode Gun or Enter Sticker Code
-              </label>
-              <div className="relative">
-                <Input
-                  autoFocus
-                  value={manualCode}
-                  onChange={(e) => {
-                    setManualCode(e.target.value);
-                    if (!targetBillNo && e.target.value.trim().length > 3) {
-                      performLookup(e.target.value.trim());
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      if (manualCode.trim()) {
-                        playBeep();
-                        if (targetBillNo) {
-                          handleSavePacketQr();
-                        } else {
-                          performLookup(manualCode.trim());
-                        }
-                      }
-                    }
-                  }}
-                  placeholder="e.g. PKT-00129, RUP-GOLD-8492, or QR payload"
-                  className="h-12 bg-white border-slate-200 text-slate-900 font-mono text-sm rounded-2xl pl-10 focus:ring-amber-500"
-                />
-                <QrCode className="w-5 h-5 text-slate-400 absolute left-3 top-3.5" />
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium mt-1">
-                Tip: USB / Bluetooth Barcode Scanners work automatically — simply point and trigger the scanner button.
-              </p>
+            {/* Quick Status Filter Pills for Fast Vault Audits */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+              <button
+                type="button"
+                onClick={() => setFilterStickerStatus('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer ${
+                  filterStickerStatus === 'ALL'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Tickets
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterStickerStatus('NO_STICKER')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer flex items-center gap-1 ${
+                  filterStickerStatus === 'NO_STICKER'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100'
+                }`}
+              >
+                <AlertCircle className="w-3 h-3 text-amber-700" />
+                Needs Sticker
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterStickerStatus('HAS_STICKER')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer flex items-center gap-1 ${
+                  filterStickerStatus === 'HAS_STICKER'
+                    ? 'bg-emerald-600 text-white font-black shadow-xs'
+                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-100'
+                }`}
+              >
+                <Check className="w-3 h-3 text-emerald-600" />
+                Has Sticker
+              </button>
+            </div>
+
+            {/* Results Counter / Loading Indicator */}
+            <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-slate-500 px-1">
+              <span>{searchQuery ? 'Matching Tickets' : 'Recent Tickets'} ({searchResults.length})</span>
+              {isSearchingRemote && (
+                <span className="text-amber-600 font-bold flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Searching...
+                </span>
+              )}
+            </div>
+
+            {/* Results Scroll Area (Mobile / Tablet Optimized List) */}
+            <div className="space-y-2 max-h-[44vh] sm:max-h-[48vh] overflow-y-auto overscroll-contain pr-0.5">
+              {searchResults.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                  <Search className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold text-slate-500">
+                    {searchQuery ? `No pawn bills found matching "${searchQuery}"` : 'Type a bill number or customer name to begin'}
+                  </p>
+                </div>
+              ) : (
+                searchResults.map((pawn) => {
+                  const cust = pawn.clients?.first_name || pawn.customer_name || 'Valued Customer';
+                  const nic = pawn.clients?.national_id || '';
+                  const wt = pawn.weight 
+                    ? `${pawn.weight.toFixed(3)} g` 
+                    : pawn.weight_grams ? `${Number(pawn.weight_grams).toFixed(2)} g` : '';
+                  const hasSticker = Boolean(pawn.packet_qr);
+
+                  return (
+                    <button
+                      key={pawn.id || pawn.bill_no}
+                      type="button"
+                      onClick={() => handleSelectBill(pawn)}
+                      className="w-full text-left p-3 sm:p-3.5 bg-white hover:bg-amber-50/70 border border-slate-200 hover:border-amber-300 rounded-2xl transition-all shadow-2xs hover:shadow-sm cursor-pointer flex items-center justify-between gap-3 group active:scale-[0.98] focus:ring-2 focus:ring-amber-500"
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-black text-sm sm:text-base text-slate-900 group-hover:text-amber-700">
+                            Bill #{pawn.bill_no || pawn.id.substring(0, 8).toUpperCase()}
+                          </span>
+                          {pawn.branch_id && (
+                            <Badge variant="outline" className="bg-slate-100 text-slate-700 font-mono text-[9px] font-black px-1.5 py-0.5">
+                              {pawn.branch_id}
+                            </Badge>
+                          )}
+                          {hasSticker ? (
+                            <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 font-mono text-[9px] font-bold gap-1 px-1.5 py-0.5">
+                              <Tag className="w-2.5 h-2.5 text-emerald-600" />
+                              {pawn.packet_qr}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[9px] font-bold px-1.5 py-0.5">
+                              No Sticker
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 sm:gap-3 text-xs text-slate-600 truncate">
+                          <span className="font-bold text-slate-800 truncate flex items-center gap-1">
+                            <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            {cust} {nic ? `(${nic})` : ''}
+                          </span>
+                          {wt && (
+                            <span className="text-amber-800 font-black shrink-0 flex items-center gap-1">
+                              <Scale className="w-3.5 h-3.5 text-amber-600" />
+                              {wt}
+                            </span>
+                          )}
+                        </div>
+
+                        {pawn.description && (
+                          <p className="text-[11px] text-slate-500 font-medium truncate">
+                            {pawn.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="shrink-0 flex items-center text-amber-600 group-hover:translate-x-0.5 transition-transform">
+                        <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-amber-600" />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
 
-        {/* Scanned Result & Matched Pawn Display */}
-        {(scannedCode || manualCode) && (
-          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-400/30 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                Scanned Packet Sticker
-              </span>
+        {/* ================= STEP 2: SCAN OR ATTACH QR ================= */}
+        {step === 'SCAN' && (
+          <div className="flex-1 overflow-y-auto overscroll-contain space-y-3 py-1 pr-1 -mr-1">
+            {/* Selected Bill Card */}
+            <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 flex items-center justify-between gap-3 shadow-2xs">
+              <div className="space-y-0.5 min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-wider text-amber-700">Selected Pawn Bill</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-base sm:text-lg font-black text-slate-900 font-mono">
+                    Bill #{effectiveBillNo}
+                  </span>
+                  {effectiveCustomer && (
+                    <Badge variant="outline" className="bg-white/90 text-slate-800 border-amber-300 font-bold text-[10px] sm:text-[11px] truncate max-w-[130px] sm:max-w-[160px]">
+                      {effectiveCustomer}
+                    </Badge>
+                  )}
+                </div>
+                {effectiveWeight && (
+                  <div className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                    <Scale className="w-3 h-3 text-amber-600" /> Total Weight: {effectiveWeight}
+                  </div>
+                )}
+              </div>
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  stopCamera();
+                  setStep('SEARCH');
+                }}
+                className="h-8 px-2.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 rounded-xl shrink-0 cursor-pointer shadow-2xs"
+              >
+                Change Bill
+              </Button>
+            </div>
+
+            {/* Current Sticker Status (if already paired) */}
+            {effectiveQr && (
+              <div className="p-2.5 sm:p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center justify-between gap-2 shadow-2xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Tag className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-black uppercase text-emerald-800 block">Current Packet Sticker:</span>
+                    <span className="font-mono text-xs font-black text-slate-900 truncate block">
+                      {effectiveQr}
+                    </span>
+                  </div>
+                </div>
+                <Badge className="bg-emerald-600 text-white font-bold text-[10px] shrink-0">
+                  Paired
+                </Badge>
+              </div>
+            )}
+
+            {/* Tab Switcher: Camera vs Barcode Gun */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setActiveTab('camera')}
+                className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer min-h-[38px] ${
+                  activeTab === 'camera' 
+                    ? 'bg-white text-slate-900 shadow-xs' 
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Camera className="w-4 h-4" /> Live Camera
+              </button>
               <button
                 type="button"
                 onClick={() => {
-                  setScannedCode('');
-                  setManualCode('');
-                  setMatchedPawn(null);
-                  if (activeTab === 'camera') startCamera();
+                  setActiveTab('manual');
+                  stopCamera();
                 }}
-                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer min-h-[38px] ${
+                  activeTab === 'manual' 
+                    ? 'bg-white text-slate-900 shadow-xs' 
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
               >
-                Clear / Re-scan
+                <Tag className="w-4 h-4" /> Barcode Gun / Input
               </button>
             </div>
-            <div className="font-mono text-xs font-black text-slate-900 break-all bg-white/80 p-2.5 rounded-xl border border-amber-200">
-              {manualCode || scannedCode}
-            </div>
 
-            {/* If not pre-targeted bill, allow specifying or confirms matched bill */}
-            {!targetBillNo && (
-              <div className="pt-2 border-t border-amber-200/50 space-y-2">
-                {matchedPawn ? (
-                  <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
-                    <div>
-                      <div className="text-[10px] font-black uppercase text-emerald-700">Paired Pawn Ticket</div>
-                      <div className="text-sm font-black text-slate-900">Bill #{matchedPawn.bill_no}</div>
-                      <div className="text-xs text-slate-600">
-                        {matchedPawn.clients?.first_name || matchedPawn.customer_name} • {matchedPawn.weight?.toFixed(3) || '0.000'} g
-                      </div>
+            {/* Live Camera Viewport (Mobile & Tablet Friendly Aspect Box) */}
+            {activeTab === 'camera' && (
+              <div className="space-y-2">
+                <div className="relative w-full max-w-[270px] sm:max-w-[310px] aspect-square bg-slate-900 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-dashed border-amber-400/50 mx-auto shadow-inner">
+                  <div id={readerElementId} className="w-full h-full" />
+                  
+                  {!isCameraActive && !cameraError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/85 text-white gap-2 z-10">
+                      <Camera className="w-8 h-8 text-amber-400 animate-pulse" />
+                      <p className="text-xs font-semibold text-slate-300">Activating camera feed...</p>
                     </div>
-                    <Link
-                      href={`/dashboard/auditor/verify/${matchedPawn.id || matchedPawn.bill_no}`}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1"
+                  )}
+
+                  {cameraError && (
+                    <div className="absolute inset-0 p-4 flex flex-col items-center justify-center bg-slate-950/90 text-center gap-2 z-10">
+                      <AlertTriangle className="w-7 h-7 text-rose-400" />
+                      <p className="text-xs text-rose-200 font-medium px-2">{cameraError}</p>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={startCamera}
+                        className="mt-1 bg-white/10 text-white border-white/20 hover:bg-white/20 text-xs font-bold"
+                      >
+                        Retry Camera
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium px-1">
+                  <span>Hold packet sticker QR code in frame</span>
+                  {isCameraActive && (
+                    <button
+                      type="button"
+                      onClick={startCamera}
+                      className="text-amber-600 hover:text-amber-700 font-bold flex items-center gap-1 cursor-pointer"
                     >
-                      Audit View <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </div>
-                ) : (
-                  <div>
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-700 block mb-1">
-                      Assign to Bill Number
-                    </label>
-                    <Input
-                      value={manualBillNo}
-                      onChange={(e) => setManualBillNo(e.target.value.toUpperCase())}
-                      placeholder="e.g. BRL-0001, KOT-0042"
-                      className="h-10 bg-white font-bold text-xs uppercase rounded-xl border-slate-200"
-                    />
-                  </div>
-                )}
+                      <RefreshCw className="w-3 h-3" /> Refresh Feed
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Barcode Gun / Manual Input */}
+            {activeTab === 'manual' && (
+              <div className="space-y-2 py-1">
+                <label className="text-xs font-black uppercase tracking-wider text-slate-700 block">
+                  Scan with Barcode Gun or Enter Sticker Code
+                </label>
+                <div className="relative">
+                  <Input
+                    autoFocus
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (manualCode.trim()) {
+                          playBeep();
+                          handleSavePacketQr();
+                        }
+                      }
+                    }}
+                    placeholder="e.g. PKT-00129, RUP-GOLD-8492, or QR payload"
+                    className="h-12 bg-white border-slate-200 text-slate-900 font-mono text-sm sm:text-base rounded-2xl pl-10 focus:ring-amber-500"
+                  />
+                  <QrCode className="w-5 h-5 text-slate-400 absolute left-3 top-3.5" />
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Trigger hardware scanner gun directly into this input box.
+                </p>
+              </div>
+            )}
+
+            {/* Scanned Result Banner */}
+            {(scannedCode || manualCode) && (
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-400/40 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Detected Sticker Code
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannedCode('');
+                      setManualCode('');
+                      if (activeTab === 'camera') startCamera();
+                    }}
+                    className="text-[10px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                  >
+                    Clear / Re-scan
+                  </button>
+                </div>
+                <div className="font-mono text-xs sm:text-sm font-black text-slate-900 break-all bg-white p-2.5 rounded-xl border border-amber-200">
+                  {manualCode || scannedCode}
+                </div>
               </div>
             )}
           </div>
         )}
 
+        {/* ROLE SECURITY NOTICE IF NOT AUDITOR */}
         {!isAuditorOrAdmin && (
-          <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 flex items-center gap-2.5 text-xs font-bold text-amber-900">
+          <div className="p-2.5 bg-amber-50 rounded-2xl border border-amber-200 flex items-center gap-2 text-xs font-bold text-amber-900 shrink-0 my-1">
             <Lock className="w-4 h-4 text-amber-600 shrink-0" />
             <span>Read-Only mode: Only Auditor accounts can attach or delete packet stickers.</span>
           </div>
         )}
 
-        {/* Action Buttons */}
-        <div className="flex items-center justify-between gap-2.5 pt-3 border-t border-slate-100">
+        {/* MODAL FOOTER / ACTIONS (MOBILE & TABLET STICKY FOOTER) */}
+        <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
           <div>
-            {(targetBillNo || manualBillNo) && (currentPacketQr || scannedCode) && isAuditorOrAdmin && (
+            {step === 'SCAN' && effectiveQr && isAuditorOrAdmin && (
               <Button
                 type="button"
                 variant="outline"
                 disabled={isDeleting || isSubmitting}
                 onClick={handleDeletePacketQr}
-                className="h-11 px-4 rounded-2xl text-xs font-black uppercase tracking-wider text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200 flex items-center gap-1.5 cursor-pointer"
+                className="h-11 px-3 sm:px-4 rounded-2xl text-xs font-black uppercase tracking-wider text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200 flex items-center gap-1.5 cursor-pointer active:scale-95"
                 title="Permanently remove packet sticker from this bill"
               >
                 {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -545,28 +868,31 @@ export default function PacketQrScannerModal({
             )}
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="ghost"
               onClick={onClose}
-              className="h-11 px-5 rounded-2xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              className="h-11 px-4 sm:px-5 rounded-2xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              disabled={(!manualCode && !scannedCode) || isSubmitting || !isAuditorOrAdmin}
-              onClick={handleSavePacketQr}
-              className="h-11 px-6 rounded-2xl text-xs font-black uppercase tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-lg shadow-amber-500/25 flex items-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <ShieldCheck className="w-4 h-4" />
-              )}
-              Save & Pair Packet Sticker
-            </Button>
+
+            {step === 'SCAN' && (
+              <Button
+                type="button"
+                disabled={(!manualCode && !scannedCode) || isSubmitting || !isAuditorOrAdmin}
+                onClick={handleSavePacketQr}
+                className="h-11 px-4 sm:px-6 rounded-2xl text-xs font-black uppercase tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-lg shadow-amber-500/25 flex items-center gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                {isSubmitting ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4" />
+                )}
+                Save Sticker
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>
