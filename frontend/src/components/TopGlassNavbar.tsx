@@ -95,10 +95,11 @@ const navGroups = [
 ];
 
 const auditorNavItems = [
+  { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
   { name: 'Customers', href: '/clients', icon: Users },
   { name: 'Pawnings', href: '/loans', icon: Wallet },
   { name: 'Vault Stock', href: '/operations/eod?tab=stock', icon: Layers },
-  { name: 'Audit Logs', href: '/operations/audit-logs', icon: ShieldCheck },
+  { name: 'Audit Logs', href: '/operations/audit-logs', icon: History },
 ];
 
 const tellerNavItems = [

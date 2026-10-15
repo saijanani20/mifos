@@ -94,8 +94,10 @@ const tellerNavItems = [
 
 const auditorNavItems = [
   { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
+  { name: 'Vault Stock', href: '/operations/eod?tab=stock', icon: Layers },
   { name: 'System Logs', href: '/operations/audit-logs', icon: FileText },
   { name: 'CCTV Logs', href: '/cctv/audit-logs', icon: Video },
+  { name: 'Financial Reports', href: '/accounting/reports', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: UserCircle },
 ];
 

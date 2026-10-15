@@ -16,11 +16,13 @@ import {
   CheckCircle2, AlertTriangle, Clock, Building2, User, UserCheck,
   Calendar, DollarSign, Scale, FileText, Check, AlertCircle,
   HelpCircle, Sparkles, ChevronRight, X,
-  RotateCcw, Zap, Database, Package, Loader2, ExternalLink, Download
+  RotateCcw, Zap, Database, Package, Loader2, ExternalLink, Download,
+  QrCode, Tag
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
 import { cn } from '@/lib/utils';
+import PacketQrScannerModal from '@/components/PacketQrScannerModal';
 
 interface PawnItem {
   id: string;
@@ -62,6 +64,7 @@ interface PawnTransaction {
   water_weight_photo_url?: string;
   evaluation_air_weight?: number;
   evaluation_water_weight?: number;
+  packet_qr?: string;
   items?: PawnItem[];
 }
 
@@ -92,6 +95,11 @@ export default function AuditorDashboard() {
   const [auditDecision, setAuditDecision] = useState<'PASSED' | 'FLAGGED' | 'IN_REVIEW'>('PASSED');
   const [auditNotes, setAuditNotes] = useState('');
   const [isSavingAudit, setIsSavingAudit] = useState(false);
+
+  // Packet Sticker QR Scanner State
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerTargetPawn, setScannerTargetPawn] = useState<PawnTransaction | null>(null);
+  const [packetFilter, setPacketFilter] = useState<'ALL' | 'ATTACHED' | 'MISSING'>('ALL');
 
   // View & Redis Inventory Cache State
   const [activeTab, setActiveTab] = useState<'pawns' | 'inventory'>('pawns');
@@ -302,9 +310,17 @@ export default function AuditorDashboard() {
         return false;
       }
 
+      // 4. Packet Sticker Filter
+      if (packetFilter === 'ATTACHED' && !p.packet_qr) {
+        return false;
+      }
+      if (packetFilter === 'MISSING' && p.packet_qr) {
+        return false;
+      }
+
       return true;
     });
-  }, [pawns, auditMap, searchQuery, auditStatusFilter, pawnStatusFilter, selectedBranch]);
+  }, [pawns, auditMap, searchQuery, auditStatusFilter, pawnStatusFilter, selectedBranch, packetFilter]);
 
   // Summary Metrics
   const stats = useMemo(() => {
@@ -313,8 +329,16 @@ export default function AuditorDashboard() {
     let passed = 0;
     let flagged = 0;
     let totalPortfolioAudited = 0;
+    let stickeredCount = 0;
+    let missingStickerCount = 0;
 
     pawns.forEach((p) => {
+      if (p.packet_qr) {
+        stickeredCount++;
+      } else {
+        missingStickerCount++;
+      }
+
       const rec = auditMap[p.bill_no];
       if (!rec) {
         pending++;
@@ -328,7 +352,7 @@ export default function AuditorDashboard() {
       }
     });
 
-    return { total, pending, passed, flagged, totalPortfolioAudited };
+    return { total, pending, passed, flagged, totalPortfolioAudited, stickeredCount, missingStickerCount };
   }, [pawns, auditMap]);
 
   // Open Audit Review Modal
@@ -634,6 +658,19 @@ export default function AuditorDashboard() {
             {forceExpireCache ? 'Force Reload' : 'Reload'}
           </Button>
 
+          {/* Scan Vault Packet QR Button */}
+          <Button
+            onClick={() => {
+              setScannerTargetPawn(null);
+              setIsScannerOpen(true);
+            }}
+            className="h-11 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-xl gap-2 shadow-lg shadow-amber-500/25 cursor-pointer transition-all border-none"
+            title="Scan Vault Packet Sticker QR code with live camera or barcode gun"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Scan Packet QR</span>
+          </Button>
+
           {/* Export Report (CSV) Button */}
           <Button
             variant="outline"
@@ -857,6 +894,45 @@ export default function AuditorDashboard() {
                   </button>
                 ))}
               </div>
+
+              {/* Packet Sticker Filter Tabs */}
+              <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl shrink-0 w-full md:w-auto overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setPacketFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
+                    packetFilter === 'ALL'
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All Packets
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPacketFilter('ATTACHED')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                    packetFilter === 'ATTACHED'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Tag className="w-3.5 h-3.5" />
+                  Stickers Attached ({stats.stickeredCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPacketFilter('MISSING')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                    packetFilter === 'MISSING'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  No Sticker ({stats.missingStickerCount})
+                </button>
+              </div>
             </div>
           </div>
 
@@ -886,6 +962,7 @@ export default function AuditorDashboard() {
                     <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6">Item / Gold Details</TableHead>
                     <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6 text-center">Proofs</TableHead>
                     <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6 text-center">Loan Status</TableHead>
+                    <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6 text-center">Packet Sticker</TableHead>
                     <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6 text-center">Audit Status</TableHead>
                     <TableHead className="font-black text-xs uppercase tracking-wider text-slate-700 py-4 px-6 text-right">Action</TableHead>
                   </TableRow>
@@ -893,14 +970,14 @@ export default function AuditorDashboard() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-12 text-slate-500 font-semibold">
+                      <TableCell colSpan={10} className="text-center py-12 text-slate-500 font-semibold">
                         <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-amber-600 mb-2" />
                         Loading transactions for audit...
                       </TableCell>
                     </TableRow>
                   ) : filteredPawns.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-12 text-slate-500 font-semibold">
+                      <TableCell colSpan={10} className="text-center py-12 text-slate-500 font-semibold">
                         <ShieldCheck className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                         No transactions match your search or filter criteria.
                       </TableCell>
@@ -1037,6 +1114,38 @@ export default function AuditorDashboard() {
                                 ? '✓ AUDITED • PENDING MGR'
                                 : pawn.status}
                             </Badge>
+                          </TableCell>
+
+                          {/* Packet Sticker */}
+                          <TableCell className="px-6 py-4 text-center">
+                            {pawn.packet_qr ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setScannerTargetPawn(pawn);
+                                  setIsScannerOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-mono text-[10px] font-black shadow-2xs transition-all cursor-pointer"
+                                title={`Packet Sticker QR: ${pawn.packet_qr} (Click to re-scan / change)`}
+                              >
+                                <Tag className="w-3 h-3 text-emerald-600" />
+                                <span className="max-w-[85px] truncate">{pawn.packet_qr}</span>
+                              </button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setScannerTargetPawn(pawn);
+                                  setIsScannerOpen(true);
+                                }}
+                                className="h-7 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 font-black text-[10px] rounded-lg shadow-2xs flex items-center gap-1 cursor-pointer"
+                                title="Scan and link sticker QR code"
+                              >
+                                <QrCode className="w-3 h-3 text-amber-600" />
+                                Scan Sticker
+                              </Button>
+                            )}
                           </TableCell>
 
                           {/* Audit Status */}
@@ -1745,6 +1854,29 @@ export default function AuditorDashboard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Vault Packet Sticker QR Scanner Modal */}
+      <PacketQrScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => {
+          setIsScannerOpen(false);
+          setScannerTargetPawn(null);
+        }}
+        targetBillNo={scannerTargetPawn?.bill_no}
+        targetPawnId={scannerTargetPawn?.id}
+        currentPacketQr={scannerTargetPawn?.packet_qr}
+        customerName={scannerTargetPawn?.clients?.first_name || scannerTargetPawn?.customer_name}
+        weightFormatted={scannerTargetPawn?.weight ? `${scannerTargetPawn.weight.toFixed(3)} g` : undefined}
+        onSuccess={(scannedQr, billNo) => {
+          // Immediately update pawns state in place
+          setPawns((prev) => prev.map((p) => {
+            if (p.bill_no === billNo || (scannerTargetPawn && p.id === scannerTargetPawn.id)) {
+              return { ...p, packet_qr: scannedQr };
+            }
+            return p;
+          }));
+        }}
+      />
     </div>
   );
 }

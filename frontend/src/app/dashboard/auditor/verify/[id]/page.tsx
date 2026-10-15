@@ -12,11 +12,13 @@ import {
   Scale, FileText, Camera, DollarSign, Package, AlertTriangle,
   CheckCircle2, Clock, Building2, Eye, ExternalLink, RefreshCcw,
   Check, X, AlertCircle, Sparkles, Layers, Image as ImageIcon,
-  Upload, PenTool, RotateCcw, Loader2, CameraOff, Video
+  Upload, PenTool, RotateCcw, Loader2, CameraOff, Video,
+  QrCode, Tag
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
 import { cn } from '@/lib/utils';
+import PacketQrScannerModal from '@/components/PacketQrScannerModal';
 
 const ISSUE_AREAS = [
   'Customer details',
@@ -25,6 +27,7 @@ const ISSUE_AREAS = [
   'Weight',
   'Karat',
   'Physical item',
+  'Packet sticker QR',
   'Uploaded image',
   'Document',
   'Stock',
@@ -50,6 +53,11 @@ export default function AuditorVerificationPage() {
   const [quantityMatches, setQuantityMatches] = useState<boolean | null>(null);
   const [observedWeight, setObservedWeight] = useState('');
   const [observedKarat, setObservedKarat] = useState('');
+
+  // Section 5: Vault Packet Sticker QR
+  const [packetQr, setPacketQr] = useState<string | null>(null);
+  const [packetVerified, setPacketVerified] = useState<boolean | null>(null);
+  const [isPacketScannerOpen, setIsPacketScannerOpen] = useState<boolean>(false);
 
   // Section 5: Stock Verification
   const [stockVerified, setStockVerified] = useState<boolean | null>(null);
@@ -317,6 +325,25 @@ export default function AuditorVerificationPage() {
       const resJson = await res.json();
       setData(resJson);
 
+      // Fetch packet sticker QR
+      if (resJson.pawn?.packet_qr) {
+        setPacketQr(resJson.pawn.packet_qr);
+        setPacketVerified(true);
+      } else {
+        try {
+          const qrRes = await fetch(`/api/pawns/${id}/packet-qr`, { headers: getAuthHeaders() });
+          if (qrRes.ok) {
+            const qrJson = await qrRes.json();
+            if (qrJson.packet_qr) {
+              setPacketQr(qrJson.packet_qr);
+              setPacketVerified(true);
+            }
+          }
+        } catch (e) {
+          console.warn('Error fetching packet QR:', e);
+        }
+      }
+
       // Pre-fill if prior audit log exists for this bill
       if (resJson.auditHistory && resJson.auditHistory.length > 0) {
         const latest = resJson.auditHistory[0];
@@ -339,6 +366,8 @@ export default function AuditorVerificationPage() {
         }
         if (det.stockVerified !== undefined) setStockVerified(det.stockVerified);
         if (det.cashVerified !== undefined) setCashVerified(det.cashVerified);
+        if (det.packetVerified !== undefined) setPacketVerified(det.packetVerified);
+        if (det.packetQr && !packetQr) setPacketQr(det.packetQr);
       } else {
         const defaultKarat = resJson.items?.[0]?.purity || resJson.pawn?.purity || '22K';
         setObservedKarat(defaultKarat);
@@ -435,6 +464,7 @@ export default function AuditorVerificationPage() {
     if (quantityMatches === null) setQuantityMatches(true);
     if (stockVerified === null) setStockVerified(true);
     if (cashVerified === null) setCashVerified(true);
+    if (packetVerified === null && packetQr) setPacketVerified(true);
 
     // Pre-check the certification checkbox so modal is immediately ready
     setAuditorCertified(true);
@@ -462,7 +492,9 @@ export default function AuditorVerificationPage() {
             observedWeight: observedWeight ? parseFloat(observedWeight) : null,
             observedKarat: observedKarat || null,
             stockVerified: stockVerified !== false,
-            cashVerified: cashVerified !== false
+            cashVerified: cashVerified !== false,
+            packetVerified: packetVerified !== false,
+            packetQr: packetQr || null
           },
           notes: auditNotes || 'All verification checks completed and confirmed correct.',
           confirmed: true
@@ -524,7 +556,9 @@ export default function AuditorVerificationPage() {
             observedWeight: observedWeight ? parseFloat(observedWeight) : null,
             observedKarat: observedKarat || null,
             stockVerified,
-            cashVerified
+            cashVerified,
+            packetVerified,
+            packetQr: packetQr || null
           },
           auditor_email: user?.email || 'Branch Auditor',
           audited_at: new Date().toISOString()
@@ -1560,6 +1594,69 @@ export default function AuditorVerificationPage() {
                   </div>
                 </div>
               </div>
+
+              {/* 6. Vault Packet Sealed & Sticker QR Scanned */}
+              <div className="p-3 bg-white rounded-2xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <QrCode className="w-4 h-4 text-amber-600" />
+                    <span>6. Vault Packet Sealed & Sticker QR?</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setPacketVerified(true)}
+                      className={`px-2.5 py-1 rounded-lg font-black text-[10px] cursor-pointer transition-all ${
+                        packetVerified === true ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Verified
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPacketVerified(false)}
+                      className={`px-2.5 py-1 rounded-lg font-black text-[10px] cursor-pointer transition-all ${
+                        packetVerified === false ? 'bg-rose-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Missing
+                    </button>
+                  </div>
+                </div>
+
+                {packetQr ? (
+                  <div className="flex items-center justify-between bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <Tag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <div className="overflow-hidden">
+                        <span className="text-[9px] font-bold text-emerald-700 block uppercase">Packet Sticker Paired:</span>
+                        <span className="font-mono text-xs font-black text-slate-900 truncate block">
+                          {packetQr}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsPacketScannerOpen(true)}
+                      className="h-7 px-2.5 text-[10px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 border-emerald-300 rounded-lg shrink-0 cursor-pointer"
+                    >
+                      Re-scan
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between bg-amber-50/80 p-2.5 rounded-xl border border-amber-200">
+                    <span className="text-[10px] text-amber-800 font-bold">No sticker QR scanned yet</span>
+                    <Button
+                      size="sm"
+                      onClick={() => setIsPacketScannerOpen(true)}
+                      className="h-7 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <QrCode className="w-3 h-3" /> Scan Packet Sticker
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2142,6 +2239,26 @@ export default function AuditorVerificationPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Packet Sticker QR Scanner Modal */}
+      <PacketQrScannerModal
+        isOpen={isPacketScannerOpen}
+        onClose={() => setIsPacketScannerOpen(false)}
+        targetBillNo={data?.pawn?.bill_no || id}
+        targetPawnId={data?.pawn?.id || id}
+        currentPacketQr={packetQr || undefined}
+        customerName={data?.client?.first_name || data?.pawn?.customer_name}
+        weightFormatted={grossWeightGrams ? `${grossWeightGrams.toFixed(3)} g` : undefined}
+        onSuccess={(scannedCode) => {
+          if (scannedCode) {
+            setPacketQr(scannedCode);
+            setPacketVerified(true);
+          } else {
+            setPacketQr(null);
+            setPacketVerified(false);
+          }
+        }}
+      />
     </div>
   );
 }

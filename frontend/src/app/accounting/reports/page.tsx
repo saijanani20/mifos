@@ -33,7 +33,7 @@ export default function FinancialReportsPage() {
       if (u) setUserRole(u.role || 'TELLER');
 
       const params = new URLSearchParams({
-        branchId: u?.role === 'ADMIN' ? filterBranch : (u?.branchId || 'HQ')
+        branchId: (u?.role === 'ADMIN' || u?.role === 'AUDITOR') ? filterBranch : (u?.branchId || 'HQ')
       });
 
       const res = await fetch(`/api/reports/financials?${params}`);
@@ -85,7 +85,7 @@ export default function FinancialReportsPage() {
         </div>
 
         <div className="flex items-center gap-3 w-full md:w-auto">
-          {userRole === 'ADMIN' && (
+          {(userRole === 'ADMIN' || userRole === 'AUDITOR') && (
             <Select value={filterBranch} onValueChange={(v) => v && setFilterBranch(v)}>
               <SelectTrigger className="h-12 w-44 bg-white/70 border-white/40 font-black text-[11px] uppercase tracking-widest rounded-2xl shadow-lg">
                 <Filter className="w-3.5 h-3.5 mr-2 text-slate-400" />

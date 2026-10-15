@@ -82,6 +82,33 @@ export async function GET(request: Request) {
       console.warn('Could not fetch evaluation photos for pawns:', e);
     }
 
+    // Fetch packet sticker QR from audit_logs
+    let packetQrByBillMap: Record<string, string | null> = {};
+    try {
+      const { data: packetLogs } = await adminSupabase
+        .from('audit_logs')
+        .select('resource, details, action')
+        .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
+        .order('created_at', { ascending: true });
+
+      if (packetLogs) {
+        packetLogs.forEach((l: any) => {
+          const b = (l.resource || l.details?.bill_no || '').trim();
+          if (b) {
+            if (l.action === 'PACKET_STICKER_DELETED') {
+              packetQrByBillMap[b] = null;
+              packetQrByBillMap[b.toUpperCase()] = null;
+            } else if (l.action === 'PACKET_STICKER_ATTACHED' && l.details?.packet_qr) {
+              packetQrByBillMap[b] = l.details.packet_qr;
+              packetQrByBillMap[b.toUpperCase()] = l.details.packet_qr;
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Could not fetch packet sticker QR logs:', e);
+    }
+
     const mappedData = (data || []).map((pawn: any) => {
        const pItems = itemsMap[pawn.id] || [];
        let totalWeight = (parseFloat(pawn.weight_grams) || 0) + ((parseFloat(pawn.weight_mg) || 0) / 1000);
@@ -118,6 +145,12 @@ export async function GET(request: Request) {
          pawn.water_weight_photo_url = matchedEval.water_weight_photo_url;
          pawn.evaluation_air_weight = matchedEval.air_weight;
          pawn.evaluation_water_weight = matchedEval.water_weight;
+       }
+
+       if (packetQrByBillMap[cleanBill] === null || packetQrByBillMap[cleanBill.toUpperCase()] === null) {
+         pawn.packet_qr = null;
+       } else {
+         pawn.packet_qr = packetQrByBillMap[cleanBill] || packetQrByBillMap[cleanBill.toUpperCase()] || pawn.packet_qr || null;
        }
 
        return pawn;

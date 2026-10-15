@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     }
 
     const normalizedRole = (role || 'TELLER').toUpperCase();
-    if ((normalizedRole === 'TELLER' || normalizedRole === 'AUDITOR' || normalizedRole === 'MANAGER') && (branchId === 'HQ' || branchId === 'HEAD OFFICE')) {
+    if ((normalizedRole === 'TELLER' || normalizedRole === 'MANAGER') && (branchId === 'HQ' || branchId === 'HEAD OFFICE')) {
       return NextResponse.json({ error: `${normalizedRole} accounts must be assigned to an operating branch, not Head Office.` }, { status: 400 });
     }
 
