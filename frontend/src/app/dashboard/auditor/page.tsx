@@ -17,7 +17,7 @@ import {
   Calendar, DollarSign, Scale, FileText, Check, AlertCircle,
   HelpCircle, Sparkles, ChevronRight, X,
   RotateCcw, Zap, Database, Package, Loader2, ExternalLink, Download,
-  QrCode, Tag
+  QrCode, Tag, ChevronDown, SlidersHorizontal
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
@@ -88,6 +88,7 @@ export default function AuditorDashboard() {
   const [selectedBranch, setSelectedBranch] = useState<string>('ALL');
   const [auditStatusFilter, setAuditStatusFilter] = useState<'ALL' | 'PENDING' | 'PASSED' | 'FLAGGED'>('ALL');
   const [pawnStatusFilter, setPawnStatusFilter] = useState<'ALL' | 'ACTIVE' | 'AUDITED_PENDING_APPROVAL' | 'PENDING_APPROVAL' | 'REQUIRES_RECHECK' | 'REDEEMED'>('ALL');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   // Modal State
   const [selectedPawn, setSelectedPawn] = useState<PawnTransaction | null>(null);
@@ -579,179 +580,184 @@ export default function AuditorDashboard() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 max-w-[1600px] mx-auto pb-12">
-      {/* Top Banner */}
-      <div className="glass p-6 sm:p-8 rounded-3xl border border-amber-500/20 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative overflow-hidden bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Badge className="bg-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-widest px-3 py-0.5 rounded-full border-transparent shadow-sm">
+      {/* Top Banner (Desktop & Mobile Responsive) */}
+      <div className="glass p-4 sm:p-6 lg:p-8 rounded-3xl border border-amber-500/20 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 relative overflow-hidden bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent">
+        <div className="space-y-1.5 sm:space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge className="bg-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-widest px-2.5 py-0.5 rounded-full border-transparent shadow-sm">
               <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Auditor Portal
             </Badge>
-            <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
-              <Building2 className="w-3.5 h-3.5 text-amber-600" />
-              Scope: <strong className="text-slate-900 font-black">{selectedBranch === 'ALL' ? 'All Branches (incl. Head Office)' : selectedBranch}</strong>
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500 flex items-center gap-1">
+              <Building2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              Scope: <strong className="text-slate-900 font-black truncate max-w-[200px]">{selectedBranch === 'ALL' ? 'All Branches' : selectedBranch}</strong>
             </span>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-900 tracking-tight">
             Pawn <span className="text-amber-600">Audit Dashboard</span>
           </h1>
-          <p className="text-slate-600 text-sm font-semibold max-w-2xl">
+          <p className="text-slate-600 text-xs sm:text-sm font-semibold max-w-2xl hidden sm:block">
             Audit and verify collateral weights, loan amounts, scale photographic proofs, and loan tickets across all operating branches and Head Office.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {/* Redis Cache Status Pill */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white/90 shadow-xs text-[11px] font-bold">
-            <Database className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span className="text-slate-500">Cache:</span>
-            {inventoryCacheStatus === 'HIT' ? (
-              <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md font-black flex items-center gap-1 text-[10px]">
-                <Zap className="w-3 h-3 text-emerald-600" /> HIT (Redis L1)
-              </span>
-            ) : inventoryCacheStatus === 'MISS' ? (
-              <span className="text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-md font-black text-[10px]">
-                MISS (PostgreSQL)
-              </span>
-            ) : (
-              <span className="text-slate-600 font-mono text-[10px]">READY</span>
-            )}
-          </div>
-
-          {/* Auditor Check Button to reset/force expire Redis cache */}
-          <label 
-            className={cn(
-              "flex items-center gap-2 cursor-pointer border px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all select-none shadow-xs h-11",
-              forceExpireCache 
-                ? "bg-amber-500 border-amber-600 text-slate-950 shadow-amber-500/20 ring-2 ring-amber-500/30" 
-                : "bg-amber-50/90 hover:bg-amber-100 border-amber-200/90 text-amber-900"
-            )}
-            title="Check button to reset/force expire the Redis cache of the inventory on reload"
-          >
-            <input
-              type="checkbox"
-              checked={forceExpireCache}
-              onChange={(e) => setForceExpireCache(e.target.checked)}
-              className="w-4 h-4 accent-amber-600 rounded cursor-pointer"
-            />
-            <span className="flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5" />
-              Force Expire Cache
-            </span>
-          </label>
-
-          {/* Reload Button (Uses Cache by Default) */}
-          <Button
-            variant="outline"
-            onClick={handleReload}
-            disabled={loading || loadingInventory || isInvalidatingCache}
-            className={cn(
-              "h-11 px-5 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-2 shadow-xs cursor-pointer transition-all",
-              forceExpireCache && "border-amber-500 bg-amber-500/10 hover:bg-amber-500/20 text-amber-950 font-black"
-            )}
-            title={forceExpireCache ? "Reload and force-expire Redis inventory cache" : "Reload using Redis cache by default"}
-          >
-            {(loading || loadingInventory || isInvalidatingCache) ? (
-              <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
-            ) : (
-              <RotateCcw className="w-4 h-4 text-slate-700" />
-            )}
-            {forceExpireCache ? 'Force Reload' : 'Reload'}
-          </Button>
-
-          {/* Scan Vault Packet QR Button */}
+        {/* Mobile & Tablet Optimized Action Bar */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap lg:flex-nowrap items-stretch sm:items-center gap-2 sm:gap-3 shrink-0">
+          {/* Primary Action Button: Scan Packet QR (Full Width on Mobile) */}
           <Button
             onClick={() => {
               setScannerTargetPawn(null);
               setIsScannerOpen(true);
             }}
-            className="h-11 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-xl gap-2 shadow-lg shadow-amber-500/25 cursor-pointer transition-all border-none"
+            className="h-12 sm:h-11 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-xl gap-2 shadow-lg shadow-amber-500/25 cursor-pointer transition-all border-none w-full sm:w-auto flex items-center justify-center order-1 sm:order-2 active:scale-95"
             title="Scan Vault Packet Sticker QR code with live camera or barcode gun"
           >
             <QrCode className="w-4 h-4" />
             <span>Scan Packet QR</span>
           </Button>
 
-          {/* Export Report (CSV) Button */}
-          <Button
-            variant="outline"
-            onClick={activeTab === 'inventory' ? handleExportInventoryReport : handleExportAuditReport}
-            className="h-11 px-4 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-2 shadow-xs cursor-pointer transition-all"
-            title="Export filtered records as CSV audit report"
-          >
-            <Download className="w-4 h-4 text-amber-600" />
-            <span>Export Report (CSV)</span>
-          </Button>
-
-          {/* Link to Full Activity Audit Trail */}
-          <Link href="/operations/audit-logs">
+          {/* Quick Toolbar for Secondary Actions (Compact 3-button Row on Mobile) */}
+          <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-2 order-2 sm:order-1">
+            {/* Reload Button */}
             <Button
               variant="outline"
-              className="h-11 px-4 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-1.5 shadow-xs cursor-pointer transition-all"
-              title="Open system-wide activity audit logs trail"
+              onClick={handleReload}
+              disabled={loading || loadingInventory || isInvalidatingCache}
+              className={cn(
+                "h-10 sm:h-11 px-3 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-1.5 shadow-xs cursor-pointer justify-center",
+                forceExpireCache && "border-amber-500 bg-amber-500/10 text-amber-950 font-black"
+              )}
+              title={forceExpireCache ? "Reload and force-expire Redis inventory cache" : "Reload using Redis cache by default"}
             >
-              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-              <span>Audit Trail</span>
+              {(loading || loadingInventory || isInvalidatingCache) ? (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+              ) : (
+                <RotateCcw className="w-4 h-4 text-slate-700" />
+              )}
+              <span className="truncate">{forceExpireCache ? 'Expire' : 'Reload'}</span>
             </Button>
-          </Link>
+
+            {/* Export CSV Button */}
+            <Button
+              variant="outline"
+              onClick={activeTab === 'inventory' ? handleExportInventoryReport : handleExportAuditReport}
+              className="h-10 sm:h-11 px-3 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-1.5 shadow-xs cursor-pointer justify-center"
+              title="Export filtered records as CSV audit report"
+            >
+              <Download className="w-4 h-4 text-amber-600" />
+              <span className="truncate">CSV</span>
+            </Button>
+
+            {/* Audit Trail Button */}
+            <Link href="/operations/audit-logs" className="w-full">
+              <Button
+                variant="outline"
+                className="h-10 sm:h-11 px-3 border-slate-200 bg-white/90 hover:bg-slate-100 text-slate-800 font-black text-xs uppercase tracking-wider rounded-xl gap-1.5 shadow-xs cursor-pointer w-full justify-center"
+                title="Open system-wide activity audit logs trail"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+                <span className="truncate">Logs</span>
+              </Button>
+            </Link>
+          </div>
+
+          {/* Redis Cache & Force Expire Toggle (Row on Mobile) */}
+          <div className="flex items-center justify-between sm:justify-start gap-2 order-3 pt-1 sm:pt-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white/90 shadow-xs text-[10px] font-bold">
+              <Database className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="text-slate-500">Cache:</span>
+              {inventoryCacheStatus === 'HIT' ? (
+                <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.5 rounded font-black text-[9px] flex items-center gap-0.5">
+                  <Zap className="w-2.5 h-2.5 text-emerald-600" /> HIT
+                </span>
+              ) : inventoryCacheStatus === 'MISS' ? (
+                <span className="text-blue-700 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded font-black text-[9px]">
+                  MISS
+                </span>
+              ) : (
+                <span className="text-slate-600 font-mono text-[9px]">READY</span>
+              )}
+            </div>
+
+            <label 
+              className={cn(
+                "flex items-center gap-1.5 cursor-pointer border px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all select-none shadow-xs h-8 sm:h-11",
+                forceExpireCache 
+                  ? "bg-amber-500 border-amber-600 text-slate-950 shadow-amber-500/20 ring-1 ring-amber-500/30" 
+                  : "bg-amber-50/90 hover:bg-amber-100 border-amber-200/90 text-amber-900"
+              )}
+              title="Force expire Redis cache on next reload"
+            >
+              <input
+                type="checkbox"
+                checked={forceExpireCache}
+                onChange={(e) => setForceExpireCache(e.target.checked)}
+                className="w-3.5 h-3.5 accent-amber-600 rounded cursor-pointer"
+              />
+              <span className="flex items-center gap-1">
+                <Zap className="w-3 h-3" />
+                <span>Force Expire</span>
+              </span>
+            </label>
+          </div>
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <div className="glass border-white/40 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+      {/* Summary KPI Cards (Responsive Grid: 2 cols on mobile, 5 on desktop) */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-4">
+        <div className="glass border-white/40 rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-black uppercase tracking-widest">Total Branch Tickets</span>
-            <FileText className="w-4 h-4 text-slate-400" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Total Tickets</span>
+            <FileText className="w-3.5 h-3.5 text-slate-400" />
           </div>
-          <div className="mt-3">
-            <p className="text-3xl font-black text-slate-900 tracking-tight">{loading ? '—' : stats.total}</p>
-            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Tickets in assigned branch</p>
+          <div className="mt-2 sm:mt-3">
+            <p className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{loading ? '—' : stats.total}</p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 font-semibold truncate">In assigned branch</p>
           </div>
         </div>
 
-        <div className="glass border-amber-500/20 rounded-2xl p-5 shadow-lg flex flex-col justify-between bg-amber-500/5">
+        <div className="glass border-amber-500/20 rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col justify-between bg-amber-500/5">
           <div className="flex items-center justify-between text-amber-600">
-            <span className="text-[10px] font-black uppercase tracking-widest">Pending Audit</span>
-            <Clock className="w-4 h-4 text-amber-600" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Pending Audit</span>
+            <Clock className="w-3.5 h-3.5 text-amber-600" />
           </div>
-          <div className="mt-3">
-            <p className="text-3xl font-black text-amber-600 tracking-tight">{loading ? '—' : stats.pending}</p>
-            <p className="text-[11px] text-amber-700/80 font-semibold mt-0.5">Requires audit review</p>
+          <div className="mt-2 sm:mt-3">
+            <p className="text-2xl sm:text-3xl font-black text-amber-600 tracking-tight">{loading ? '—' : stats.pending}</p>
+            <p className="text-[10px] sm:text-[11px] text-amber-700/80 font-semibold truncate">Requires review</p>
           </div>
         </div>
 
-        <div className="glass border-emerald-500/20 rounded-2xl p-5 shadow-lg flex flex-col justify-between bg-emerald-500/5">
+        <div className="glass border-emerald-500/20 rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col justify-between bg-emerald-500/5">
           <div className="flex items-center justify-between text-emerald-600">
-            <span className="text-[10px] font-black uppercase tracking-widest">Passed & Verified</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Passed</span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
           </div>
-          <div className="mt-3">
-            <p className="text-3xl font-black text-emerald-600 tracking-tight">{loading ? '—' : stats.passed}</p>
-            <p className="text-[11px] text-emerald-700/80 font-semibold mt-0.5">Verified without issue</p>
+          <div className="mt-2 sm:mt-3">
+            <p className="text-2xl sm:text-3xl font-black text-emerald-600 tracking-tight">{loading ? '—' : stats.passed}</p>
+            <p className="text-[10px] sm:text-[11px] text-emerald-700/80 font-semibold truncate">Verified without issue</p>
           </div>
         </div>
 
-        <div className="glass border-rose-500/20 rounded-2xl p-5 shadow-lg flex flex-col justify-between bg-rose-500/5">
+        <div className="glass border-rose-500/20 rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col justify-between bg-rose-500/5">
           <div className="flex items-center justify-between text-rose-600">
-            <span className="text-[10px] font-black uppercase tracking-widest">Flagged Discrepancies</span>
-            <AlertTriangle className="w-4 h-4 text-rose-600" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Flagged</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
           </div>
-          <div className="mt-3">
-            <p className="text-3xl font-black text-rose-600 tracking-tight">{loading ? '—' : stats.flagged}</p>
-            <p className="text-[11px] text-rose-700/80 font-semibold mt-0.5">Flagged for investigation</p>
+          <div className="mt-2 sm:mt-3">
+            <p className="text-2xl sm:text-3xl font-black text-rose-600 tracking-tight">{loading ? '—' : stats.flagged}</p>
+            <p className="text-[10px] sm:text-[11px] text-rose-700/80 font-semibold truncate">Needs investigation</p>
           </div>
         </div>
 
-        <div className="glass border-blue-500/20 rounded-2xl p-5 shadow-lg flex flex-col justify-between bg-blue-500/5 col-span-2 md:col-span-1">
+        <div className="glass border-blue-500/20 rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col justify-between bg-blue-500/5 col-span-2 lg:col-span-1">
           <div className="flex items-center justify-between text-blue-600">
-            <span className="text-[10px] font-black uppercase tracking-widest">Verified Portfolio</span>
-            <DollarSign className="w-4 h-4 text-blue-600" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Verified Portfolio</span>
+            <DollarSign className="w-3.5 h-3.5 text-blue-600" />
           </div>
-          <div className="mt-3">
-            <p className="text-2xl font-black text-blue-700 tracking-tight font-mono">
+          <div className="mt-2 sm:mt-3">
+            <p className="text-xl sm:text-2xl font-black text-blue-700 tracking-tight font-mono">
               {loading ? '—' : `Rs. ${(stats.totalPortfolioAudited / 1000).toFixed(1)}k`}
             </p>
-            <p className="text-[11px] text-blue-600 font-semibold mt-0.5">Total audited value</p>
+            <p className="text-[10px] sm:text-[11px] text-blue-600 font-semibold truncate">Total audited value</p>
           </div>
         </div>
       </div>
@@ -814,125 +820,202 @@ export default function AuditorDashboard() {
         <div className="space-y-6">
           {/* Search & Filters Card */}
           <div className="glass p-5 rounded-2xl border-slate-200 shadow-lg space-y-4">
-            <div className="flex flex-col md:flex-row items-center gap-3">
-              {/* Branch Selector Dropdown */}
-              <div className="flex items-center gap-2 bg-white/80 border border-slate-200 rounded-xl px-3 py-2 w-full md:w-auto shrink-0 shadow-xs">
-                <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
-                <select
-                  value={selectedBranch}
-                  onChange={(e) => setSelectedBranch(e.target.value)}
-                  className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">All Branches (incl. Head Office)</option>
-                  <option value="HQ">HQ - Head Office</option>
-                  <option value="KHT">KHT - Kahathuduwa</option>
-                  <option value="W4">W4 - Wattala 4</option>
-                  <option value="BRL">BRL - Borella</option>
-                  <option value="DHW">DHW - Dehiwala</option>
-                  <option value="DMT">DMT - Dematagoda</option>
-                  <option value="HMG">HMG - Homagama</option>
-                  <option value="KDW">KDW - Kadawatha</option>
-                  <option value="KIR">KIR - Kiribathgoda</option>
-                  <option value="KOT">KOT - Kotikawatta</option>
-                  <option value="KTW">KTW - Kottawa</option>
-                  <option value="PND">PND - Panadura</option>
-                  <option value="W2">W2 - Wattala 2</option>
-                  <option value="W3">W3 - Wattala 3</option>
-                </select>
-              </div>
-
-              <div className="relative flex-1 w-full">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by Bill No, Customer Name, NIC, or Phone..."
-                  className="pl-10 h-11 bg-white/70 border-slate-200 rounded-xl font-semibold text-sm w-full focus:ring-amber-500 focus:border-amber-500"
-                />
-                {searchQuery && (
-                  <button 
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            <div className="space-y-3">
+              {/* Top Search & Branch Row */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                {/* Branch Selector Dropdown */}
+                <div className="flex items-center gap-2 bg-white/90 border border-slate-200 rounded-xl px-3 py-2 shrink-0 shadow-xs w-full sm:w-auto">
+                  <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer w-full"
                   >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+                    <option value="ALL">All Branches (incl. Head Office)</option>
+                    <option value="HQ">HQ - Head Office</option>
+                    <option value="KHT">KHT - Kahathuduwa</option>
+                    <option value="W4">W4 - Wattala 4</option>
+                    <option value="BRL">BRL - Borella</option>
+                    <option value="DHW">DHW - Dehiwala</option>
+                    <option value="DMT">DMT - Dematagoda</option>
+                    <option value="HMG">HMG - Homagama</option>
+                    <option value="KDW">KDW - Kadawatha</option>
+                    <option value="KIR">KIR - Kiribathgoda</option>
+                    <option value="KOT">KOT - Kotikawatta</option>
+                    <option value="KTW">KTW - Kottawa</option>
+                    <option value="PND">PND - Panadura</option>
+                    <option value="W2">W2 - Wattala 2</option>
+                    <option value="W3">W3 - Wattala 3</option>
+                  </select>
+                </div>
+
+                {/* Search Input Box */}
+                <div className="relative flex-1 w-full">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by Bill No, Customer, NIC..."
+                    className="pl-10 h-10 sm:h-11 bg-white/90 border-slate-200 rounded-xl font-semibold text-xs sm:text-sm w-full focus:ring-amber-500"
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Audit Status Filter Tabs */}
-              <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl shrink-0 w-full md:w-auto overflow-x-auto">
-                {(['ALL', 'PENDING', 'PASSED', 'FLAGGED'] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setAuditStatusFilter(filter)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                      auditStatusFilter === filter
-                        ? 'bg-amber-500 text-slate-950 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {filter === 'ALL' ? 'All Audits' : filter === 'PENDING' ? 'Pending' : filter === 'PASSED' ? 'Passed' : 'Flagged'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Pawn Status Filter Tabs */}
-              <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl shrink-0 w-full md:w-auto overflow-x-auto">
-                {(['ALL', 'ACTIVE', 'AUDITED_PENDING_APPROVAL', 'PENDING_APPROVAL', 'REQUIRES_RECHECK', 'REDEEMED'] as const).map((pst) => (
-                  <button
-                    key={pst}
-                    type="button"
-                    onClick={() => setPawnStatusFilter(pst)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
-                      pawnStatusFilter === pst
-                        ? 'bg-slate-900 text-white shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {pst === 'ALL' ? 'All Loans' : pst === 'ACTIVE' ? 'Active' : pst === 'AUDITED_PENDING_APPROVAL' ? '✓ Audited (Pending Mgr)' : pst === 'PENDING_APPROVAL' ? 'Pending Appr' : pst === 'REQUIRES_RECHECK' ? '⚠ Recheck Needed' : 'Redeemed'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Packet Sticker Filter Tabs */}
-              <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl shrink-0 w-full md:w-auto overflow-x-auto">
+              {/* Horizontal Filter Rail for Mobile & Desktop */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 -mx-1 px-1">
+                {/* 1. All Tickets */}
                 <button
                   type="button"
-                  onClick={() => setPacketFilter('ALL')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
-                    packetFilter === 'ALL'
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  onClick={() => {
+                    setAuditStatusFilter('ALL');
+                    setPacketFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0",
+                    auditStatusFilter === 'ALL' && packetFilter === 'ALL'
+                      ? "bg-slate-900 text-white shadow-xs"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  )}
                 >
-                  All Packets
+                  All ({pawns.length})
                 </button>
+
+                {/* 2. Pending Audit */}
                 <button
                   type="button"
-                  onClick={() => setPacketFilter('ATTACHED')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                    packetFilter === 'ATTACHED'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  onClick={() => {
+                    setAuditStatusFilter('PENDING');
+                    setPacketFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1",
+                    auditStatusFilter === 'PENDING'
+                      ? "bg-amber-500 text-slate-950 shadow-xs"
+                      : "bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100"
+                  )}
                 >
-                  <Tag className="w-3.5 h-3.5" />
-                  Stickers Attached ({stats.stickeredCount})
+                  <Clock className="w-3 h-3 text-amber-700" />
+                  Pending ({stats.pending})
                 </button>
+
+                {/* 3. Needs Sticker */}
                 <button
                   type="button"
-                  onClick={() => setPacketFilter('MISSING')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                  onClick={() => {
+                    setPacketFilter('MISSING');
+                    setAuditStatusFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1",
                     packetFilter === 'MISSING'
-                      ? 'bg-rose-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : "bg-rose-50 text-rose-800 border border-rose-200/80 hover:bg-rose-100"
+                  )}
                 >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  No Sticker ({stats.missingStickerCount})
+                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                  Needs Sticker ({stats.missingStickerCount})
+                </button>
+
+                {/* 4. Passed & Verified */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuditStatusFilter('PASSED');
+                    setPacketFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1",
+                    auditStatusFilter === 'PASSED'
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "bg-emerald-50 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-100"
+                  )}
+                >
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  Passed ({stats.passed})
+                </button>
+
+                {/* 5. Flagged */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuditStatusFilter('FLAGGED');
+                    setPacketFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1",
+                    auditStatusFilter === 'FLAGGED'
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : "bg-rose-50 text-rose-800 border border-rose-200/80 hover:bg-rose-100"
+                  )}
+                >
+                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                  Flagged ({stats.flagged})
+                </button>
+
+                {/* 6. Stickers Attached */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPacketFilter('ATTACHED');
+                    setAuditStatusFilter('ALL');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1",
+                    packetFilter === 'ATTACHED'
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "bg-emerald-50 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-100"
+                  )}
+                >
+                  <Tag className="w-3 h-3 text-emerald-600" />
+                  Stickered ({stats.stickeredCount})
+                </button>
+
+                {/* More / Advanced Filters Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  className={cn(
+                    "px-2.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1 border",
+                    showAdvancedFilters || pawnStatusFilter !== 'ALL'
+                      ? "bg-amber-500/20 border-amber-400 text-amber-950"
+                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+                  )}
+                >
+                  <SlidersHorizontal className="w-3 h-3 text-amber-700" />
+                  <span>Loan Status</span>
+                  <ChevronDown className={cn("w-3 h-3 transition-transform", showAdvancedFilters && "rotate-180")} />
                 </button>
               </div>
+
+              {/* Collapsible Advanced Loan Status Row */}
+              {showAdvancedFilters && (
+                <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  <span className="text-[10px] font-black uppercase text-slate-400 shrink-0 mr-1">Status:</span>
+                  {(['ALL', 'ACTIVE', 'AUDITED_PENDING_APPROVAL', 'PENDING_APPROVAL', 'REQUIRES_RECHECK', 'REDEEMED'] as const).map((pst) => (
+                    <button
+                      key={pst}
+                      type="button"
+                      onClick={() => setPawnStatusFilter(pst)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap shrink-0",
+                        pawnStatusFilter === pst
+                          ? "bg-slate-900 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      )}
+                    >
+                      {pst === 'ALL' ? 'All Loans' : pst === 'ACTIVE' ? 'Active' : pst === 'AUDITED_PENDING_APPROVAL' ? '✓ Audited' : pst === 'PENDING_APPROVAL' ? 'Pending Appr' : pst === 'REQUIRES_RECHECK' ? '⚠ Recheck' : 'Redeemed'}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -951,7 +1034,7 @@ export default function AuditorDashboard() {
               </span>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader className="bg-slate-50/80">
                   <TableRow className="border-b border-slate-200/80">
@@ -1206,6 +1289,160 @@ export default function AuditorDashboard() {
                 </TableBody>
               </Table>
             </div>
+
+            {/* Native Mobile Cards View (< md) */}
+            <div className="block md:hidden divide-y divide-slate-100">
+              {loading ? (
+                <div className="text-center py-12 text-slate-500 font-semibold">
+                  <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-amber-600 mb-2" />
+                  Loading transactions for audit...
+                </div>
+              ) : filteredPawns.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 font-semibold px-4">
+                  <ShieldCheck className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  No transactions match your search or filter criteria.
+                </div>
+              ) : (
+                filteredPawns.map((pawn) => {
+                  const auditRec = auditMap[pawn.bill_no];
+                  const hasPhotos = Boolean(pawn.air_weight_photo_url || pawn.water_weight_photo_url);
+
+                  return (
+                    <div key={pawn.id} className="p-4 space-y-3 bg-white hover:bg-amber-50/20 transition-colors">
+                      {/* Top Row: Bill No & Status Badges */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Link 
+                            href={`/dashboard/auditor/verify/${pawn.id || pawn.bill_no}`}
+                            className="text-amber-700 hover:text-amber-800 font-mono font-black text-sm truncate flex items-center gap-1"
+                          >
+                            #{pawn.bill_no}
+                            <ExternalLink className="w-3 h-3 shrink-0 opacity-70" />
+                          </Link>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[10px] font-black text-slate-600 shrink-0">
+                            {pawn.branch_id || 'HQ'}
+                          </span>
+                        </div>
+
+                        {/* Audit Status Badge */}
+                        <div className="shrink-0">
+                          {!auditRec ? (
+                            <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-black text-[9px] uppercase tracking-wider py-0.5 px-2">
+                              <Clock className="w-2.5 h-2.5 mr-1 text-amber-600" /> Pending
+                            </Badge>
+                          ) : auditRec.status === 'PASSED' ? (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-black text-[9px] uppercase tracking-wider py-0.5 px-2">
+                              <CheckCircle2 className="w-2.5 h-2.5 mr-1 text-emerald-600" /> Verified
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-black text-[9px] uppercase tracking-wider py-0.5 px-2">
+                              <AlertTriangle className="w-2.5 h-2.5 mr-1 text-rose-600" /> Flagged
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Customer & Date */}
+                      <div className="flex items-center justify-between text-xs text-slate-600">
+                        <div className="min-w-0 pr-2">
+                          <p className="font-bold text-slate-900 truncate">
+                            {pawn.clients?.first_name ? `${pawn.clients.first_name} ${pawn.clients.last_name || ''}` : pawn.customer_name || 'Valued Customer'}
+                          </p>
+                          <p className="text-[11px] text-slate-400 font-mono truncate">
+                            {pawn.clients?.national_id || pawn.clients?.phone || pawn.phone || 'No NIC/Phone'}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0 font-mono text-[11px] text-slate-500">
+                          {pawn.created_at ? new Date(pawn.created_at).toLocaleDateString('en-GB') : '—'}
+                        </div>
+                      </div>
+
+                      {/* Quick Metrics Grid (Pawn Amount, Weight/Karat, Proofs) */}
+                      <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-center">
+                        <div>
+                          <span className="text-[9px] font-black uppercase text-slate-400 block">Amount</span>
+                          <span className="font-mono font-black text-xs text-slate-900 block truncate">
+                            Rs. {Number(pawn.disbursed_amount || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-black uppercase text-slate-400 block">Weight</span>
+                          <span className="font-mono font-black text-xs text-slate-800 block truncate">
+                            {((pawn.weight_mg || 0) / 1000 || pawn.weight_grams || pawn.weight || 0).toFixed(2)}g
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-black uppercase text-slate-400 block">Proofs</span>
+                          {hasPhotos ? (
+                            <span className="inline-flex items-center gap-0.5 font-bold text-[10px] text-emerald-700">
+                              <Camera className="w-3 h-3 text-emerald-600" /> Photos ✓
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-[10px] text-slate-400">None</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Packet Sticker QR Row */}
+                      <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-amber-50/50 border border-amber-200/60 text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <QrCode className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span className="text-[11px] font-bold text-slate-700 shrink-0">Sticker:</span>
+                          {pawn.packet_qr ? (
+                            <span className="font-mono font-black text-[11px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300 truncate">
+                              {pawn.packet_qr}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-bold text-amber-700 italic">Not Attached</span>
+                          )}
+                        </div>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setScannerTargetPawn(pawn);
+                            setIsScannerOpen(true);
+                          }}
+                          className="h-7 px-2.5 text-[11px] font-black text-amber-900 bg-white hover:bg-amber-100 border-amber-300 rounded-lg shrink-0 cursor-pointer shadow-2xs"
+                        >
+                          {pawn.packet_qr ? 'Change QR' : '+ Attach QR'}
+                        </Button>
+                      </div>
+
+                      {/* Action Buttons Row */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <Link 
+                          href={`/dashboard/auditor/verify/${pawn.id || pawn.bill_no}`}
+                          className="flex-1"
+                        >
+                          <Button
+                            type="button"
+                            className="w-full h-9 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                            Verify Pawn Ticket
+                          </Button>
+                        </Link>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenAuditModal(pawn)}
+                          className="h-9 px-3 border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl font-bold text-xs cursor-pointer shrink-0"
+                          title="Quick Audit"
+                        >
+                          <Eye className="w-4 h-4 mr-1 text-slate-500" />
+                          Audit
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1354,7 +1591,7 @@ export default function AuditorDashboard() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader className="bg-slate-50/80">
                   <TableRow className="border-b border-slate-200/80">
@@ -1411,6 +1648,46 @@ export default function AuditorDashboard() {
                   )}
                 </TableBody>
               </Table>
+            </div>
+
+            {/* Native Mobile Inventory Cards View (< md) */}
+            <div className="block md:hidden divide-y divide-slate-100">
+              {loadingInventory ? (
+                <div className="text-center py-12 text-slate-500 font-semibold">
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto text-amber-600 mb-2" />
+                  Loading inventory records...
+                </div>
+              ) : inventoryItems.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 font-semibold px-4">
+                  <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  No inventory records found for branch &quot;{selectedBranch}&quot; on {inventoryDate}.
+                </div>
+              ) : (
+                inventoryItems.map((item: any, idx: number) => (
+                  <div key={item.id || idx} className="p-4 space-y-2 bg-white hover:bg-amber-50/20">
+                    <div className="flex items-center justify-between">
+                      <Badge variant="outline" className={cn("font-black text-[9px] uppercase tracking-wider px-2 py-0.5", item.badgeColor)}>
+                        {item.type}
+                      </Badge>
+                      <span className="font-mono font-black text-xs text-slate-900">
+                        Rs. {Number(item.amount || 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-600">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-slate-800">{item.bill_no || '—'}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[10px] text-slate-600">
+                          {item.branch || selectedBranch}
+                        </span>
+                      </div>
+                      <span className="text-slate-400 font-mono text-[11px]">{item.date || inventoryDate}</span>
+                    </div>
+                    {item.notes && (
+                      <p className="text-xs text-slate-500 line-clamp-2">{item.notes}</p>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
