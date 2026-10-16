@@ -120,29 +120,26 @@ export default function AuditorDashboard() {
       const u = stored ? JSON.parse(stored) : null;
       setUser(u);
 
-      // 1. Fetch pawns: Auditors can access ALL branches including Head Office, or filter by selected branch
+      // 1. Fetch pawns & audit logs in PARALLEL to eliminate sequential network blocking
       const params = new URLSearchParams({
         filterBranch: selectedBranch,
         role: u?.role || 'AUDITOR'
       });
-      const pawnsRes = await fetch(`/api/pawns?${params}`, {
-        headers: getAuthHeaders()
+      const logParams = new URLSearchParams({
+        action: 'AUDIT_',
+        branchId: selectedBranch === 'ALL' ? 'ALL' : selectedBranch
       });
+
+      const [pawnsRes, logsRes] = await Promise.all([
+        fetch(`/api/pawns?${params}`, { headers: getAuthHeaders() }),
+        fetch(`/api/audit-logs?${logParams}`, { headers: getAuthHeaders() })
+      ]);
 
       if (!pawnsRes.ok) {
         throw new Error('Failed to load transactions');
       }
       const pawnsData: PawnTransaction[] = await pawnsRes.json();
       setPawns(Array.isArray(pawnsData) ? pawnsData : []);
-
-      // 2. Fetch existing audit logs to map verified/flagged transactions
-      const logParams = new URLSearchParams({
-        action: 'AUDIT_',
-        branchId: selectedBranch === 'ALL' ? 'ALL' : selectedBranch
-      });
-      const logsRes = await fetch(`/api/audit-logs?${logParams}`, {
-        headers: getAuthHeaders()
-      });
 
       if (logsRes.ok) {
         const logsJson = await logsRes.json();

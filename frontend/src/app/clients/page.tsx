@@ -2,7 +2,7 @@
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
 import { getBranchSearchTerms } from '@/lib/branch-mapping';
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { 
   Plus, Search, UserPlus, Sparkles, Filter, MoreVertical, RefreshCcw, 
   Pencil, Trash2, ShieldCheck, UserCog, Camera, CameraOff, MapPin, Image,
-  Users, Edit, FileText, Check, AlertTriangle, CheckCircle2, Eye
+  Users, Edit, FileText, Check, AlertTriangle, CheckCircle2, Eye, Upload, ZoomIn
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
@@ -43,14 +43,28 @@ const WebcamCapture = ({
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setCapturedImage(initialImage || null);
   }, [initialImage]);
 
+  // Connect stream to video element whenever stream changes or videoRef attaches
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.warn("Video play notice:", e));
+    }
+  }, [stream]);
+
   // Enumerate active camera inputs
   const enumerateCameras = async () => {
     try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
       const allDevices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
       setDevices(videoDevices);
@@ -69,46 +83,48 @@ const WebcamCapture = ({
         stream.getTracks().forEach(track => track.stop());
       }
 
-      const videoConstraints: MediaTrackConstraints = {};
+      let mediaStream: MediaStream;
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      };
       if (targetId && targetId.trim() !== "") {
         videoConstraints.deviceId = { exact: targetId };
       }
-      // Use ideal resolution parameters to maintain compatibility across high/low resolution cameras
-      videoConstraints.width = { ideal: 640 };
-      videoConstraints.height = { ideal: 480 };
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: videoConstraints
-      });
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+      } catch {
+        // Fallback to simple video constraint if specific resolution or deviceId is rejected
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
       
       setStream(mediaStream);
       setError(null);
 
-      // Enumerate/Re-enumerate devices now that permissions have been successfully granted
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
-      setDevices(videoDevices);
-      if (videoDevices.length > 0 && !activeDeviceId) {
-        setActiveDeviceId(videoDevices[0].deviceId);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        videoRef.current.play().catch(e => console.warn("Video play notice:", e));
       }
 
-      // Delay slightly to ensure video element is mounted in DOM
-      setTimeout(() => {
-        const videoElement = document.getElementById(`webcam-video-${label}`) as HTMLVideoElement;
-        if (videoElement) {
-          videoElement.srcObject = mediaStream;
+      // Re-enumerate devices now that permissions have been granted
+      try {
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = allDevices.filter(d => d.kind === 'videoinput');
+        setDevices(videoDevices);
+        if (videoDevices.length > 0 && !activeDeviceId) {
+          setActiveDeviceId(videoDevices[0].deviceId);
         }
-      }, 150);
+      } catch {}
     } catch (err: any) {
       console.error("Camera access error:", err);
-      setError("Webcam access denied or unavailable: " + (err.message || err.name));
+      setError("Webcam access denied or unavailable. You can also upload a photo file below.");
     }
   };
 
   useEffect(() => {
     enumerateCameras();
     if (autoStart && !capturedImage) {
-      // Auto-initiate stream on mount/tab change
       startCamera();
     }
     return () => {
@@ -124,19 +140,37 @@ const WebcamCapture = ({
   };
 
   const capture = () => {
-    const videoElement = document.getElementById(`webcam-video-${label}`) as HTMLVideoElement;
-    const canvasElement = document.getElementById(`webcam-canvas-${label}`) as HTMLCanvasElement;
-    if (videoElement && canvasElement) {
-      const context = canvasElement.getContext('2d');
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && canvas) {
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 480;
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
       if (context) {
-        canvasElement.width = videoElement.videoWidth || 640;
-        canvasElement.height = videoElement.videoHeight || 480;
-        context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-        const base64 = canvasElement.toDataURL('image/jpeg', 0.85);
+        context.drawImage(video, 0, 0, width, height);
+        const base64 = canvas.toDataURL('image/jpeg', 0.88);
         setCapturedImage(base64);
         onCapture(base64);
         stopCamera();
       }
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        if (evt.target?.result) {
+          const base64 = evt.target.result as string;
+          setCapturedImage(base64);
+          onCapture(base64);
+          stopCamera();
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -173,6 +207,15 @@ const WebcamCapture = ({
 
   return (
     <div className="space-y-2 bg-slate-900/50 border border-white/10 rounded-2xl p-4 transition-all">
+      {/* Hidden file input for file upload fallback */}
+      <input 
+        ref={fileInputRef}
+        type="file" 
+        accept="image/*" 
+        className="hidden" 
+        onChange={handleFileUpload} 
+      />
+
       <div className="flex justify-between items-center mb-1">
         <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
           <Camera className="w-3.5 h-3.5 text-primary" /> {label}
@@ -190,63 +233,130 @@ const WebcamCapture = ({
           )}
           {capturedImage && (
             <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-black uppercase tracking-widest px-2 py-0.5">
-              Captured
+              Captured ✓
             </Badge>
           )}
         </div>
       </div>
       
       {capturedImage ? (
-        <div className="relative rounded-xl overflow-hidden border border-emerald-500/30 bg-slate-950">
-          <img src={capturedImage} alt={label} className="w-full h-36 object-cover" />
-          <button 
-            type="button" 
-            onClick={reset}
-            className="absolute bottom-2 right-2 bg-slate-900/90 text-white text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border border-white/10 hover:bg-slate-950 transition-all cursor-pointer"
-          >
-            Retake Photo
-          </button>
+        <div className="relative rounded-xl overflow-hidden border border-emerald-500/30 bg-slate-950 group">
+          <img 
+            src={capturedImage} 
+            alt={label} 
+            className="w-full h-44 object-contain bg-black/60 cursor-pointer" 
+            onClick={() => setPreviewZoom(true)}
+            title="Click to view full photo"
+          />
+          <div className="absolute top-2 left-2 flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPreviewZoom(true)}
+              className="bg-slate-900/90 hover:bg-slate-900 text-white text-[9px] font-bold px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 shadow-sm cursor-pointer"
+            >
+              <ZoomIn className="w-3 h-3 text-amber-400" /> View Full
+            </button>
+          </div>
+          <div className="absolute bottom-2 right-2 flex gap-2">
+            <button 
+              type="button" 
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-slate-900/90 text-slate-200 text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border border-white/10 hover:bg-slate-950 transition-all cursor-pointer flex items-center gap-1"
+            >
+              <Upload className="w-3 h-3" /> File
+            </button>
+            <button 
+              type="button" 
+              onClick={reset}
+              className="bg-primary text-white text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border border-primary/20 hover:bg-primary/90 transition-all cursor-pointer shadow-md"
+            >
+              Retake Photo
+            </button>
+          </div>
         </div>
       ) : stream ? (
         <div className="relative rounded-xl overflow-hidden bg-slate-950 border border-primary/20">
           <video 
-            id={`webcam-video-${label}`} 
+            ref={videoRef}
             autoPlay 
             playsInline 
-            className="w-full h-36 object-cover scale-x-[-1]" 
+            muted
+            className="w-full h-44 object-cover scale-x-[-1]" 
           />
-          <canvas id={`webcam-canvas-${label}`} className="hidden" />
+          <canvas ref={canvasRef} className="hidden" />
           <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2 px-4">
             <button 
               type="button" 
               onClick={capture}
-              className="bg-primary hover:bg-primary/90 text-white text-[9px] font-black uppercase tracking-widest px-4 py-2 rounded-lg shadow-lg transition-all cursor-pointer"
+              className="bg-primary hover:bg-primary/90 text-white text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-lg shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
             >
-              Capture Screen
+              <Camera className="w-3.5 h-3.5" /> Capture Photo
+            </button>
+            <button 
+              type="button" 
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[9px] font-black uppercase tracking-widest px-3 py-2 rounded-lg transition-all cursor-pointer flex items-center gap-1"
+            >
+              <Upload className="w-3 h-3" /> Upload File
             </button>
             <button 
               type="button" 
               onClick={cancelWebcam}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[9px] font-black uppercase tracking-widest px-3 py-2 rounded-lg transition-all cursor-pointer"
+              className="bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-[9px] font-black uppercase tracking-widest px-2.5 py-2 rounded-lg transition-all cursor-pointer"
             >
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <div className="h-36 flex flex-col items-center justify-center border border-dashed border-white/10 rounded-xl bg-white/5 gap-2">
+        <div className="h-44 flex flex-col items-center justify-center border border-dashed border-white/10 rounded-xl bg-white/5 gap-2 p-3 text-center">
           {error ? (
-            <p className="text-[10px] font-bold text-rose-400 px-4 text-center">{error}</p>
+            <p className="text-[11px] font-bold text-rose-400 px-4">{error}</p>
           ) : (
             <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Web Camera is offline</p>
           )}
-          <button 
-            type="button" 
-            onClick={() => startCamera()}
-            className="bg-primary/20 text-primary border border-primary/20 hover:bg-primary/30 text-[9px] font-black uppercase tracking-widest px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1"
-          >
-            <Camera className="w-3 h-3" /> Start Webcam
-          </button>
+          <div className="flex gap-2 mt-1">
+            <button 
+              type="button" 
+              onClick={() => startCamera()}
+              className="bg-primary/20 text-primary border border-primary/20 hover:bg-primary/30 text-[9px] font-black uppercase tracking-widest px-3.5 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <Camera className="w-3.5 h-3.5" /> Start Webcam
+            </button>
+            <button 
+              type="button" 
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-white/10 text-white border border-white/20 hover:bg-white/20 text-[9px] font-black uppercase tracking-widest px-3.5 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" /> Upload File
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Enlarged Photo Preview Modal */}
+      {previewZoom && capturedImage && (
+        <div 
+          className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewZoom(false)}
+        >
+          <div className="relative max-w-2xl max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl p-3 shadow-2xl flex flex-col items-center" onClick={e => e.stopPropagation()}>
+            <div className="w-full flex items-center justify-between pb-2 border-b border-slate-800 text-white text-xs font-bold">
+              <span>{label} — Full Preview</span>
+              <button 
+                type="button"
+                onClick={() => setPreviewZoom(false)}
+                className="text-slate-400 hover:text-white px-2 py-1 rounded-lg"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <img 
+              src={capturedImage} 
+              alt={label} 
+              className="w-full max-h-[70vh] object-contain rounded-xl mt-2" 
+            />
+          </div>
         </div>
       )}
     </div>

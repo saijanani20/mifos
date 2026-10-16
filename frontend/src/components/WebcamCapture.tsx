@@ -5,14 +5,15 @@ import { Camera, X, Check, Upload } from 'lucide-react';
 interface WebcamCaptureProps {
   onCapture: (base64Image: string) => void;
   onClose: () => void;
+  initialImage?: string | null;
 }
 
-export function WebcamCapture({ onCapture, onClose }: WebcamCaptureProps) {
+export function WebcamCapture({ onCapture, onClose, initialImage }: WebcamCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [capturedImage, setCapturedImage] = useState<string | null>(initialImage || null);
   const [error, setError] = useState<string | null>(null);
 
   const startCamera = useCallback(async () => {
@@ -144,7 +145,7 @@ export function WebcamCapture({ onCapture, onClose }: WebcamCaptureProps) {
             </Button>
           </div>
         ) : capturedImage ? (
-          <img src={capturedImage} alt="Captured scale proof" className="w-full h-full object-cover" />
+          <img src={capturedImage} alt="Captured scale proof" className="w-full h-full object-contain bg-black" />
         ) : (
           <video 
             ref={videoRef} 

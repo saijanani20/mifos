@@ -37,101 +37,128 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Fetch clients manually if clients relation join returned null or missing
     const clientIds = Array.from(new Set((data || []).map((p: any) => p.client_id).filter(Boolean)));
+    const pawnIds = (data || []).map((p: any) => p.id).filter(Boolean);
+    const billStatuses = Array.from(new Set((data || []).map((p: any) => p.bill_no ? `BILL:${p.bill_no.trim()}` : null).filter(Boolean))) as string[];
+
+    // Execute all subqueries in PARALLEL with Promise.all and lightweight column selections
+    // This avoids downloading megabytes of base64 images per client/eval on every list call
+    const [
+      clientRowsRes,
+      nicClientsRes,
+      sigClientsRes,
+      allItemsRes,
+      evalsRes,
+      packetLogsRes
+    ] = await Promise.all([
+      // 1a. Fast client basic fields (no heavy base64 strings)
+      clientIds.length > 0
+        ? adminSupabase.from('clients').select('id, first_name, last_name, national_id, phone, address').in('id', clientIds)
+        : Promise.resolve({ data: [] }),
+
+      // 1b. Fast presence check for NIC image (returns only id)
+      clientIds.length > 0
+        ? adminSupabase.from('clients').select('id').in('id', clientIds).not('nic_image', 'is', null)
+        : Promise.resolve({ data: [] }),
+
+      // 1c. Fast presence check for Signature (returns only id)
+      clientIds.length > 0
+        ? adminSupabase.from('clients').select('id').in('id', clientIds).not('signature_image', 'is', null)
+        : Promise.resolve({ data: [] }),
+
+      // 2. Fetch pawn items for current pawns
+      pawnIds.length > 0
+        ? adminSupabase.from('pawn_items').select('*').in('pawn_id', pawnIds)
+        : Promise.resolve({ data: [] }),
+
+      // 3. Fetch scale photos only for bills in current results (instead of entire DB)
+      billStatuses.length > 0
+        ? adminSupabase.from('rejected_evaluations').select('status, air_weight, water_weight, air_weight_photo_url, water_weight_photo_url, created_at').in('status', billStatuses)
+        : Promise.resolve({ data: [] }),
+
+      // 4. Fetch packet sticker QR logs
+      adminSupabase
+        .from('audit_logs')
+        .select('resource, details, action, branch_id')
+        .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
+        .order('created_at', { ascending: true })
+    ]);
+
+    // Map clients with lightweight boolean indicators for NIC and Signature
+    const hasNicSet = new Set((nicClientsRes.data || []).map((c: any) => c.id));
+    const hasSigSet = new Set((sigClientsRes.data || []).map((c: any) => c.id));
     let clientsByIdMap: Record<string, any> = {};
-    if (clientIds.length > 0) {
-      const { data: clientRows } = await adminSupabase.from('clients').select('*').in('id', clientIds);
-      if (clientRows) {
-        clientRows.forEach(c => {
-          clientsByIdMap[c.id] = c;
-          if (c.nationalId) clientsByIdMap[c.nationalId] = c;
-          if (c.national_id) clientsByIdMap[c.national_id] = c;
-        });
-      }
+
+    if (clientRowsRes.data) {
+      clientRowsRes.data.forEach((c: any) => {
+        const clientObj = {
+          ...c,
+          nic_image: hasNicSet.has(c.id) ? '{"front":"captured"}' : null,
+          signature_image: hasSigSet.has(c.id) ? 'captured' : null
+        };
+        clientsByIdMap[c.id] = clientObj;
+        if (c.nationalId) clientsByIdMap[c.nationalId] = clientObj;
+        if (c.national_id) clientsByIdMap[c.national_id] = clientObj;
+      });
     }
 
-    // Fetch pawn_items manually
-    const pawnIds = data?.map(p => p.id) || [];
+    // Map pawn items
     let itemsMap: Record<string, any[]> = {};
-    
-    if (pawnIds.length > 0) {
-      const { data: allItems } = await adminSupabase.from('pawn_items').select('*').in('pawn_id', pawnIds);
-      if (allItems) {
-         allItems.forEach(item => {
-            if (!itemsMap[item.pawn_id]) itemsMap[item.pawn_id] = [];
-            itemsMap[item.pawn_id].push(item);
-         });
-      }
+    if (allItemsRes.data) {
+      allItemsRes.data.forEach((item: any) => {
+        if (!itemsMap[item.pawn_id]) itemsMap[item.pawn_id] = [];
+        itemsMap[item.pawn_id].push(item);
+      });
     }
 
-    // Fetch evaluation records to attach weight photos
+    // Map scale evaluation records
     let evalsByBillMap: Record<string, any> = {};
-    try {
-      const { data: allEvals } = await adminSupabase
-        .from('rejected_evaluations')
-        .select('status, air_weight, water_weight, air_weight_photo_url, water_weight_photo_url, created_at')
-        .not('status', 'eq', 'REJECTED');
-
-      if (allEvals) {
-        allEvals.forEach((ev: any) => {
-          if (ev.status && ev.status.startsWith('BILL:')) {
-            const bNo = ev.status.replace('BILL:', '').trim();
-            evalsByBillMap[bNo] = ev;
-            evalsByBillMap[bNo.toUpperCase()] = ev;
-            evalsByBillMap[bNo.replace(/\s+/g, '')] = ev;
-            evalsByBillMap[bNo.replace(/\s+/g, '').toUpperCase()] = ev;
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('Could not fetch evaluation photos for pawns:', e);
+    if (evalsRes.data) {
+      evalsRes.data.forEach((ev: any) => {
+        if (ev.status && ev.status.startsWith('BILL:')) {
+          const bNo = ev.status.replace('BILL:', '').trim();
+          evalsByBillMap[bNo] = ev;
+          evalsByBillMap[bNo.toUpperCase()] = ev;
+          evalsByBillMap[bNo.replace(/\s+/g, '')] = ev;
+          evalsByBillMap[bNo.replace(/\s+/g, '').toUpperCase()] = ev;
+        }
+      });
     }
 
-    // Fetch packet sticker QR from audit_logs with strict branch and pawn_id isolation
+    // Map packet sticker QR codes
     let packetQrByPawnIdMap: Record<string, string | null> = {};
     let packetQrByBranchBillMap: Record<string, string | null> = {};
     let packetQrByBillMap: Record<string, string | null> = {};
 
-    try {
-      const { data: packetLogs } = await adminSupabase
-        .from('audit_logs')
-        .select('resource, details, action, branch_id')
-        .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
-        .order('created_at', { ascending: true });
+    if (packetLogsRes.data) {
+      packetLogsRes.data.forEach((l: any) => {
+        const b = (l.resource || l.details?.bill_no || '').trim();
+        const pawnId = l.details?.pawn_id;
+        const branch = (l.branch_id || l.details?.branch_id || '').trim();
 
-      if (packetLogs) {
-        packetLogs.forEach((l: any) => {
-          const b = (l.resource || l.details?.bill_no || '').trim();
-          const pawnId = l.details?.pawn_id;
-          const branch = (l.branch_id || l.details?.branch_id || '').trim();
-
-          if (l.action === 'PACKET_STICKER_DELETED') {
-            if (pawnId) packetQrByPawnIdMap[pawnId] = null;
-            if (branch && b) {
-              packetQrByBranchBillMap[`${branch}::${b}`] = null;
-              packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = null;
-            }
-            if (b) {
-              packetQrByBillMap[b] = null;
-              packetQrByBillMap[b.toUpperCase()] = null;
-            }
-          } else if (l.action === 'PACKET_STICKER_ATTACHED' && l.details?.packet_qr) {
-            const qrVal = l.details.packet_qr;
-            if (pawnId) packetQrByPawnIdMap[pawnId] = qrVal;
-            if (branch && b) {
-              packetQrByBranchBillMap[`${branch}::${b}`] = qrVal;
-              packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = qrVal;
-            }
-            if (b) {
-              packetQrByBillMap[b] = qrVal;
-              packetQrByBillMap[b.toUpperCase()] = qrVal;
-            }
+        if (l.action === 'PACKET_STICKER_DELETED') {
+          if (pawnId) packetQrByPawnIdMap[pawnId] = null;
+          if (branch && b) {
+            packetQrByBranchBillMap[`${branch}::${b}`] = null;
+            packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = null;
           }
-        });
-      }
-    } catch (e) {
-      console.warn('Could not fetch packet sticker QR logs:', e);
+          if (b) {
+            packetQrByBillMap[b] = null;
+            packetQrByBillMap[b.toUpperCase()] = null;
+          }
+        } else if (l.action === 'PACKET_STICKER_ATTACHED' && l.details?.packet_qr) {
+          const qrVal = l.details.packet_qr;
+          if (pawnId) packetQrByPawnIdMap[pawnId] = qrVal;
+          if (branch && b) {
+            packetQrByBranchBillMap[`${branch}::${b}`] = qrVal;
+            packetQrByBranchBillMap[`${branch}::${b.toUpperCase()}`] = qrVal;
+          }
+          if (b) {
+            packetQrByBillMap[b] = qrVal;
+            packetQrByBillMap[b.toUpperCase()] = qrVal;
+          }
+        }
+      });
     }
 
     const mappedData = (data || []).map((pawn: any) => {

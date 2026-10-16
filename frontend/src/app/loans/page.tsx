@@ -603,11 +603,23 @@ export default function PawnesPage() {
   const startKycCamera = async () => {
     try {
       if (kycStreamRef.current) { kycStreamRef.current.getTracks().forEach(t => t.stop()); }
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } } });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
       kycStreamRef.current = stream;
-      if (kycVideoRef.current) { kycVideoRef.current.srcObject = stream; }
       setKycCameraOn(true);
-    } catch { toast.error('Camera access denied'); }
+      if (kycVideoRef.current) { 
+        kycVideoRef.current.srcObject = stream; 
+        kycVideoRef.current.play().catch(() => {});
+      }
+    } catch { 
+      toast.error('Camera access denied or unavailable'); 
+    }
   };
 
   const stopKycCamera = () => {
@@ -618,10 +630,12 @@ export default function PawnesPage() {
   const captureKycPhoto = () => {
     if (!kycVideoRef.current) return;
     const canvas = document.createElement('canvas');
-    canvas.width = kycVideoRef.current.videoWidth;
-    canvas.height = kycVideoRef.current.videoHeight;
-    canvas.getContext('2d')?.drawImage(kycVideoRef.current, 0, 0);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const width = kycVideoRef.current.videoWidth || 640;
+    const height = kycVideoRef.current.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d')?.drawImage(kycVideoRef.current, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
     if (kycActiveTab === 'front') setKycFront(dataUrl);
     else if (kycActiveTab === 'back') setKycBack(dataUrl);
     else setKycSign(dataUrl);
@@ -1609,9 +1623,9 @@ export default function PawnesPage() {
                                       </div>
                                     ) : currentPhoto ? (
                                       <div className="relative rounded-xl overflow-hidden bg-black">
-                                        <img src={currentPhoto} alt="captured" className="w-full h-40 object-cover" />
+                                        <img src={currentPhoto} alt="captured" className="w-full h-40 object-contain bg-black" />
                                         <button type="button" onClick={() => { if (kycActiveTab==='front') setKycFront(null); else if (kycActiveTab==='back') setKycBack(null); else setKycSign(null); }}
-                                          className="absolute top-2 right-2 bg-red-500/80 text-white text-[10px] px-2 py-1 rounded-lg font-bold">
+                                          className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white text-[10px] px-2.5 py-1 rounded-lg font-bold shadow-sm">
                                           Retake
                                         </button>
                                       </div>

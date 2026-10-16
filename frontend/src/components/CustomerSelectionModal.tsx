@@ -8,7 +8,8 @@ import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { 
   Search, UserCheck, UserPlus, Camera, CameraOff, Check, AlertTriangle, 
-  RefreshCcw, ArrowRight, User, Phone, MapPin, CreditCard, ShieldCheck
+  RefreshCcw, ArrowRight, User, Phone, MapPin, CreditCard, ShieldCheck,
+  Upload, ZoomIn
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
@@ -69,9 +70,11 @@ export function CustomerSelectionModal({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [activeClients, setActiveClients] = useState<any[]>(clientsList || []);
+  const [previewPhotoZoom, setPreviewPhotoZoom] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Synchronize clients list from props
   useEffect(() => {
@@ -122,24 +125,41 @@ export function CustomerSelectionModal({
     };
   }, []);
 
+  // Guarantee that when video element mounts and camera is active, stream is attached and playing
+  useEffect(() => {
+    if (cameraActive && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(e => console.warn('Video play notice:', e));
+    }
+  }, [cameraActive]);
+
   const startCamera = async () => {
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
       }
       setCameraError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
-      });
+      
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+      } catch {
+        // Fallback for laptops/desktops without environment camera
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       streamRef.current = stream;
+      setCameraActive(true);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play().catch(() => {});
       }
-      setCameraActive(true);
     } catch (err: any) {
       console.error('Camera access error:', err);
-      setCameraError('Camera access denied or unavailable: ' + (err.message || ''));
+      setCameraError('Camera access denied or unavailable. You can also upload a photo file.');
       setCameraActive(false);
     }
   };
@@ -160,12 +180,28 @@ export function CustomerSelectionModal({
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       if (activeKycTab === 'front') setKycFront(dataUrl);
       else if (activeKycTab === 'back') setKycBack(dataUrl);
       else setKycSign(dataUrl);
     }
     stopCamera();
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        if (evt.target?.result) {
+          const dataUrl = evt.target.result as string;
+          if (activeKycTab === 'front') setKycFront(dataUrl);
+          else if (activeKycTab === 'back') setKycBack(dataUrl);
+          else setKycSign(dataUrl);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const currentCapturedPhoto = activeKycTab === 'front' ? kycFront : activeKycTab === 'back' ? kycBack : kycSign;
@@ -854,7 +890,16 @@ export function CustomerSelectionModal({
                 </div>
 
                 {/* Webcam Box */}
-                <div className="bg-slate-900 rounded-2xl overflow-hidden p-3 flex flex-col items-center justify-center min-h-[220px] relative border border-slate-800 shadow-inner">
+                <div className="bg-slate-900 rounded-2xl overflow-hidden p-3 flex flex-col items-center justify-center min-h-[240px] relative border border-slate-800 shadow-inner">
+                  {/* Hidden file input for file upload fallback */}
+                  <input 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    onChange={handleFileUpload} 
+                  />
+
                   <div className="w-full flex items-center justify-between text-white/70 text-[10px] font-black uppercase tracking-wider mb-2">
                     <span className="flex items-center gap-1">
                       <Camera className="w-3.5 h-3.5 text-amber-400" />
@@ -862,7 +907,7 @@ export function CustomerSelectionModal({
                     </span>
                     {currentCapturedPhoto && (
                       <span className="text-emerald-400 font-bold flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Photo Saved
+                        <Check className="w-3 h-3" /> Photo Saved ✓
                       </span>
                     )}
                   </div>
@@ -874,7 +919,7 @@ export function CustomerSelectionModal({
                   )}
 
                   {/* Video or Image View */}
-                  <div className="w-full aspect-[4/3] max-h-48 bg-black rounded-xl overflow-hidden flex items-center justify-center relative">
+                  <div className="w-full aspect-[4/3] max-h-52 bg-black rounded-xl overflow-hidden flex items-center justify-center relative group">
                     {cameraActive ? (
                       <video
                         ref={videoRef}
@@ -884,11 +929,22 @@ export function CustomerSelectionModal({
                         className="w-full h-full object-cover"
                       />
                     ) : currentCapturedPhoto ? (
-                      <img
-                        src={currentCapturedPhoto}
-                        alt="Captured scan"
-                        className="w-full h-full object-contain"
-                      />
+                      <>
+                        <img
+                          src={currentCapturedPhoto}
+                          alt="Captured scan"
+                          className="w-full h-full object-contain cursor-pointer"
+                          onClick={() => setPreviewPhotoZoom(currentCapturedPhoto)}
+                          title="Click to view full photo"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPhotoZoom(currentCapturedPhoto)}
+                          className="absolute top-2 left-2 bg-slate-900/90 text-white text-[9px] font-bold px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 shadow-sm cursor-pointer"
+                        >
+                          <ZoomIn className="w-3 h-3 text-amber-400" /> View Full
+                        </button>
+                      </>
                     ) : (
                       <div className="text-center p-4">
                         <CameraOff className="w-8 h-8 text-slate-600 mx-auto mb-1" />
@@ -898,21 +954,31 @@ export function CustomerSelectionModal({
                   </div>
 
                   {/* Camera Controls */}
-                  <div className="flex items-center gap-2 mt-3 w-full justify-center">
+                  <div className="flex flex-wrap items-center gap-2 mt-3 w-full justify-center">
                     {cameraActive ? (
                       <>
                         <Button
                           type="button"
                           onClick={handleCaptureCurrentTab}
-                          className="bg-amber-400 hover:bg-amber-500 text-slate-900 font-black text-xs uppercase tracking-wider h-9 px-5 rounded-xl shadow-md"
+                          className="bg-amber-400 hover:bg-amber-500 text-slate-900 font-black text-xs uppercase tracking-wider h-9 px-4 rounded-xl shadow-md gap-1"
                         >
-                          Capture Screen
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>Capture Photo</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-white border-white/20 hover:bg-white/10 text-xs font-bold h-9 px-3 rounded-xl gap-1"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload File</span>
                         </Button>
                         <Button
                           type="button"
                           variant="ghost"
                           onClick={stopCamera}
-                          className="text-white hover:bg-white/10 text-xs font-bold h-9 px-4 rounded-xl"
+                          className="text-white hover:bg-white/10 text-xs font-bold h-9 px-3 rounded-xl"
                         >
                           Cancel
                         </Button>
@@ -922,14 +988,51 @@ export function CustomerSelectionModal({
                         <Button
                           type="button"
                           onClick={startCamera}
-                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-4 rounded-xl"
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-4 rounded-xl gap-1.5"
                         >
-                          <Camera className="w-3.5 h-3.5 mr-1.5" />
-                          {currentCapturedPhoto ? 'Retake Photo' : 'Start Camera'}
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>{currentCapturedPhoto ? 'Retake Photo' : 'Start Camera'}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-white border-white/20 hover:bg-white/10 text-xs font-bold h-9 px-3.5 rounded-xl gap-1.5"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{currentCapturedPhoto ? 'Upload Other File' : 'Upload Photo'}</span>
                         </Button>
                       </>
                     )}
                   </div>
+
+                  {/* Zoom Modal for Captured Photo */}
+                  {previewPhotoZoom && (
+                    <div 
+                      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+                      onClick={() => setPreviewPhotoZoom(null)}
+                    >
+                      <div className="relative max-w-2xl max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center" onClick={e => e.stopPropagation()}>
+                        <div className="w-full flex items-center justify-between pb-2 border-b border-slate-800 text-white text-xs font-bold">
+                          <span>
+                            {activeKycTab === 'front' ? 'NIC Front' : activeKycTab === 'back' ? 'NIC Back' : 'Signature'} — Full Resolution Preview
+                          </span>
+                          <button 
+                            type="button"
+                            onClick={() => setPreviewPhotoZoom(null)}
+                            className="text-slate-400 hover:text-white px-2 py-1 rounded-lg"
+                          >
+                            ✕ Close
+                          </button>
+                        </div>
+                        <img 
+                          src={previewPhotoZoom} 
+                          alt="Full preview" 
+                          className="w-full max-h-[70vh] object-contain rounded-xl mt-3" 
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Camera, AlertCircle, RefreshCw, Activity, PackageSearch, CheckCircle2 } from 'lucide-react';
+import { Camera, AlertCircle, RefreshCw, Activity, PackageSearch, CheckCircle2, ZoomIn, Eye } from 'lucide-react';
 import { WebcamCapture } from './WebcamCapture';
 
 export interface EvaluationResult {
@@ -54,6 +54,7 @@ export function ItemEvaluationModal({ isOpen, onOpenChange, onAccept }: ItemEval
   
   const [airWeightPhoto, setAirWeightPhoto] = useState<string | null>(null);
   const [waterWeightPhoto, setWaterWeightPhoto] = useState<string | null>(null);
+  const [previewScalePhoto, setPreviewScalePhoto] = useState<{ url: string; title: string; target: 'AIR' | 'WATER' } | null>(null);
 
   const [isProcessingOcr, setIsProcessingOcr] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
@@ -244,7 +245,11 @@ export function ItemEvaluationModal({ isOpen, onOpenChange, onAccept }: ItemEval
         {showWebcam && captureTarget ? (
           <div className="p-6">
             <h3 className="text-lg font-bold mb-4 text-center">Capture {captureTarget === 'AIR' ? 'Air' : 'Water'} Weight</h3>
-            <WebcamCapture onCapture={handleCapture} onClose={() => setShowWebcam(false)} />
+            <WebcamCapture 
+              onCapture={handleCapture} 
+              onClose={() => setShowWebcam(false)} 
+              initialImage={captureTarget === 'AIR' ? airWeightPhoto : waterWeightPhoto}
+            />
           </div>
         ) : (
           <>
@@ -308,21 +313,33 @@ export function ItemEvaluationModal({ isOpen, onOpenChange, onAccept }: ItemEval
                       className="font-mono font-bold"
                     />
                     {airWeightPhoto ? (
-                      <button
-                        type="button"
-                        onClick={() => openCamera('AIR')}
-                        className="relative shrink-0 group rounded-lg overflow-hidden border-2 border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                        title="Click to view/retake photo"
-                      >
-                        <img 
-                          src={airWeightPhoto} 
-                          alt="Air weight proof" 
-                          className="w-10 h-10 object-cover" 
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                          <Camera className="w-3.5 h-3.5 text-white" />
-                        </div>
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewScalePhoto({ url: airWeightPhoto, title: 'Air Weight Scale Proof', target: 'AIR' })}
+                          className="relative shrink-0 group rounded-lg overflow-hidden border-2 border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-black cursor-pointer shadow-sm"
+                          title="Click to view full photo"
+                        >
+                          <img 
+                            src={airWeightPhoto} 
+                            alt="Air weight proof" 
+                            className="w-10 h-10 object-contain" 
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                            <ZoomIn className="w-3.5 h-3.5 text-white" />
+                          </div>
+                        </button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          type="button"
+                          onClick={() => openCamera('AIR')}
+                          className="h-9 w-9 text-slate-500 hover:text-slate-800"
+                          title="Retake Air Photo"
+                        >
+                          <Camera className="w-4 h-4" />
+                        </Button>
+                      </div>
                     ) : (
                       <Button 
                         variant="outline" 
@@ -356,21 +373,33 @@ export function ItemEvaluationModal({ isOpen, onOpenChange, onAccept }: ItemEval
                       className="font-mono font-bold"
                     />
                     {waterWeightPhoto ? (
-                      <button
-                        type="button"
-                        onClick={() => openCamera('WATER')}
-                        className="relative shrink-0 group rounded-lg overflow-hidden border-2 border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                        title="Click to view/retake photo"
-                      >
-                        <img 
-                          src={waterWeightPhoto} 
-                          alt="Water weight proof" 
-                          className="w-10 h-10 object-cover" 
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                          <Camera className="w-3.5 h-3.5 text-white" />
-                        </div>
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewScalePhoto({ url: waterWeightPhoto, title: 'Water Weight Scale Proof', target: 'WATER' })}
+                          className="relative shrink-0 group rounded-lg overflow-hidden border-2 border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-black cursor-pointer shadow-sm"
+                          title="Click to view full photo"
+                        >
+                          <img 
+                            src={waterWeightPhoto} 
+                            alt="Water weight proof" 
+                            className="w-10 h-10 object-contain" 
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                            <ZoomIn className="w-3.5 h-3.5 text-white" />
+                          </div>
+                        </button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          type="button"
+                          onClick={() => openCamera('WATER')}
+                          className="h-9 w-9 text-slate-500 hover:text-slate-800"
+                          title="Retake Water Photo"
+                        >
+                          <Camera className="w-4 h-4" />
+                        </Button>
+                      </div>
                     ) : (
                       <Button 
                         variant="outline" 
@@ -453,6 +482,53 @@ export function ItemEvaluationModal({ isOpen, onOpenChange, onAccept }: ItemEval
               </Button>
             </div>
           </>
+        )}
+
+        {/* Scale Proof Enlarge Modal */}
+        {previewScalePhoto && (
+          <div 
+            className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setPreviewScalePhoto(null)}
+          >
+            <div className="relative max-w-xl max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center" onClick={e => e.stopPropagation()}>
+              <div className="w-full flex items-center justify-between pb-2 border-b border-slate-800 text-white text-xs font-bold">
+                <span>{previewScalePhoto.title}</span>
+                <button 
+                  type="button"
+                  onClick={() => setPreviewScalePhoto(null)}
+                  className="text-slate-400 hover:text-white px-2 py-1 rounded-lg"
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <img 
+                src={previewScalePhoto.url} 
+                alt={previewScalePhoto.title} 
+                className="w-full max-h-[65vh] object-contain rounded-xl mt-3 bg-black" 
+              />
+              <div className="mt-4 flex gap-2 w-full justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const target = previewScalePhoto.target;
+                    setPreviewScalePhoto(null);
+                    openCamera(target);
+                  }}
+                  className="text-white border-white/20 hover:bg-white/10 gap-1.5 text-xs font-bold"
+                >
+                  <Camera className="w-4 h-4" /> Retake Photo
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setPreviewScalePhoto(null)}
+                  className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold"
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </DialogContent>
     </Dialog>
