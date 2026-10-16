@@ -193,7 +193,7 @@ export default function LoginPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
         authUser = data.user;
         tok = data.session?.access_token || '';
-        const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com';
+        const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com' || loginEmail === 'tharushisandumini1111@gmail.com';
         userRole = profile?.role || data.user.user_metadata?.role || (isAdminEmail ? 'ADMIN' : 'TELLER');
       }
 

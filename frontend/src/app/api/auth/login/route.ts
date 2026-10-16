@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       .eq('id', authData.user.id)
       .maybeSingle();
 
-    const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com';
+    const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com' || loginEmail === 'tharushisandumini1111@gmail.com';
     const role = (profile?.role || authData.user.user_metadata?.role || (isAdminEmail ? 'ADMIN' : 'TELLER')).toUpperCase();
     
     // Determine effective operating branch:

@@ -84,6 +84,7 @@ const navGroups = [
     label: "Operations",
     icon: ShieldCheck,
     items: [
+      { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
       { name: 'Staff Management', href: '/employees', icon: Users, adminOnly: true },
       { name: 'SMS Gateway', href: '/operations/sms-settings', icon: Smartphone, adminOnly: true },
       { name: 'Dual Approvals', href: '/operations/approvals', icon: CheckSquare },
@@ -108,6 +109,14 @@ const tellerNavItems = [
   { name: 'Stock Management', href: '/operations/eod?tab=stock', icon: Package },
   { name: 'Daily ledger', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: User },
+];
+
+const managerNavItems = [
+  { name: 'Approvals', href: '/operations/approvals', icon: CheckSquare },
+  { name: 'Overview', href: '/', icon: LayoutDashboard },
+  { name: 'Pawn Review', href: '/loans', icon: Wallet },
+  { name: 'Transactions', href: '/transactions', icon: ArrowRightLeft },
+  { name: 'End-of-Day', href: '/operations/eod', icon: ShieldCheck },
 ];
 
 export default function TopGlassNavbar() {
@@ -141,6 +150,8 @@ export default function TopGlassNavbar() {
       'pereralakshi90@gmail.com': 'Lakshika',
       'geethanganipeiri2912@gmail.com': 'Geethangani',
       'dilupathamari9@gmail.com': 'Dilupa',
+      'sanjay.rupasinghe@gmail.com': 'Sanjay',
+      'nishanthikuru@gmail.com': 'Nishanthi',
       'admin@rupasinghe.com': 'Admin'
     };
 
@@ -276,6 +287,25 @@ export default function TopGlassNavbar() {
                           : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
                       )}>
                       <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-amber-400" : "text-slate-400")} />
+                      <span>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : user?.role === 'MANAGER' ? (
+              <div className="hidden lg:flex items-center gap-1.5" ref={dropdownRef}>
+                {managerNavItems.map((item) => {
+                  const active = isActive(item.href);
+                  const ItemIcon = item.icon;
+                  return (
+                    <Link key={item.name} href={item.href}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11.5px] font-bold transition-all duration-200",
+                        active
+                          ? "bg-purple-500/25 text-purple-300 border border-purple-500/50 shadow-md shadow-purple-500/10"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
+                      )}>
+                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-purple-400" : "text-purple-400/70")} />
                       <span>{item.name}</span>
                     </Link>
                   );
@@ -476,6 +506,30 @@ export default function TopGlassNavbar() {
                     <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-amber-400" : "text-slate-500")} />
                     <span>{item.name}</span>
                     {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                  </Link>
+                );
+              })}
+            </>
+          ) : user?.role === 'MANAGER' ? (
+            <>
+              <div className="text-[9px] font-black text-purple-400/80 uppercase tracking-widest px-1 pt-2 pb-1">
+                Manager Portal
+              </div>
+              {managerNavItems.map((item) => {
+                const active = isActive(item.href);
+                const ItemIcon = item.icon;
+                return (
+                  <Link key={item.name} href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
+                      active
+                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
+                    )}>
+                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-purple-400" : "text-purple-400/70")} />
+                    <span>{item.name}</span>
+                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />}
                   </Link>
                 );
               })}

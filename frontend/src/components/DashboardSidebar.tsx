@@ -75,6 +75,7 @@ const navGroups = [
   {
     label: "Operations",
     items: [
+      { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
       { name: 'Approvals', href: '/operations/approvals', icon: CheckSquare },
       { name: 'End-of-Day', href: '/operations/eod', icon: ShieldCheck },
       { name: 'Audit Logs', href: '/operations/audit-logs', icon: ShieldCheck },
