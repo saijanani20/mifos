@@ -63,6 +63,10 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       .single();
 
     const role = (profile?.role || 'TELLER').toUpperCase() as UserRole;
+    if (user.email && user.email.toLowerCase() === 'auditor@gmail.com') {
+      // Legacy auditor account revoked
+      return null;
+    }
     let branchId = normalizeBranchId(profile?.branch_id || 'HQ');
     const branchName = profile?.branch_name || '';
 

@@ -79,6 +79,9 @@ export default function Home() {
     const emailMap: Record<string, string> = {
       'madushaniperera9617@gmail.com': 'Madushani',
       'erandiperera25@gmail.com': 'Erandi',
+      'erandiauditor@gmail.com': 'Erandi',
+      'sanduminiauditor@gmail.com': 'Sandhumini',
+      'nishanthimanager@gmail.com': 'Nishanthi',
       'manishadias@gmail.com': 'Manisha',
       'kavika2030@gmail.com': 'Imashi',
       'a.v.chamika.sonali@hrpulse.com': 'Chamika',
@@ -148,6 +151,12 @@ export default function Home() {
         const user = JSON.parse(storedUser);
         uBranchId = user.branchId || uBranchId;
         uRole = user.role || uRole;
+
+        if (uRole === 'AUDITOR') {
+          window.location.href = '/dashboard/auditor';
+          return;
+        }
+
         setBranchId(uBranchId);
         const bObj = CANONICAL_BRANCHES.find(b => b.id === normalizeBranchId(uBranchId));
         setBranchName(user.branchName || bObj?.name || 'Head Office');

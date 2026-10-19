@@ -156,6 +156,10 @@ export default function LoginPage() {
         }
       }
 
+      if (loginEmail.toLowerCase() === 'auditor@gmail.com') {
+        throw new Error('Access Denied: The legacy auditor account has been decommissioned.');
+      }
+
       let authUser: any = null;
       let tok = '';
       let userRole = 'TELLER';
