@@ -141,3 +141,75 @@ export function getBranchSearchTerms(branchId: string | null | undefined): strin
 
   return Array.from(terms);
 }
+
+/**
+ * Checks if an identifier matches official Sri Lankan National Identity Card (NIC) formats:
+ * - Old format: 9 digits followed by 'V' or 'X' (e.g. 851234567V)
+ * - New format: 12 numeric digits (e.g. 198512345678)
+ */
+export function isNationalId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  const clean = id.trim();
+  return /^[0-9]{9}[vVxX]$/.test(clean) || /^[0-9]{12}$/.test(clean);
+}
+
+/**
+ * Strips any leading branch prefix (e.g. "KDW-3R 14543" -> "3R 14543", "KIR/3R 14543" -> "3R 14543")
+ * so UI and printed receipts always display the original clean ticket / account number.
+ */
+export function stripBranchPrefix(idOrBill: string | null | undefined): string {
+  if (!idOrBill) return '';
+  const clean = idOrBill.trim();
+  
+  // Check if string starts with any known canonical branch code or alias followed by - or /
+  const prefixMatch = clean.match(/^([A-Za-z0-9]{2,4})[-/_]\s*(.+)$/);
+  if (prefixMatch && prefixMatch[1] && prefixMatch[2]) {
+    const candidateCode = prefixMatch[1].toUpperCase();
+    if (BRANCH_ALIAS_MAP[candidateCode] || CANONICAL_BRANCHES.some(b => b.id === candidateCode)) {
+      return prefixMatch[2].trim();
+    }
+  }
+  return clean;
+}
+
+/**
+ * Formats a client ID / NIC with branch scoping behind the scenes:
+ * - Real Sri Lankan NICs are left un-prefixed (they are universally unique to a citizen).
+ * - Book-era account numbers, ticket IDs, or non-NIC codes (like "3R 14543", "14543", "1R 102")
+ *   are automatically prefixed with the branch code (e.g. "KDW-3R 14543" or "KIR-3R 14543").
+ */
+export function formatBranchScopedId(id: string | null | undefined, branchId: string | null | undefined): string {
+  if (!id) return '';
+  const clean = id.trim();
+  if (!clean) return '';
+  
+  // Real National ID cards are globally unique per person
+  if (isNationalId(clean)) {
+    return clean.toUpperCase();
+  }
+
+  const normBranch = normalizeBranchId(branchId);
+  const stripped = stripBranchPrefix(clean);
+  return `${normBranch}-${stripped}`;
+}
+
+/**
+ * Formats a Pawn Ticket / Bill Number with canonical branch scoping behind the scenes:
+ * (e.g. "3R 14543" at Kadawatha -> "KDW-3R 14543", at Kiribathgoda -> "KIR-3R 14543")
+ */
+export function formatBranchScopedBillNo(billNo: string | null | undefined, branchId: string | null | undefined): string {
+  if (!billNo) return '';
+  const clean = billNo.trim();
+  if (!clean) return '';
+
+  const normBranch = normalizeBranchId(branchId);
+  const stripped = stripBranchPrefix(clean);
+  return `${normBranch}-${stripped}`;
+}
+
+/**
+ * Formats bill number for human display (returns clean "3R 14543" without branch prefix)
+ */
+export function getBillDisplayNumber(billNo: string | null | undefined): string {
+  return stripBranchPrefix(billNo);
+}

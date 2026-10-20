@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnReceiptSms } from '@/lib/sms';
-import { normalizeBranchId, getBranchSearchTerms } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +31,8 @@ export async function GET(request: Request) {
     const searchFilter = searchParams.get('search');
     if (searchFilter && searchFilter.trim() !== '') {
       const q = searchFilter.trim();
-      query = query.or(`bill_no.ilike.%${q}%,description.ilike.%${q}%`);
+      const strippedQ = stripBranchPrefix(q);
+      query = query.or(`bill_no.ilike.%${q}%,bill_no.ilike.%${strippedQ}%,description.ilike.%${q}%`);
     }
 
     const { data, error } = await query;
@@ -220,6 +221,7 @@ export async function GET(request: Request) {
           pawn.packet_qr = packetQrByBillMap[cleanBill] || packetQrByBillMap[cleanBill.toUpperCase()] || null;
         }
 
+        pawn.display_bill_no = stripBranchPrefix(pawn.bill_no);
         return pawn;
     });
 
@@ -258,27 +260,34 @@ export async function POST(request: Request) {
       }
     }
 
-    // 1. Resolve valid Client UUID
+    // 1. Resolve valid Client UUID (with branch scoping for book ledger IDs)
     let targetClientId = clientId;
     let fullClientObj: any = null;
 
     if (!isUUID(clientId)) {
       const trimmedId = String(clientId).trim();
+      const isGovId = isNationalId(trimmedId);
+      const effectiveLookupId = isGovId ? trimmedId.toUpperCase() : formatBranchScopedId(trimmedId, targetBranchId);
+
       let existingClients = null;
-      const { data: snakeExisting } = await adminSupabase
-        .from('clients')
-        .select('*')
-        .eq('national_id', trimmedId)
-        .limit(1);
+      let snakeQuery = adminSupabase.from('clients').select('*');
+      if (isGovId) {
+        snakeQuery = snakeQuery.eq('national_id', effectiveLookupId);
+      } else {
+        snakeQuery = snakeQuery.or(`national_id.eq.${effectiveLookupId},and(national_id.eq.${trimmedId},branch_id.eq.${targetBranchId})`);
+      }
+      const { data: snakeExisting } = await snakeQuery.limit(1);
 
       if (snakeExisting && snakeExisting.length > 0) {
         existingClients = snakeExisting;
       } else {
-        const { data: camelExisting } = await adminSupabase
-          .from('clients')
-          .select('*')
-          .eq('nationalId', trimmedId)
-          .limit(1);
+        let camelQuery = adminSupabase.from('clients').select('*');
+        if (isGovId) {
+          camelQuery = camelQuery.eq('nationalId', effectiveLookupId);
+        } else {
+          camelQuery = camelQuery.or(`nationalId.eq.${effectiveLookupId},and(nationalId.eq.${trimmedId},branchId.eq.${targetBranchId})`);
+        }
+        const { data: camelExisting } = await camelQuery.limit(1);
         if (camelExisting && camelExisting.length > 0) {
           existingClients = camelExisting;
         }
@@ -311,7 +320,7 @@ export async function POST(request: Request) {
         const newClientId = crypto.randomUUID();
         const clientPayload: any = {
           id: newClientId,
-          national_id: clientId,
+          national_id: effectiveLookupId,
           first_name: (clientName && clientName !== 'Valued Customer') ? clientName : (customerName && customerName !== 'Valued Customer') ? customerName : null,
           last_name: '.',
           phone: clientPhone || null,
@@ -342,6 +351,9 @@ export async function POST(request: Request) {
     // Determine initial pawn status (High-ValuePawns > Rs. 100,000 require Manager Approval)
     const initialStatus = finalDisbursed > HIGH_VALUE_APPROVAL_THRESHOLD ? 'PENDING_APPROVAL' : 'ACTIVE';
 
+    // Format bill_no with branch prefix behind the scenes (e.g. "KDW-3R 14543")
+    const scopedBillNo = billNo ? formatBranchScopedBillNo(billNo, targetBranchId) : null;
+
     // 2. Insert pawn ticket into DB
     const pawnPayload: any = {
       id: pawnId,
@@ -353,7 +365,7 @@ export async function POST(request: Request) {
       created_by_user_id: targetUserId,
       status: initialStatus,
       created_at: new Date().toISOString(),
-      bill_no: billNo || null,
+      bill_no: scopedBillNo || null,
       weight_grams: finalWeightGrams,
       weight_mg: finalWeightMg,
       interest_rate: finalInterestRate,
@@ -369,7 +381,7 @@ export async function POST(request: Request) {
     if (pawnErr) throw pawnErr;
 
     // Record Air Weight & Water Weight evaluation photos linked to the bill number
-    const targetBill = billNo;
+    const targetBill = scopedBillNo || billNo;
     if (targetBill && (airWeightPhoto || waterWeightPhoto)) {
       try {
         await adminSupabase.from('rejected_evaluations').insert([{
@@ -389,7 +401,7 @@ export async function POST(request: Request) {
     }
 
     // 3. Insert pawn collateral items into pawn_items and stock_items with sub-bill numbers (+)
-    const baseBill = billNo || pawnId.substring(0, 8).toUpperCase();
+    const baseBill = scopedBillNo || billNo || pawnId.substring(0, 8).toUpperCase();
 
     if (Array.isArray(items) && items.length > 0) {
       const pawnItemsPayload = items.map((item: any, idx: number) => {
@@ -522,7 +534,7 @@ export async function POST(request: Request) {
     const targetPhone = clientPhone || fullClientObj?.phone;
     if (targetPhone) {
       try {
-        const ticketDisplay = billNo || pawnId.substring(0, 8).toUpperCase();
+        const ticketDisplay = stripBranchPrefix(scopedBillNo || billNo) || pawnId.substring(0, 8).toUpperCase();
         const cName = clientName || customerName || (fullClientObj ? `${fullClientObj.first_name || ''} ${fullClientObj.last_name || ''}`.trim() : 'Valued Customer');
         const smsMessage = buildPawnReceiptSms({
           customerName: cName,
@@ -542,7 +554,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Attach client details to response
+    // Attach client details and clean display_bill_no to response
+    newPawn.display_bill_no = stripBranchPrefix(newPawn.bill_no);
     if (fullClientObj) {
       newPawn.clients = fullClientObj;
     }

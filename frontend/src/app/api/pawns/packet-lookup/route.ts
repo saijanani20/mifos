@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminSupabase } from '@/lib/auth-server';
 import { extractBillNoFromQr } from '@/app/api/pawns/[id]/packet-qr/route';
+import { stripBranchPrefix } from '@/lib/branch-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,8 +101,10 @@ export async function GET(request: Request) {
       found: true,
       qr: trimmedQr,
       bill_no: pawn.bill_no,
+      display_bill_no: stripBranchPrefix(pawn.bill_no),
       pawn: {
         ...pawn,
+        display_bill_no: stripBranchPrefix(pawn.bill_no),
         clients: client,
         items: items || []
       }

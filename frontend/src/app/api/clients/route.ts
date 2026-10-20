@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, getBranchSearchTerms } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,15 +75,21 @@ export async function GET(request: Request) {
       data = lightData || [];
     }
 
+    // Add display_national_id stripped of branch prefix for clean UI presentation
+    const mappedClients = (data || []).map((c: any) => ({
+      ...c,
+      display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
+    }));
+
     // Cache valid data for 3 minutes (180,000 ms)
-    if (data) {
+    if (mappedClients) {
       clientsMemoryCache.set(cacheKey, {
-        data,
+        data: mappedClients,
         expiresAt: Date.now() + 180_000
       });
     }
 
-    return NextResponse.json(data || []);
+    return NextResponse.json(mappedClients);
   } catch (error: any) {
     console.error("API GET Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -115,6 +121,7 @@ export async function POST(request: Request) {
 
     let hasNicFront = false;
     let hasNicBack = false;
+
     if (nicImage) {
       try {
         const parsed = JSON.parse(nicImage);
@@ -144,24 +151,35 @@ export async function POST(request: Request) {
       effectiveBranchId = normalizeBranchId(session.branchId);
     }
 
-    // 0. DUPLICATE NIC PREVENTION: Safely check for existing client
+    // 0. SCOPED IDENTIFIER LOGIC:
+    // If it's a real national NIC (9V/12 digits), it is globally unique to a citizen.
+    // If it's a legacy book-era account / ticket ID (e.g. "3R 14543"), scope it to the branch ("KDW-3R 14543" vs "KIR-3R 14543")
+    const isGovNic = isNationalId(trimmedNic);
+    const effectiveNic = isGovNic 
+      ? trimmedNic.toUpperCase() 
+      : formatBranchScopedId(trimmedNic, effectiveBranchId);
+
+    // DUPLICATE PREVENTION:
+    // Non-NIC book IDs only check for duplicates within the current branch!
     let existingClient = null;
-    const { data: snakeExisting } = await adminSupabase
-      .from('clients')
-      .select('*')
-      .eq('national_id', trimmedNic)
-      .limit(1)
-      .maybeSingle();
+    let snakeQuery = adminSupabase.from('clients').select('*');
+    if (isGovNic) {
+      snakeQuery = snakeQuery.eq('national_id', effectiveNic);
+    } else {
+      snakeQuery = snakeQuery.or(`national_id.eq.${effectiveNic},and(national_id.eq.${trimmedNic},branch_id.eq.${effectiveBranchId})`);
+    }
+    const { data: snakeExisting } = await snakeQuery.limit(1).maybeSingle();
       
     if (snakeExisting) {
       existingClient = snakeExisting;
     } else {
-      const { data: camelExisting } = await adminSupabase
-        .from('clients')
-        .select('*')
-        .eq('nationalId', trimmedNic)
-        .limit(1)
-        .maybeSingle();
+      let camelQuery = adminSupabase.from('clients').select('*');
+      if (isGovNic) {
+        camelQuery = camelQuery.eq('nationalId', effectiveNic);
+      } else {
+        camelQuery = camelQuery.or(`nationalId.eq.${effectiveNic},and(nationalId.eq.${trimmedNic},branchId.eq.${effectiveBranchId})`);
+      }
+      const { data: camelExisting } = await camelQuery.limit(1).maybeSingle();
       if (camelExisting) {
         existingClient = camelExisting;
       }
@@ -186,6 +204,7 @@ export async function POST(request: Request) {
         .single();
 
       if (!updateErr && updatedClient) {
+        invalidateClientsCache();
         return NextResponse.json(updatedClient, { status: 200 });
       }
 
@@ -206,6 +225,7 @@ export async function POST(request: Request) {
         .select()
         .single();
 
+      invalidateClientsCache();
       return NextResponse.json(camelUpdatedClient || updatedClient || existingClient, { status: 200 });
     }
 
@@ -214,7 +234,7 @@ export async function POST(request: Request) {
     // 1. Try snake_case insert first (matching active database schema)
     const snakePayload: any = {
       id: clientId,
-      national_id: trimmedNic,
+      national_id: effectiveNic,
       first_name: firstName,
       last_name: lastName || '.',
       phone: phone || null,

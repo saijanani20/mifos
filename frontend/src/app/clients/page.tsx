@@ -1,6 +1,6 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { getBranchSearchTerms } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, isNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -441,15 +441,28 @@ export default function ClientsPage() {
   // Real-time duplicate cross-check against database when registering customer
   const normalizedInputNic = (nic || '').trim().toLowerCase();
   const normalizedInputPhone = (phone || '').replace(/\D/g, '');
+  const isGovInputNic = isNationalId(normalizedInputNic);
 
   const duplicateClientMatch = (!editingClient && (normalizedInputNic.length >= 3 || normalizedInputPhone.length >= 9))
     ? clients.find(c => {
-        const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
+        const cBranch = normalizeBranchId(c.branch_id || c.branchId);
+        const myBranch = normalizeBranchId(branchId);
+
+        // If it's a book-era / non-NIC code (e.g. "3R 14543"), ONLY match within the user's active branch!
+        // This ensures Kadawatha and Kiribathgoda will never conflict on duplicate book ledger IDs.
+        if (!isGovInputNic && cBranch !== myBranch) {
+          return false;
+        }
+
+        const rawNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
+        const cleanRawNic = stripBranchPrefix(rawNic).toLowerCase();
         const cPhone = String(c.phone || c.mobile || '').replace(/\D/g, '');
 
         const nicMatches = normalizedInputNic.length >= 3 && (
-          cNic === normalizedInputNic || 
-          cNic.replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '')
+          rawNic === normalizedInputNic || 
+          cleanRawNic === normalizedInputNic ||
+          rawNic.replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '') ||
+          cleanRawNic.replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '')
         );
         const phoneMatches = normalizedInputPhone.length >= 9 && cPhone.length >= 9 && cPhone === normalizedInputPhone;
 
@@ -460,7 +473,10 @@ export default function ClientsPage() {
   const isDuplicateClientNic = Boolean(
     duplicateClientMatch && 
     normalizedInputNic.length >= 3 && 
-    String(duplicateClientMatch.national_id || duplicateClientMatch.nationalId || duplicateClientMatch.nic || duplicateClientMatch.id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '')
+    (
+      String(duplicateClientMatch.national_id || duplicateClientMatch.nationalId || duplicateClientMatch.nic || duplicateClientMatch.id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '') ||
+      stripBranchPrefix(String(duplicateClientMatch.national_id || duplicateClientMatch.nationalId || duplicateClientMatch.nic || duplicateClientMatch.id || '')).trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedInputNic.replace(/[^a-z0-9]/g, '')
+    )
   );
 
   const isDuplicateClientPhone = Boolean(
@@ -519,6 +535,12 @@ export default function ClientsPage() {
   const loadCustomerData = async () => {
     try {
       let query = supabase.from('stock_customers').select('*');
+      const targetBranch = selectedBranchFilter !== 'ALL' ? selectedBranchFilter : (branchId && branchId !== 'HQ' && branchId !== 'ALL' ? branchId : null);
+      if (targetBranch) {
+        const terms = getBranchSearchTerms(targetBranch);
+        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
+        query = query.or(orClause);
+      }
       const { data, error } = await query.order('name', { ascending: true });
       if (error) throw error;
       setStockCustomers(data || []);
@@ -797,7 +819,8 @@ export default function ClientsPage() {
       address_2: custAddress2.trim() || null,
       tp: custTp.trim(),
       nic: custNic.trim() || null,
-      bill_numbers: custBills.trim()
+      bill_numbers: custBills.trim(),
+      branch_id: normalizeBranchId(branchId || 'HQ')
     };
 
     try {
@@ -883,6 +906,7 @@ export default function ClientsPage() {
       (client.first_name || client.firstName)?.toLowerCase().includes(q) ||
       (client.last_name || client.lastName)?.toLowerCase().includes(q) ||
       (client.national_id || client.nationalId)?.toLowerCase().includes(q) ||
+      (client.display_national_id || stripBranchPrefix(client.national_id || client.nationalId))?.toLowerCase().includes(q) ||
       client.address?.toLowerCase().includes(q) ||
       (client.branch_id || client.branchId)?.toLowerCase().includes(q) ||
       client.phone?.toLowerCase().includes(q)
@@ -1439,7 +1463,9 @@ export default function ClientsPage() {
             ) : (
               filteredClients.map((client) => (
                 <TableRow key={client.id} className="group hover:bg-primary/5 transition-all duration-300">
-                  <TableCell className="px-8 py-6 font-black text-slate-900 group-hover:text-primary transition-colors underline decoration-primary/10 underline-offset-4">{client.national_id || client.nationalId || 'N/A'}</TableCell>
+                  <TableCell className="px-8 py-6 font-black text-slate-900 group-hover:text-primary transition-colors underline decoration-primary/10 underline-offset-4">
+                    {client.display_national_id || stripBranchPrefix(client.national_id || client.nationalId) || 'N/A'}
+                  </TableCell>
                   <TableCell className="px-8 py-6">
                     <div className="flex flex-col">
                       {(() => {

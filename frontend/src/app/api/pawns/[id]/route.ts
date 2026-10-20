@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId } from '@/lib/branch-mapping';
+import { normalizeBranchId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -12,12 +12,19 @@ export async function GET(request: Request, context: any) {
     const session = await getAuthenticatedUser(request);
     const { id } = await context.params;
 
-    // 1. Fetch pawn details (support both UUID or bill_no)
+    // 1. Fetch pawn details (support UUID, raw bill_no, or branch-scoped bill_no)
     let query = adminSupabase.from('pawns').select('*');
     if (isUUID(id)) {
       query = query.eq('id', id);
     } else {
-      query = query.eq('bill_no', id);
+      const sessBranch = session?.branchId ? normalizeBranchId(session.branchId) : null;
+      if (sessBranch && sessBranch !== 'HQ') {
+        const scoped = formatBranchScopedBillNo(id, sessBranch);
+        query = query.or(`bill_no.eq.${id},bill_no.eq.${scoped}`);
+      } else {
+        const stripped = stripBranchPrefix(id);
+        query = query.or(`bill_no.eq.${id},bill_no.ilike.%${stripped}%`);
+      }
     }
     const { data: pawn, error: fetchErr } = await query.maybeSingle();
 
@@ -248,11 +255,15 @@ export async function PATCH(request: Request, context: any) {
       if (totWeight > 0) stockUpdate.weight = totWeight;
       if (itemType) stockUpdate.item_type = itemType;
       if (billNo && billNo.trim() !== oldBillNo) {
-        stockUpdate.bill_no = billNo.trim();
+        stockUpdate.bill_no = formatBranchScopedBillNo(billNo.trim(), existingPawn.branch_id);
       }
       
       if (Object.keys(stockUpdate).length > 0) {
-        await adminSupabase.from('stock_items').update(stockUpdate).eq('bill_no', oldBillNo);
+        let stockQuery = adminSupabase.from('stock_items').update(stockUpdate).eq('bill_no', oldBillNo);
+        if (existingPawn.branch_id) {
+          stockQuery = stockQuery.eq('branch_id', existingPawn.branch_id);
+        }
+        await stockQuery;
         try {
           await invalidateBranchInventoryCache(existingPawn.branch_id);
         } catch (cErr) {

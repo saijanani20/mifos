@@ -1,6 +1,6 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { getBranchSearchTerms } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, isNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -307,10 +307,11 @@ export default function PawnesPage() {
 
   const getBillNo = (pawn: any) => {
     if (!pawn) return '—';
-    if (pawn.bill_no && String(pawn.bill_no).trim()) return String(pawn.bill_no).trim();
+    if (pawn.display_bill_no && String(pawn.display_bill_no).trim()) return String(pawn.display_bill_no).trim();
+    if (pawn.bill_no && String(pawn.bill_no).trim()) return stripBranchPrefix(String(pawn.bill_no).trim());
     const desc = String(pawn.description || '');
     const match = desc.match(/^([A-Za-z0-9]+\s+[0-9A-Za-z]+)\s*\|?\s*(.*)/);
-    if (match && match[1]) return match[1].trim();
+    if (match && match[1]) return stripBranchPrefix(match[1].trim());
     const pid = String(pawn.id || '');
     return `#${pid.substring(0, 8).toUpperCase()}`;
   };
@@ -536,14 +537,24 @@ export default function PawnesPage() {
     const nicVal = inlineNic.trim() || clientId.trim();
     if (!nicVal) { toast.error('NIC is required'); return; }
 
+    const isGovNic = isNationalId(nicVal);
     const inlineDuplicate = clientsList.find(c => {
-      const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
-      return nicVal.toLowerCase() === cNic;
+      const cBranch = normalizeBranchId(c.branch_id || c.branchId);
+      const myBranch = normalizeBranchId(branchId);
+      // For non-NIC book ledger IDs (like "3R 14543"), only check within teller's active branch
+      if (!isGovNic && cBranch !== myBranch) {
+        return false;
+      }
+      const rawNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
+      const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+      const target = nicVal.toLowerCase();
+      return target === rawNic || target === cleanNic;
     });
 
     if (inlineDuplicate) {
       toast.info(`Using existing customer record for ${inlineDuplicate.first_name || inlineDuplicate.firstName || 'Customer'}`);
-      const nic = inlineDuplicate.national_id || inlineDuplicate.nationalId || inlineDuplicate.id || nicVal;
+      const rawNic = inlineDuplicate.national_id || inlineDuplicate.nationalId || inlineDuplicate.id || nicVal;
+      const nic = stripBranchPrefix(rawNic);
       const fullName = `${inlineDuplicate.first_name || inlineDuplicate.firstName || ''} ${inlineDuplicate.last_name || inlineDuplicate.lastName || ''}`.trim() || inlineDuplicate.name || inlineName.trim();
       setClientId(nic);
       setResolvedName(fullName);

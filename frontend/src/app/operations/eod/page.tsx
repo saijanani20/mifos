@@ -54,7 +54,7 @@ import { supabase, oldSupabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
-import { normalizeBranchId, getBranchSearchTerms } from "@/lib/branch-mapping";
+import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix } from "@/lib/branch-mapping";
 
 // Stock item abbreviations
 const ITEM_TYPES = [
@@ -846,7 +846,8 @@ function EndOfDayContent() {
   const BILL_PREFIXES = ["A", "1R", "3M", "3R", "6R", "12R", "6M"];
 
   const parseBillNumber = (billNoStr: string) => {
-    const str = (billNoStr || "").trim().toUpperCase();
+    let str = (billNoStr || "").trim().toUpperCase();
+    str = stripBranchPrefix(str).toUpperCase();
     const sortedPrefixesByLength = [...BILL_PREFIXES].sort((a, b) => b.length - a.length);
 
     for (const pref of sortedPrefixesByLength) {
@@ -1298,7 +1299,7 @@ function EndOfDayContent() {
     // Duplicate bill number check WITHIN THE SAME BRANCH (case-insensitive & trimmed)
     const isDuplicateInBranch = stockItems.some(item => 
       normalizeBranchId(item.branch_id) === normalizeBranchId(targetBranch) &&
-      item.bill_no.toLowerCase().trim() === finalBillNo.toLowerCase().trim() &&
+      stripBranchPrefix(item.bill_no).toLowerCase().trim() === stripBranchPrefix(finalBillNo).toLowerCase().trim() &&
       (!isEditingActive || item.id !== selectedActiveItem?.id)
     );
 
