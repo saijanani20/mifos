@@ -474,7 +474,7 @@ export default function AuditorDashboard() {
       'Interest Rate (%)',
       'Period (Months)',
       'Collateral Description',
-      'Weight (g)',
+      'Weight (mg)',
       'Scale Air Proof',
       'Scale Water Proof',
       'NIC Front KYC',
@@ -549,7 +549,6 @@ export default function AuditorDashboard() {
       'Inventory Category',
       'Item Description',
       'Purity / Karat',
-      'Weight (g)',
       'Weight (mg)',
       'Valuation (LKR)',
       'Status',
@@ -1141,7 +1140,7 @@ export default function AuditorDashboard() {
                                 {pawn.description || 'Pawn Collateral'}
                               </span>
                               <span className="text-[10px] text-amber-700 font-bold">
-                                Weight: {((pawn.weight_mg || 0) / 1000 || pawn.weight_grams || pawn.weight || 0).toFixed(2)}g ({pawn.weight_mg || 0} mg)
+                                Weight: {(pawn.weight_mg || Math.round(Number(pawn.weight_grams || pawn.weight || 0) * 1000)).toLocaleString()} mg
                               </span>
                             </div>
                           </TableCell>
@@ -1365,7 +1364,7 @@ export default function AuditorDashboard() {
                         <div>
                           <span className="text-[9px] font-black uppercase text-slate-400 block">Weight</span>
                           <span className="font-mono font-black text-xs text-slate-800 block truncate">
-                            {((pawn.weight_mg || 0) / 1000 || pawn.weight_grams || pawn.weight || 0).toFixed(2)}g
+                            {(pawn.weight_mg || Math.round(Number(pawn.weight_grams || pawn.weight || 0) * 1000)).toLocaleString()} mg
                           </span>
                         </div>
                         <div>
@@ -1814,7 +1813,7 @@ export default function AuditorDashboard() {
                       <Scale className="w-3.5 h-3.5 text-amber-600" /> Collateral & Scale Metrics
                     </span>
                     <Badge variant="outline" className="font-black text-[10px] bg-amber-100 text-amber-900 border-amber-300">
-                      Total Weight: {((selectedPawn.weight_mg || 0) / 1000 || selectedPawn.weight_grams || selectedPawn.weight || 0).toFixed(2)} g
+                      Total Weight: {(selectedPawn.weight_mg || Math.round(Number(selectedPawn.weight_grams || selectedPawn.weight || 0) * 1000)).toLocaleString()} mg
                     </Badge>
                   </div>
 
@@ -2140,7 +2139,7 @@ export default function AuditorDashboard() {
         targetPawnId={scannerTargetPawn?.id}
         currentPacketQr={scannerTargetPawn?.packet_qr}
         customerName={scannerTargetPawn?.clients?.first_name || scannerTargetPawn?.customer_name}
-        weightFormatted={scannerTargetPawn?.weight ? `${scannerTargetPawn.weight.toFixed(3)} g` : undefined}
+        weightFormatted={scannerTargetPawn?.weight_mg ? `${scannerTargetPawn.weight_mg} mg` : (scannerTargetPawn?.weight ? `${Math.round(scannerTargetPawn.weight * 1000)} mg` : undefined)}
         availablePawns={pawns}
         onSuccess={(scannedQr, billNo, pawnId) => {
           // Immediately update pawns state in place strictly by unique pawn ID to prevent cross-branch bill leakage

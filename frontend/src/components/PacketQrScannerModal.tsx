@@ -400,9 +400,7 @@ export default function PacketQrScannerModal({
 
   const effectiveBillNo = selectedPawn?.bill_no || targetBillNo || '';
   const effectiveCustomer = selectedPawn?.clients?.first_name || selectedPawn?.customer_name || customerName || '';
-  const effectiveWeight = selectedPawn?.weight 
-    ? `${selectedPawn.weight.toFixed(3)} g` 
-    : (weightFormatted || (selectedPawn?.weight_grams ? `${Number(selectedPawn.weight_grams).toFixed(2)} g` : ''));
+  const effectiveWeight = selectedPawn?.weight_mg ? `${selectedPawn.weight_mg} mg` : (weightFormatted || (selectedPawn?.weight ? `${Math.round(selectedPawn.weight * 1000)} mg` : (selectedPawn?.weight_grams ? `${Math.round(Number(selectedPawn.weight_grams) * 1000)} mg` : '')));
   const effectiveQr = selectedPawn?.packet_qr || currentPacketQr;
 
   return (
@@ -592,9 +590,7 @@ export default function PacketQrScannerModal({
                 searchResults.map((pawn) => {
                   const cust = pawn.clients?.first_name || pawn.customer_name || 'Valued Customer';
                   const nic = pawn.clients?.national_id || '';
-                  const wt = pawn.weight 
-                    ? `${pawn.weight.toFixed(3)} g` 
-                    : pawn.weight_grams ? `${Number(pawn.weight_grams).toFixed(2)} g` : '';
+                  const wt = pawn.weight_mg ? `${pawn.weight_mg} mg` : (pawn.weight ? `${Math.round(pawn.weight * 1000)} mg` : (pawn.weight_grams ? `${Math.round(Number(pawn.weight_grams) * 1000)} mg` : ''));
                   const hasSticker = Boolean(pawn.packet_qr);
 
                   return (

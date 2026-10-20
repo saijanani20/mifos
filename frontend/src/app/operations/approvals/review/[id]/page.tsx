@@ -311,7 +311,7 @@ export default function ManagerReviewPage() {
             <div className="p-3 bg-white rounded-2xl border border-emerald-200 flex items-center justify-between shadow-xs">
               <span>Observed Weight:</span>
               <span className="font-mono font-black text-slate-900">
-                {auditorChecklist.observedWeight ? `${auditorChecklist.observedWeight}g` : 'Verified'}
+                {auditorChecklist.observedWeight ? `${auditorChecklist.observedWeight} mg` : 'Verified'}
               </span>
             </div>
             <div className="p-3 bg-white rounded-2xl border border-emerald-200 flex items-center justify-between shadow-xs">
@@ -401,7 +401,7 @@ export default function ManagerReviewPage() {
             <div>
               <span className="text-[10px] font-bold text-slate-400 block">Total Weight</span>
               <strong className="font-mono text-slate-900 text-sm">
-                {pData.weight_grams ? `${pData.weight_grams}.${String(pData.weight_mg || 0).padStart(3, '0')}g` : (pData.weight ? `${pData.weight}g` : '—')}
+                {pData.weight_mg ? `${pData.weight_mg.toLocaleString()} mg` : (pData.weight_grams ? `${Math.round(pData.weight_grams * 1000).toLocaleString()} mg` : (pData.weight ? `${Math.round(Number(pData.weight) * 1000).toLocaleString()} mg` : '—'))}
               </strong>
             </div>
             <div>
@@ -425,7 +425,7 @@ export default function ManagerReviewPage() {
                 {items.map((it: any) => (
                   <div key={it.id} className="flex justify-between text-[11px] font-semibold text-slate-700 bg-slate-50 px-2.5 py-1 rounded-lg">
                     <span>{it.item_type || 'Gold'} ({it.purity || '22K'})</span>
-                    <span className="font-mono">{it.weight_grams || 0}g • Rs. {(it.appraised_value || 0).toLocaleString()}</span>
+                    <span className="font-mono">{it.weight_mg ? `${it.weight_mg.toLocaleString()} mg` : `${Math.round((it.weight_grams || 0) * 1000).toLocaleString()} mg`} • Rs. {(it.appraised_value || 0).toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -546,7 +546,7 @@ export default function ManagerReviewPage() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span>Air Weight Photo (Dry)</span>
-              <span className="font-mono text-slate-500">{evalEv?.air_weight ? `${evalEv.air_weight}g` : ''}</span>
+              <span className="font-mono text-slate-500">{evalEv?.air_weight ? `${evalEv.air_weight} mg` : ''}</span>
             </div>
             <div 
               className="w-full aspect-video bg-black/90 rounded-2xl overflow-hidden flex items-center justify-center cursor-zoom-in group relative border border-slate-200"
@@ -568,7 +568,7 @@ export default function ManagerReviewPage() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span>Water Weight Photo (Submerged)</span>
-              <span className="font-mono text-slate-500">{evalEv?.water_weight ? `${evalEv.water_weight}g` : ''}</span>
+              <span className="font-mono text-slate-500">{evalEv?.water_weight ? `${evalEv.water_weight} mg` : ''}</span>
             </div>
             <div 
               className="w-full aspect-video bg-black/90 rounded-2xl overflow-hidden flex items-center justify-center cursor-zoom-in group relative border border-slate-200"
@@ -605,7 +605,7 @@ export default function ManagerReviewPage() {
               {stockItems.map((stk: any) => (
                 <div key={stk.id} className="p-3 bg-white rounded-xl border border-slate-200 flex justify-between font-semibold">
                   <span>Sub-bill: <strong className="font-mono text-slate-900">{stk.bill_no}</strong> ({stk.item_type})</span>
-                  <span className="font-mono font-black">{stk.weight}g</span>
+                  <span className="font-mono font-black">{stk.weight_mg ? `${stk.weight_mg} mg` : `${Math.round((parseFloat(stk.weight) || 0) * 1000)} mg`}</span>
                 </div>
               ))}
             </div>

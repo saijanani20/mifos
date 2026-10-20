@@ -1098,7 +1098,7 @@ export default function AuditorVerificationPage() {
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
                 <span className="text-[10px] font-black uppercase text-slate-400">System Total Weight</span>
                 <p className="text-lg font-black font-mono text-amber-700 mt-0.5">
-                  {grossWeightGrams.toFixed(3)} g
+                  {(pawn.weight_mg || Math.round(grossWeightGrams * 1000)).toLocaleString()} mg
                 </p>
                 <span className="text-[10px] text-slate-400 font-mono font-bold">({pawn.weight_mg || (grossWeightGrams * 1000)} mg)</span>
               </div>
@@ -1267,7 +1267,7 @@ export default function AuditorVerificationPage() {
                     </div>
 
                     <div className="text-right">
-                      <p className="font-mono font-black text-sm text-slate-900">{stk.weight} g</p>
+                      <p className="font-mono font-black text-sm text-slate-900">{stk.weight_mg ? `${stk.weight_mg} mg` : (stk.weight ? `${Math.round(parseFloat(stk.weight) * 1000)} mg` : "—")}</p>
                       <p className="font-mono text-xs font-bold text-slate-500">Rs. {Number(stk.price || 0).toLocaleString()}</p>
                     </div>
                   </div>
@@ -1490,13 +1490,13 @@ export default function AuditorVerificationPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
-                  <span className="text-[10px] text-slate-400 font-bold shrink-0">Observed (g):</span>
+                  <span className="text-[10px] text-slate-400 font-bold shrink-0">Observed (mg):</span>
                   <Input 
                     type="number"
-                    step="0.001"
+                    step="1"
                     value={observedWeight}
                     onChange={(e) => setObservedWeight(e.target.value)}
-                    placeholder={grossWeightGrams.toFixed(3)}
+                    placeholder={String(pawn.weight_mg || Math.round(grossWeightGrams * 1000))}
                     className="h-8 text-xs font-mono font-bold bg-slate-50"
                   />
                 </div>
@@ -1835,7 +1835,7 @@ export default function AuditorVerificationPage() {
                 rows={4}
                 value={issueNote}
                 onChange={(e) => setIssueNote(e.target.value)}
-                placeholder="State clearly what is wrong (e.g. 'Air weight on scale photo is 12.4g but contract declared 14.8g', 'Physical item is broken', 'NIC number mismatch')..."
+                placeholder="State clearly what is wrong (e.g. 'Air weight on scale photo is 12400mg but contract declared 14800mg', 'Physical item is broken', 'NIC number mismatch')..."
                 className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white"
               />
             </div>
@@ -1916,7 +1916,7 @@ export default function AuditorVerificationPage() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Gross weight: {observedWeight || grossWeightGrams.toFixed(3)} g verified</span>
+                  <span>Gross weight: {observedWeight ? `${observedWeight} mg` : `${(pawn.weight_mg || Math.round(grossWeightGrams * 1000)).toLocaleString()} mg`} verified</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -2248,7 +2248,7 @@ export default function AuditorVerificationPage() {
         targetPawnId={data?.pawn?.id || id}
         currentPacketQr={packetQr || undefined}
         customerName={data?.client?.first_name || data?.pawn?.customer_name}
-        weightFormatted={grossWeightGrams ? `${grossWeightGrams.toFixed(3)} g` : undefined}
+        weightFormatted={pawn.weight_mg ? `${pawn.weight_mg} mg` : (grossWeightGrams ? `${Math.round(grossWeightGrams * 1000)} mg` : undefined)}
         onSuccess={(scannedCode) => {
           if (scannedCode) {
             setPacketQr(scannedCode);

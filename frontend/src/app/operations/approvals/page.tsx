@@ -622,7 +622,7 @@ export default function ApprovalsPage() {
                           {pawn.description || 'Gold Jewelry'}
                         </span>
                         <span className="text-[10px] font-semibold text-slate-500">
-                          Weight: {pawn.weight_grams ? `${pawn.weight_grams}.${String(pawn.weight_mg || 0).padStart(3, '0')}g` : (pawn.weight ? `${pawn.weight}g` : '—')}
+                          Weight: {pawn.weight_mg ? `${pawn.weight_mg.toLocaleString()} mg` : (pawn.weight_grams ? `${Math.round(pawn.weight_grams * 1000).toLocaleString()} mg` : (pawn.weight ? `${Math.round(Number(pawn.weight) * 1000).toLocaleString()} mg` : '—'))}
                         </span>
                       </div>
                     </TableCell>
@@ -803,7 +803,7 @@ export default function ApprovalsPage() {
                       <div className="p-2.5 bg-white rounded-xl border border-emerald-200 flex items-center justify-between">
                         <span>Observed Weight:</span>
                         <span className="font-mono font-black text-slate-900">
-                          {auditorChecklist.observedWeight ? `${auditorChecklist.observedWeight}g` : 'Verified'}
+                          {auditorChecklist.observedWeight ? `${auditorChecklist.observedWeight} mg` : 'Verified'}
                         </span>
                       </div>
                       <div className="p-2.5 bg-white rounded-xl border border-emerald-200 flex items-center justify-between">
@@ -898,7 +898,7 @@ export default function ApprovalsPage() {
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 block">Gross Weight</span>
                         <strong className="font-mono text-slate-900">
-                          {pData.weight_grams ? `${pData.weight_grams}.${String(pData.weight_mg || 0).padStart(3, '0')}g` : (pData.weight ? `${pData.weight}g` : '—')}
+                          {pData.weight_mg ? `${pData.weight_mg.toLocaleString()} mg` : (pData.weight_grams ? `${Math.round(pData.weight_grams * 1000).toLocaleString()} mg` : (pData.weight ? `${Math.round(Number(pData.weight) * 1000).toLocaleString()} mg` : '—'))}
                         </strong>
                       </div>
                       <div>
@@ -923,7 +923,7 @@ export default function ApprovalsPage() {
                           {items.map((it: any) => (
                             <div key={it.id} className="flex justify-between text-[11px] font-semibold text-slate-700 bg-slate-50 px-2.5 py-1 rounded-lg">
                               <span>{it.item_type || 'Gold'} ({it.purity || '22K'})</span>
-                              <span className="font-mono">{it.weight_grams || 0}g • Rs. {(it.appraised_value || 0).toLocaleString()}</span>
+                              <span className="font-mono">{it.weight_mg ? `${it.weight_mg.toLocaleString()} mg` : `${Math.round((it.weight_grams || 0) * 1000).toLocaleString()} mg`} • Rs. {(it.appraised_value || 0).toLocaleString()}</span>
                             </div>
                           ))}
                         </div>
@@ -1058,7 +1058,7 @@ export default function ApprovalsPage() {
                       <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                         <span>Air Weight Photo (In Air)</span>
                         <span className="font-mono text-slate-500">
-                          {evalEv?.air_weight ? `${evalEv.air_weight}g` : ''}
+                          {evalEv?.air_weight ? `${evalEv.air_weight} mg` : ''}
                         </span>
                       </div>
                       <div 
@@ -1087,7 +1087,7 @@ export default function ApprovalsPage() {
                       <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                         <span>Water Weight Photo (In Water)</span>
                         <span className="font-mono text-slate-500">
-                          {evalEv?.water_weight ? `${evalEv.water_weight}g` : ''}
+                          {evalEv?.water_weight ? `${evalEv.water_weight} mg` : ''}
                         </span>
                       </div>
                       <div 
@@ -1131,7 +1131,7 @@ export default function ApprovalsPage() {
                         {stockItems.map((stk: any) => (
                           <div key={stk.id} className="p-2.5 bg-white rounded-xl border border-slate-200 flex justify-between font-semibold">
                             <span>Sub-bill: <strong className="font-mono text-slate-900">{stk.bill_no}</strong> ({stk.item_type})</span>
-                            <span className="font-mono font-black">{stk.weight}g</span>
+                            <span className="font-mono font-black">{stk.weight_mg ? `${stk.weight_mg} mg` : `${Math.round((parseFloat(stk.weight) || 0) * 1000)} mg`}</span>
                           </div>
                         ))}
                       </div>

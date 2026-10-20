@@ -856,7 +856,7 @@ export default function PawnesPage() {
     setAmount(String(loanAmount));
     
     // Auto-update description if empty
-    setDescription(prev => prev === '' ? `${goldPurity} Gold Collateral, ${weight}g` : prev);
+    setDescription(prev => prev === '' ? `${goldPurity} Gold Collateral, ${weight} mg` : prev);
 
     toast.success('Gold valuation applied!', {
       description: `Appraisal: Rs. ${appraisedVal.toLocaleString()} | Loan Amount: Rs. ${loanAmount.toLocaleString()}`
@@ -2848,11 +2848,11 @@ function PawnDetailsModal({
       if (wVal > 0) {
         const g = Math.floor(wVal);
         const mg = Math.round((wVal - g) * 1000);
-        formattedWeightStr = mg > 0 ? `${g}g ${mg}mg` : `${g}g`;
+        formattedWeightStr = `${pawn.weight_mg || (g * 1000 + mg)} mg`;
       } else if (pawn.weight_grams !== undefined) {
         const g = Math.floor(pawn.weight_grams);
         const mg = Math.round((parseFloat(pawn.weight_mg) || 0));
-        formattedWeightStr = mg > 0 ? `${g}g ${mg}mg` : `${g}g`;
+        formattedWeightStr = `${pawn.weight_mg || (g * 1000 + mg)} mg`;
       }
 
       setBillNo(bNo);
@@ -2900,11 +2900,11 @@ function PawnDetailsModal({
       if (wVal > 0) {
         const g = Math.floor(wVal);
         const mg = Math.round((wVal - g) * 1000);
-        formattedWeightStr = mg > 0 ? `${g}g ${mg}mg` : `${g}g`;
+        formattedWeightStr = `${pawn.weight_mg || (g * 1000 + mg)} mg`;
       } else if (pawn.weight_grams !== undefined) {
         const g = Math.floor(pawn.weight_grams);
         const mg = Math.round((parseFloat(pawn.weight_mg) || 0));
-        formattedWeightStr = mg > 0 ? `${g}g ${mg}mg` : `${g}g`;
+        formattedWeightStr = `${pawn.weight_mg || (g * 1000 + mg)} mg`;
       }
 
       setBillNo(bNo);
@@ -3323,7 +3323,7 @@ function RedemptionReceiptModal({
     if (pawn?.weight_grams !== undefined && pawn?.weight_grams !== null) {
       const g = Math.floor(pawn.weight_grams);
       const mg = Math.round((parseFloat(pawn.weight_mg) || 0));
-      weightStr = mg > 0 ? `${g}g ${mg}mg` : `${g}g`;
+      weightStr = `${pawn?.weight_mg || (g * 1000 + mg)} mg`;
     }
 
     return { 
@@ -3448,7 +3448,7 @@ function RedemptionReceiptModal({
         // ── ARTICLE (left) ──
         adapter.text(`Article: ${description}\n`, true),
         adapter.text(`Appraised: Rs. ${fmt(appAmt)}\n`),
-        adapter.text(`Weight: ${weight} g\n`),
+        adapter.text(`Weight: ${weight}\n`),
         adapter.text(`${sep}\n`),
         // ── BREAKDOWN ──
         adapter.text(`Principal: Rs. ${fmt(pAmt)}\n`),
@@ -3530,7 +3530,7 @@ function RedemptionReceiptModal({
         <div>Address: ${customerAddress}</div>
         <div class="sep"></div>
         <div>Article: <strong>${description}</strong></div>
-        <div class="row"><span>Appraised: Rs. ${fmt(appAmt)}</span><span>Weight: ${weight}g</span></div>
+        <div class="row"><span>Appraised: Rs. ${fmt(appAmt)}</span><span>Weight: ${weight}</span></div>
         <div class="sep"></div>
         <div class="row"><span>Principal Disbursed:</span><span>Rs. ${fmt(pAmt)}</span></div>
         <div class="row"><span>Interest (${days} Days):</span><span>Rs. ${fmt(iAmt)}</span></div>
@@ -3719,7 +3719,7 @@ function RedemptionReceiptModal({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-400 block mb-0.5">Weight (g)</label>
+                  <label className="text-[10px] text-slate-400 block mb-0.5">Weight (mg)</label>
                   <input
                     type="text"
                     value={weight}
@@ -3836,7 +3836,7 @@ function RedemptionReceiptModal({
                 <div>Article: <strong>{description}</strong></div>
                 <div className="flex justify-between text-[11px]">
                   <span>Appraised: <strong>Rs. {parseFloat(appraisedValuation || '0').toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
-                  <span>Weight: <strong>{weight} g</strong></span>
+                  <span>Weight: <strong>{weight}</strong></span>
                 </div>
               </div>
 

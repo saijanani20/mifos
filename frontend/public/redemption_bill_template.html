@@ -154,7 +154,7 @@
                    class="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1 font-mono text-amber-300 focus:outline-none focus:border-purple-500">
           </div>
           <div>
-            <label class="text-[10px] text-slate-400 block mb-0.5">Weight (g)</label>
+            <label class="text-[10px] text-slate-400 block mb-0.5">Weight (mg)</label>
             <input type="text" id="in_weight" value="10.00" oninput="updateBill()"
                    class="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1 font-mono text-slate-200 focus:outline-none focus:border-purple-500">
           </div>
@@ -239,7 +239,7 @@
           <div>Article: <strong id="out_desc">Gold Chain (22K) - 1.25 Sovereigns</strong></div>
           <div class="flex justify-between text-[11px]">
             <span>Appraised: <strong id="out_appraised">Rs. 125,000.00</strong></span>
-            <span>Weight: <strong id="out_weight">10.00 g</strong></span>
+            <span>Weight: <strong id="out_weight">10000 mg</strong></span>
           </div>
         </div>
 
@@ -322,7 +322,7 @@
       document.getElementById('out_desc').innerText = desc;
 
       document.getElementById('out_appraised').innerText = 'Rs. ' + appraised.toLocaleString('en-US', { minimumFractionDigits: 2 });
-      document.getElementById('out_weight').innerText = weight + ' g';
+      document.getElementById('out_weight').innerText = weight + (weight.toLowerCase().includes('mg') ? '' : ' mg');
       document.getElementById('out_days').innerText = days;
 
       document.getElementById('out_principal').innerText = 'Rs. ' + principal.toLocaleString('en-US', { minimumFractionDigits: 2 });

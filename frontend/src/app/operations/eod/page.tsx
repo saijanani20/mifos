@@ -298,7 +298,7 @@ function EndOfDayContent() {
       const formattedDate = item.date 
         ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()
         : '';
-      const formattedWeight = `${parseFloat(item.weight || 0).toFixed(3)}g`;
+      const formattedWeight = `${Math.round(parseFloat(item.weight || 0) * 1000)} mg`;
 
       // Look up customer info for QR payload
       const customer = (stockCustomers || []).find((c: any) => {
@@ -1865,7 +1865,7 @@ function EndOfDayContent() {
         const weightVal = parseFloat(item.weight) || parseFloat(item.weight_g) || parseFloat(item.weight_grams) || 0;
         const g = Math.floor(weightVal);
         const mg = Math.round((weightVal - g) * 1000);
-        const formattedWeight = `${g}g${String(mg).padStart(3, '0')}`;
+        const formattedWeight = `${item.weight_mg || (g * 1000 + mg)} mg`;
         const itemVal = parseFloat(item.price) || parseFloat(item.appraised_value) || parseFloat(item.disbursed_amount) || parseFloat(item.amount) || 0;
         const formattedPrice = itemVal.toLocaleString();
         const branchCode = item.branch_id || item.branch || 'HQ';
@@ -1888,12 +1888,12 @@ function EndOfDayContent() {
       const secWeight = items.reduce((sum, item) => sum + (parseFloat(item.weight) || parseFloat(item.weight_g) || parseFloat(item.weight_grams) || 0), 0);
       const secG = Math.floor(secWeight);
       const secMg = Math.round((secWeight - secG) * 1000);
-      const formattedSecWeight = `${secWeight.toFixed(3)} g (${secG}g${String(secMg).padStart(3, '0')})`;
+      const formattedSecWeight = `${Math.round(secWeight * 1000)} mg`;
 
       if (stockFilter === 'Withdrawn') {
-        csvLines.push(`"SECTION ${pref} TOTALS","","Rs. ${secValue.toLocaleString()}","${secWeight.toFixed(3)} g","Packets: ${items.length}","","","",""`);
+        csvLines.push(`"SECTION ${pref} TOTALS","","Rs. ${secValue.toLocaleString()}","${Math.round(secWeight * 1000)} mg","Packets: ${items.length}","","","",""`);
       } else {
-        csvLines.push(`"SECTION ${pref} TOTALS","","Rs. ${secValue.toLocaleString()}","${secWeight.toFixed(3)} g","Packets: ${items.length}",""`);
+        csvLines.push(`"SECTION ${pref} TOTALS","","Rs. ${secValue.toLocaleString()}","${Math.round(secWeight * 1000)} mg","Packets: ${items.length}",""`);
       }
       csvLines.push(`"No of Packets = ${items.length} | Section Total Value = Rs. ${secValue.toLocaleString()} | Section Total Weight = ${formattedSecWeight}"`);
       csvLines.push("");
@@ -1905,13 +1905,13 @@ function EndOfDayContent() {
     const totalValue = sortedStock.reduce((sum, item) => sum + (parseFloat(item.price) || parseFloat(item.appraised_value) || parseFloat(item.disbursed_amount) || parseFloat(item.amount) || 0), 0);
     const totG = Math.floor(totalWeight);
     const totMg = Math.round((totalWeight - totG) * 1000);
-    const formattedTotWeight = `${totalWeight.toFixed(3)} g (${totG}g${String(totMg).padStart(3, '0')})`;
+    const formattedTotWeight = `${Math.round(totalWeight * 1000)} mg`;
 
     csvLines.push(`"SUMMARY TOTALS"`);
     if (stockFilter === 'Withdrawn') {
-      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${totalWeight.toFixed(3)} g","","","","",""`);
+      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","","","","",""`);
     } else {
-      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${totalWeight.toFixed(3)} g","",""`);
+      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","",""`);
     }
     csvLines.push(`"Total Items","${totalCount}"`);
     csvLines.push(`"Total Weight","${formattedTotWeight}"`);
@@ -1977,7 +1977,7 @@ function EndOfDayContent() {
         const weightVal = parseFloat(item.weight) || parseFloat(item.weight_g) || parseFloat(item.weight_grams) || 0;
         const g = Math.floor(weightVal);
         const mg = Math.round((weightVal - g) * 1000);
-        const formattedWeight = `${g}g${String(mg).padStart(3, '0')}`;
+        const formattedWeight = `${item.weight_mg || (g * 1000 + mg)} mg`;
         const itemVal = parseFloat(item.price) || parseFloat(item.appraised_value) || parseFloat(item.disbursed_amount) || parseFloat(item.amount) || 0;
         const formattedPrice = itemVal.toLocaleString();
         const branchCode = item.branch_id || item.branch || 'HQ';
@@ -2124,7 +2124,7 @@ function EndOfDayContent() {
 
             <div class="section-block footer-summary">
               <div>TOTAL VAULT ITEMS = ${totalCount}</div>
-              <div>TOTAL WEIGHT = ${totalWeight.toFixed(3)} g</div>
+              <div>TOTAL WEIGHT = ${Math.round(totalWeight * 1000)} mg</div>
               <div>TOTAL VALUE = Rs. ${totalValue.toLocaleString()}</div>
               <div class="checked-by">Checked BY: ______________________</div>
             </div>
@@ -2464,7 +2464,7 @@ function EndOfDayContent() {
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Weight</p>
-                <p className="text-2xl font-black text-slate-800 mt-0.5">{displayWeight.toFixed(3)} g</p>
+                <p className="text-2xl font-black text-slate-800 mt-0.5">{Math.round(displayWeight * 1000).toLocaleString()} mg</p>
                 <p className="text-[10px] text-slate-500 font-bold mt-0.5">Cumulative gold weight</p>
               </div>
             </div>
@@ -2754,7 +2754,7 @@ function EndOfDayContent() {
                         <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400">Branch</TableHead>
                       )}
                       <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400">Item Name</TableHead>
-                      <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400">Weight (g)</TableHead>
+                      <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400">Weight (mg)</TableHead>
                       <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400 text-right">Appraised Value</TableHead>
                       <TableHead className="px-6 py-4 font-black text-[10px] uppercase tracking-widest text-slate-400">Pawning Date</TableHead>
                       {stockFilter === 'Withdrawn' ? (
@@ -2841,7 +2841,7 @@ function EndOfDayContent() {
                           </div>
                         </TableCell>
                         <TableCell className="px-6 py-4 font-bold text-slate-600 text-sm">
-                          {parseFloat(item.weight).toFixed(3)} g
+                          {item.weight_mg ? `${item.weight_mg} mg` : `${Math.round(parseFloat(item.weight || 0) * 1000)} mg`}
                         </TableCell>
                         <TableCell className="px-6 py-4 font-black text-slate-800 text-sm text-right text-gradient">
                           Rs. {(parseFloat(item.price) || 0).toLocaleString()}
@@ -3372,13 +3372,13 @@ function EndOfDayContent() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label className="font-black text-[10px] uppercase tracking-widest text-slate-400">Gross Weight (g)</Label>
+                  <Label className="font-black text-[10px] uppercase tracking-widest text-slate-400">Gross Weight (mg)</Label>
                   <Input 
                     type="number"
-                    step="0.001"
+                    step="1"
                     value={weight} 
                     onChange={e => setWeight(e.target.value)} 
-                    placeholder="8.500" 
+                    placeholder="8500" 
                     className="h-11 border-slate-200 rounded-xl font-bold" 
                   />
                 </div>
@@ -3575,7 +3575,7 @@ function EndOfDayContent() {
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-bold text-slate-600">
                 <div>Bill No: <span className="text-slate-900 font-black">{selectedItemForWithdrawal.bill_no}</span></div>
                 <div>Item: <span className="text-slate-900 font-black">{compressItemTypeString(selectedItemForWithdrawal.item_type || "")}</span></div>
-                <div>Weight: <span className="text-slate-900 font-black">{parseFloat(selectedItemForWithdrawal.weight).toFixed(3)} g</span></div>
+                <div>Weight: <span className="text-slate-900 font-black">{selectedItemForWithdrawal.weight_mg ? `${selectedItemForWithdrawal.weight_mg} mg` : `${Math.round(parseFloat(selectedItemForWithdrawal.weight || 0) * 1000)} mg`}</span></div>
                 <div>Value: <span className="text-slate-900 font-black">Rs. {selectedItemForWithdrawal.price.toLocaleString()}</span></div>
               </div>
             )}
