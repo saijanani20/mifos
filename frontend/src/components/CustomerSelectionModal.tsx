@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
+import { SmartNicScanner } from './SmartNicScanner';
 
 export interface SelectedCustomerData {
   id: string;
@@ -390,7 +391,7 @@ export function CustomerSelectionModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] sm:w-[92vw] lg:max-w-4xl max-h-[92vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
+      <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl max-h-[95vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
         {/* Top Accent Bar */}
         <div className="h-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-500 shrink-0" />
 
@@ -653,7 +654,7 @@ export function CustomerSelectionModal({
           {/* TAB 2: REGISTER NEW CUSTOMER WITH WEBCAM KYC                */}
           {/* ─────────────────────────────────────────────────────────── */}
           {mode === 'NEW' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 items-start">
               {/* Left Column: Customer Details Inputs */}
               <div className="space-y-4">
                 {/* ── RED ALERT: CUSTOMER ALREADY EXISTS IN DATABASE ── */}
@@ -889,149 +890,37 @@ export function CustomerSelectionModal({
                   </button>
                 </div>
 
-                {/* Webcam Box */}
-                <div className="bg-slate-900 rounded-2xl overflow-hidden p-3 flex flex-col items-center justify-center min-h-[240px] relative border border-slate-800 shadow-inner">
-                  {/* Hidden file input for file upload fallback */}
-                  <input 
-                    ref={fileInputRef}
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
-                    onChange={handleFileUpload} 
-                  />
-
-                  <div className="w-full flex items-center justify-between text-white/70 text-[10px] font-black uppercase tracking-wider mb-2">
-                    <span className="flex items-center gap-1">
-                      <Camera className="w-3.5 h-3.5 text-amber-400" />
-                      {activeKycTab === 'front' ? 'NIC Front Side Scan' : activeKycTab === 'back' ? 'NIC Back Side Scan' : 'Signature Camera Scan'}
-                    </span>
-                    {currentCapturedPhoto && (
-                      <span className="text-emerald-400 font-bold flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Photo Saved ✓
-                      </span>
-                    )}
-                  </div>
-
-                  {cameraError && (
-                    <div className="bg-red-500/20 text-red-300 p-2 text-[11px] rounded-lg mb-2 text-center w-full">
-                      {cameraError}
-                    </div>
+                {/* Smart NIC Edge Scanner Box */}
+                <div className="w-full">
+                  {activeKycTab === 'front' && (
+                    <SmartNicScanner 
+                      key="nic_front_capture_modal"
+                      label="NIC Front Side Scan" 
+                      onCapture={(base64) => setKycFront(base64)} 
+                      initialImage={kycFront} 
+                      autoStart={true}
+                    />
                   )}
 
-                  {/* Video or Image View */}
-                  <div className="w-full aspect-[4/3] max-h-52 bg-black rounded-xl overflow-hidden flex items-center justify-center relative group">
-                    {cameraActive ? (
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover"
-                      />
-                    ) : currentCapturedPhoto ? (
-                      <>
-                        <img
-                          src={currentCapturedPhoto}
-                          alt="Captured scan"
-                          className="w-full h-full object-contain cursor-pointer"
-                          onClick={() => setPreviewPhotoZoom(currentCapturedPhoto)}
-                          title="Click to view full photo"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setPreviewPhotoZoom(currentCapturedPhoto)}
-                          className="absolute top-2 left-2 bg-slate-900/90 text-white text-[9px] font-bold px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 shadow-sm cursor-pointer"
-                        >
-                          <ZoomIn className="w-3 h-3 text-amber-400" /> View Full
-                        </button>
-                      </>
-                    ) : (
-                      <div className="text-center p-4">
-                        <CameraOff className="w-8 h-8 text-slate-600 mx-auto mb-1" />
-                        <p className="text-slate-400 text-xs font-bold">Camera is off</p>
-                      </div>
-                    )}
-                  </div>
+                  {activeKycTab === 'back' && (
+                    <SmartNicScanner 
+                      key="nic_back_capture_modal"
+                      label="NIC Back Side Scan" 
+                      onCapture={(base64) => setKycBack(base64)} 
+                      initialImage={kycBack} 
+                      autoStart={true}
+                    />
+                  )}
 
-                  {/* Camera Controls */}
-                  <div className="flex flex-wrap items-center gap-2 mt-3 w-full justify-center">
-                    {cameraActive ? (
-                      <>
-                        <Button
-                          type="button"
-                          onClick={handleCaptureCurrentTab}
-                          className="bg-amber-400 hover:bg-amber-500 text-slate-900 font-black text-xs uppercase tracking-wider h-9 px-4 rounded-xl shadow-md gap-1"
-                        >
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>Capture Photo</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="text-white border-white/20 hover:bg-white/10 text-xs font-bold h-9 px-3 rounded-xl gap-1"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Upload File</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={stopCamera}
-                          className="text-white hover:bg-white/10 text-xs font-bold h-9 px-3 rounded-xl"
-                        >
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          type="button"
-                          onClick={startCamera}
-                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-4 rounded-xl gap-1.5"
-                        >
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>{currentCapturedPhoto ? 'Retake Photo' : 'Start Camera'}</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="text-white border-white/20 hover:bg-white/10 text-xs font-bold h-9 px-3.5 rounded-xl gap-1.5"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>{currentCapturedPhoto ? 'Upload Other File' : 'Upload Photo'}</span>
-                        </Button>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Zoom Modal for Captured Photo */}
-                  {previewPhotoZoom && (
-                    <div 
-                      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
-                      onClick={() => setPreviewPhotoZoom(null)}
-                    >
-                      <div className="relative max-w-2xl max-h-[85vh] bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl flex flex-col items-center" onClick={e => e.stopPropagation()}>
-                        <div className="w-full flex items-center justify-between pb-2 border-b border-slate-800 text-white text-xs font-bold">
-                          <span>
-                            {activeKycTab === 'front' ? 'NIC Front' : activeKycTab === 'back' ? 'NIC Back' : 'Signature'} — Full Resolution Preview
-                          </span>
-                          <button 
-                            type="button"
-                            onClick={() => setPreviewPhotoZoom(null)}
-                            className="text-slate-400 hover:text-white px-2 py-1 rounded-lg"
-                          >
-                            ✕ Close
-                          </button>
-                        </div>
-                        <img 
-                          src={previewPhotoZoom} 
-                          alt="Full preview" 
-                          className="w-full max-h-[70vh] object-contain rounded-xl mt-3" 
-                        />
-                      </div>
-                    </div>
+                  {activeKycTab === 'sign' && (
+                    <SmartNicScanner 
+                      key="signature_capture_modal"
+                      label="Signature Camera Scan" 
+                      onCapture={(base64) => setKycSign(base64)} 
+                      initialImage={kycSign} 
+                      autoStart={true}
+                      isSignature={true}
+                    />
                   )}
                 </div>
               </div>

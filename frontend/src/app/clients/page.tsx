@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { printLoanAgreement } from "@/lib/loanAgreementPrint"
+import { SmartNicScanner } from "@/components/SmartNicScanner"
 
 // Reusable Live Webcam Capture Component
 const WebcamCapture = ({ 
@@ -1057,7 +1058,7 @@ export default function ClientsPage() {
 
       {/* New Customer Dialog */}
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="w-[95vw] sm:w-[92vw] lg:max-w-4xl max-h-[90vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
+        <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl max-h-[95vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
           <div className="h-2 bg-primary animate-pulse shrink-0" />
           
           {/* Fixed Header */}
@@ -1075,7 +1076,7 @@ export default function ClientsPage() {
 
           {/* Scrollable Form Body */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 items-start">
               {/* Left Column: Form Inputs */}
               <div className="space-y-4">
                 {/* ── RED ALERT: CUSTOMER ALREADY EXISTS IN DATABASE ── */}
@@ -1320,10 +1321,10 @@ export default function ClientsPage() {
                   </button>
                 </div>
 
-                {/* Webcam capture widget container with autoStart */}
-                <div className="min-h-[220px]">
+                {/* Smart NIC Edge Scanner container */}
+                <div className="w-full">
                   {activeKycTab === 'nic_front' && (
-                    <WebcamCapture 
+                    <SmartNicScanner 
                       key="nic_front_capture"
                       label="NIC Front Side Scan" 
                       onCapture={(base64) => setNicFrontImage(base64)} 
@@ -1333,7 +1334,7 @@ export default function ClientsPage() {
                   )}
 
                   {activeKycTab === 'nic_back' && (
-                    <WebcamCapture 
+                    <SmartNicScanner 
                       key="nic_back_capture"
                       label="NIC Back Side Scan" 
                       onCapture={(base64) => setNicBackImage(base64)} 
@@ -1343,12 +1344,13 @@ export default function ClientsPage() {
                   )}
 
                   {activeKycTab === 'signature' && (
-                    <WebcamCapture 
+                    <SmartNicScanner 
                       key="signature_capture"
                       label="Signature Camera Scan" 
                       onCapture={(base64) => setSignatureImage(base64)} 
                       initialImage={signatureImage} 
                       autoStart={true}
+                      isSignature={true}
                     />
                   )}
                 </div>
