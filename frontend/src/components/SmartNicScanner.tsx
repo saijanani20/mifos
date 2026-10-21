@@ -58,17 +58,35 @@ export function SmartNicScanner({
   const [lockProgress, setLockProgress] = useState(0); // 0 to 100
   const [feedbackMsg, setFeedbackMsg] = useState('Position NIC inside the guide frame');
 
-  // DOM Refs
+  // DOM & State Refs (Crucial for stability without re-render thrashing or shaking loops)
+  const streamRef = useRef<MediaStream | null>(null);
+  const activeDeviceIdRef = useRef<string | null>(null);
+  const isMirroredRef = useRef<boolean>(false);
+  const smartCropRef = useRef<boolean>(!isSignature);
+  const autoCaptureEnabledRef = useRef<boolean>(true);
+  const isSignatureRef = useRef<boolean>(isSignature);
+  const onCaptureRef = useRef(onCapture);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  
   const animFrameRef = useRef<number | null>(null);
   const lockCounterRef = useRef<number>(0);
   const isAutoCapturingRef = useRef<boolean>(false);
+  const detectionStatusRef = useRef<'searching' | 'aligning' | 'locked'>('searching');
+  const lockProgressRef = useRef<number>(0);
 
-  // Audio cues via Web Audio API (zero external assets needed)
+  // Keep refs in sync with state/props
+  useEffect(() => { activeDeviceIdRef.current = activeDeviceId; }, [activeDeviceId]);
+  useEffect(() => { isMirroredRef.current = isMirrored; }, [isMirrored]);
+  useEffect(() => { smartCropRef.current = smartCropEnabled; }, [smartCropEnabled]);
+  useEffect(() => { autoCaptureEnabledRef.current = autoCaptureEnabled; }, [autoCaptureEnabled]);
+  useEffect(() => { isSignatureRef.current = isSignature; }, [isSignature]);
+  useEffect(() => { onCaptureRef.current = onCapture; }, [onCapture]);
+
+  // Audio cues via Web Audio API
   const playAudioCue = useCallback((type: 'lock' | 'snap') => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -83,16 +101,16 @@ export function SmartNicScanner({
       if (type === 'lock') {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(587.33, now); // D5
-        osc.frequency.exponentialRampToValueAtTime(880, now + 0.1); // A5
-        gain.gain.setValueAtTime(0.12, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.08); // A5
+        gain.gain.setValueAtTime(0.10, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
         osc.start(now);
-        osc.stop(now + 0.15);
+        osc.stop(now + 0.12);
       } else if (type === 'snap') {
         osc.type = 'triangle';
-        osc.frequency.setValueAtTime(1200, now);
-        osc.frequency.exponentialRampToValueAtTime(400, now + 0.08);
-        gain.gain.setValueAtTime(0.2, now);
+        osc.frequency.setValueAtTime(1000, now);
+        osc.frequency.exponentialRampToValueAtTime(350, now + 0.09);
+        gain.gain.setValueAtTime(0.18, now);
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
         osc.start(now);
         osc.stop(now + 0.12);
@@ -105,7 +123,20 @@ export function SmartNicScanner({
     setCapturedImage(initialImage || null);
   }, [initialImage]);
 
-  // Enumerate video devices and prefer rear/environment camera
+  // Stop camera cleanly (STABLE - NO LOOP DEPENDENCIES)
+  const stopCamera = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setStream(null);
+  }, []);
+
+  // Enumerate video devices (STABLE)
   const enumerateCameras = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -113,27 +144,30 @@ export function SmartNicScanner({
       const videoInputs = all.filter(d => d.kind === 'videoinput');
       setDevices(videoInputs);
 
-      if (videoInputs.length > 0 && !activeDeviceId) {
-        // Try to find a back/rear camera on mobile/tablet
+      if (videoInputs.length > 0 && !activeDeviceIdRef.current) {
+        // Prefer rear camera on mobile/tablet for document scanning
         const backCam = videoInputs.find(d => 
           /back|rear|environment|main/i.test(d.label)
         );
-        setActiveDeviceId(backCam ? backCam.deviceId : videoInputs[0].deviceId);
+        const chosenId = backCam ? backCam.deviceId : videoInputs[0].deviceId;
+        setActiveDeviceId(chosenId);
+        activeDeviceIdRef.current = chosenId;
       }
     } catch (e) {
       console.warn('Camera enumeration notice:', e);
     }
-  }, [activeDeviceId]);
+  }, []);
 
-  // Start the video stream
+  // Start the video stream cleanly (STABLE - NO STREAM DEPENDENCY)
   const startCamera = useCallback(async (deviceIdOverride?: string) => {
-    const targetId = deviceIdOverride || activeDeviceId;
+    const targetId = deviceIdOverride || activeDeviceIdRef.current;
     try {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
+      // Stop any existing stream first
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
       }
 
-      // Constraints favoring rear camera & high resolution for crisp text & card edge detection
       const videoConstraints: MediaTrackConstraints = {
         width: { ideal: 1920, min: 1280 },
         height: { ideal: 1080, min: 720 },
@@ -149,16 +183,18 @@ export function SmartNicScanner({
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
       } catch {
-        // Fallback to basic video constraint if strict resolution rejected
+        // Fallback to basic constraint
         mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: { ideal: 'environment' } } 
         });
       }
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setError(null);
       isAutoCapturingRef.current = false;
       lockCounterRef.current = 0;
+      lockProgressRef.current = 0;
       setLockProgress(0);
 
       // Check torch capability
@@ -170,35 +206,32 @@ export function SmartNicScanner({
         setTorchAvailable(false);
       }
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        videoRef.current.play().catch(e => console.warn('Video play error:', e));
+      // Re-enumerate cameras in background without blocking
+      if (navigator.mediaDevices?.enumerateDevices) {
+        navigator.mediaDevices.enumerateDevices().then(all => {
+          const videoInputs = all.filter(d => d.kind === 'videoinput');
+          setDevices(videoInputs);
+        }).catch(() => {});
       }
-
-      // Re-check devices once permission is granted
-      enumerateCameras();
     } catch (err: any) {
       console.error('Camera access error:', err);
       setError('Camera access denied or unavailable. You can upload an image file using the button below.');
     }
-  }, [activeDeviceId, stream, enumerateCameras]);
+  }, []);
 
-  const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      setStream(null);
-    }
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
+  // Connect stream to video element when stream or videoRef attaches
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.warn('Video play notice:', e));
     }
   }, [stream]);
 
   // Toggle Torch/Flashlight
   const toggleTorch = async () => {
-    if (!stream) return;
+    if (!streamRef.current) return;
     try {
-      const track = stream.getVideoTracks()[0];
+      const track = streamRef.current.getVideoTracks()[0];
       const nextState = !torchOn;
       await (track as any).applyConstraints({
         advanced: [{ torch: nextState }]
@@ -209,15 +242,15 @@ export function SmartNicScanner({
     }
   };
 
-  // Switch between available cameras
+  // Switch camera device
   const switchCamera = () => {
     if (devices.length < 2) return;
-    const currentIndex = devices.findIndex(d => d.deviceId === activeDeviceId);
+    const currentIndex = devices.findIndex(d => d.deviceId === activeDeviceIdRef.current);
     const nextIndex = (currentIndex + 1) % devices.length;
     const nextDevice = devices[nextIndex];
     setActiveDeviceId(nextDevice.deviceId);
-    
-    // Automatically adjust mirror based on front/back
+    activeDeviceIdRef.current = nextDevice.deviceId;
+
     const isFront = /front|selfie|user/i.test(nextDevice.label);
     setIsMirrored(isFront);
     startCamera(nextDevice.deviceId);
@@ -228,15 +261,25 @@ export function SmartNicScanner({
     if (isAutoCapturingRef.current && autoTriggered) return;
     isAutoCapturingRef.current = true;
 
+    // Immediately stop detection loop during capture
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
     const video = videoRef.current;
     const canvas = captureCanvasRef.current;
-    if (!video || !canvas) {
+    if (!video || !canvas || video.readyState < 2) {
       isAutoCapturingRef.current = false;
       return;
     }
 
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
+    if (vw <= 0 || vh <= 0) {
+      isAutoCapturingRef.current = false;
+      return;
+    }
 
     // Trigger visual shutter flash
     setIsCapturingFlash(true);
@@ -246,8 +289,10 @@ export function SmartNicScanner({
     }
     setTimeout(() => setIsCapturingFlash(false), 240);
 
-    // If Smart Crop is enabled and not signature, crop directly to the card guide region
-    if (smartCropEnabled && !isSignature) {
+    const mirrored = isMirroredRef.current;
+    const shouldCrop = smartCropRef.current && !isSignatureRef.current;
+
+    if (shouldCrop) {
       // Guide coordinates on the video frame (aspect ratio 1.586 : 1)
       const targetRatio = 1.586;
       let cropW = vw * 0.82;
@@ -263,14 +308,14 @@ export function SmartNicScanner({
       canvas.height = Math.round(cropH);
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        if (isMirrored) {
+        if (mirrored) {
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
         }
         ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
         const base64 = canvas.toDataURL('image/jpeg', 0.92);
         setCapturedImage(base64);
-        onCapture(base64);
+        onCaptureRef.current(base64);
         stopCamera();
       }
     } else {
@@ -279,22 +324,22 @@ export function SmartNicScanner({
       canvas.height = vh;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        if (isMirrored) {
+        if (mirrored) {
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
         }
         ctx.drawImage(video, 0, 0, vw, vh);
         const base64 = canvas.toDataURL('image/jpeg', 0.90);
         setCapturedImage(base64);
-        onCapture(base64);
+        onCaptureRef.current(base64);
         stopCamera();
       }
     }
 
     isAutoCapturingRef.current = false;
-  }, [smartCropEnabled, isSignature, isMirrored, playAudioCue, onCapture, stopCamera]);
+  }, [playAudioCue, stopCamera]);
 
-  // Real-time Computer Vision Edge & Document Alignment Detection
+  // Real-time Computer Vision Edge & Document Alignment Detection Loop
   useEffect(() => {
     if (!stream || !autoCaptureEnabled || capturedImage) {
       return;
@@ -304,10 +349,10 @@ export function SmartNicScanner({
     let lastProcessTime = 0;
 
     const processFrame = (currentTime: number) => {
-      if (!isRunning) return;
+      if (!isRunning || isAutoCapturingRef.current) return;
 
-      // Throttle detection to ~18-20 fps to conserve tablet CPU/battery
-      if (currentTime - lastProcessTime > 55) {
+      // Throttle detection to ~16-18 fps to prevent tablet CPU overload & battery drain
+      if (currentTime - lastProcessTime > 65) {
         lastProcessTime = currentTime;
         analyzeCardEdges();
       }
@@ -315,17 +360,33 @@ export function SmartNicScanner({
       animFrameRef.current = requestAnimationFrame(processFrame);
     };
 
+    const updateDetectionUI = (
+      newStatus: 'searching' | 'aligning' | 'locked', 
+      newMsg: string, 
+      newProgress: number
+    ) => {
+      if (detectionStatusRef.current !== newStatus) {
+        detectionStatusRef.current = newStatus;
+        setDetectionStatus(newStatus);
+        setFeedbackMsg(newMsg);
+      }
+      if (Math.abs(lockProgressRef.current - newProgress) >= 8 || newProgress === 0 || newProgress === 100) {
+        lockProgressRef.current = newProgress;
+        setLockProgress(newProgress);
+      }
+    };
+
     const analyzeCardEdges = () => {
       const video = videoRef.current;
       if (!video || video.readyState < 2) return;
 
-      // Initialize downscaled offscreen canvas for high-speed edge calculation
+      // Downscaled offscreen canvas for zero-lag edge calculation
       if (!offscreenCanvasRef.current) {
         offscreenCanvasRef.current = document.createElement('canvas');
       }
       const oc = offscreenCanvasRef.current;
-      const sw = 280;
-      const sh = 175;
+      const sw = 260;
+      const sh = 164;
       if (oc.width !== sw || oc.height !== sh) {
         oc.width = sw;
         oc.height = sh;
@@ -344,7 +405,7 @@ export function SmartNicScanner({
       const data = imgData.data;
 
       // Target card guide frame in downscaled coords (aspect ratio 1.586)
-      const boxW = Math.round(sw * 0.78);
+      const boxW = Math.round(sw * 0.76);
       const boxH = Math.round(boxW / 1.586);
       const boxX = Math.round((sw - boxW) / 2);
       const boxY = Math.round((sh - boxH) / 2);
@@ -354,35 +415,35 @@ export function SmartNicScanner({
       let bottomEdgeContrast = 0;
       let leftEdgeContrast = 0;
       let rightEdgeContrast = 0;
-      const sampleStep = 4;
+      const sampleStep = 5;
 
       // Horizontal borders (Top and Bottom)
       for (let x = boxX; x < boxX + boxW; x += sampleStep) {
-        const idxTopInner = ((boxY + 4) * sw + x) * 4;
-        const idxTopOuter = (Math.max(0, boxY - 6) * sw + x) * 4;
-        const lumTopInner = (data[idxTopInner] * 0.299 + data[idxTopInner + 1] * 0.587 + data[idxTopInner + 2] * 0.114);
-        const lumTopOuter = (data[idxTopOuter] * 0.299 + data[idxTopOuter + 1] * 0.587 + data[idxTopOuter + 2] * 0.114);
+        const idxTopInner = ((boxY + 3) * sw + x) * 4;
+        const idxTopOuter = (Math.max(0, boxY - 5) * sw + x) * 4;
+        const lumTopInner = data[idxTopInner] * 0.299 + data[idxTopInner + 1] * 0.587 + data[idxTopInner + 2] * 0.114;
+        const lumTopOuter = data[idxTopOuter] * 0.299 + data[idxTopOuter + 1] * 0.587 + data[idxTopOuter + 2] * 0.114;
         topEdgeContrast += Math.abs(lumTopInner - lumTopOuter);
 
-        const idxBotInner = ((boxY + boxH - 4) * sw + x) * 4;
-        const idxBotOuter = (Math.min(sh - 1, boxY + boxH + 6) * sw + x) * 4;
-        const lumBotInner = (data[idxBotInner] * 0.299 + data[idxBotInner + 1] * 0.587 + data[idxBotInner + 2] * 0.114);
-        const lumBotOuter = (data[idxBotOuter] * 0.299 + data[idxBotOuter + 1] * 0.587 + data[idxBotOuter + 2] * 0.114);
+        const idxBotInner = ((boxY + boxH - 3) * sw + x) * 4;
+        const idxBotOuter = (Math.min(sh - 1, boxY + boxH + 5) * sw + x) * 4;
+        const lumBotInner = data[idxBotInner] * 0.299 + data[idxBotInner + 1] * 0.587 + data[idxBotInner + 2] * 0.114;
+        const lumBotOuter = data[idxBotOuter] * 0.299 + data[idxBotOuter + 1] * 0.587 + data[idxBotOuter + 2] * 0.114;
         bottomEdgeContrast += Math.abs(lumBotInner - lumBotOuter);
       }
 
       // Vertical borders (Left and Right)
       for (let y = boxY; y < boxY + boxH; y += sampleStep) {
-        const idxLeftInner = (y * sw + (boxX + 4)) * 4;
-        const idxLeftOuter = (y * sw + Math.max(0, boxX - 6)) * 4;
-        const lumLeftInner = (data[idxLeftInner] * 0.299 + data[idxLeftInner + 1] * 0.587 + data[idxLeftInner + 2] * 0.114);
-        const lumLeftOuter = (data[idxLeftOuter] * 0.299 + data[idxLeftOuter + 1] * 0.587 + data[idxLeftOuter + 2] * 0.114);
+        const idxLeftInner = (y * sw + (boxX + 3)) * 4;
+        const idxLeftOuter = (y * sw + Math.max(0, boxX - 5)) * 4;
+        const lumLeftInner = data[idxLeftInner] * 0.299 + data[idxLeftInner + 1] * 0.587 + data[idxLeftInner + 2] * 0.114;
+        const lumLeftOuter = data[idxLeftOuter] * 0.299 + data[idxLeftOuter + 1] * 0.587 + data[idxLeftOuter + 2] * 0.114;
         leftEdgeContrast += Math.abs(lumLeftInner - lumLeftOuter);
 
-        const idxRightInner = (y * sw + (boxX + boxW - 4)) * 4;
-        const idxRightOuter = (y * sw + Math.min(sw - 1, boxX + boxW + 6)) * 4;
-        const lumRightInner = (data[idxRightInner] * 0.299 + data[idxRightInner + 1] * 0.587 + data[idxRightInner + 2] * 0.114);
-        const lumRightOuter = (data[idxRightOuter] * 0.299 + data[idxRightOuter + 1] * 0.587 + data[idxRightOuter + 2] * 0.114);
+        const idxRightInner = (y * sw + (boxX + boxW - 3)) * 4;
+        const idxRightOuter = (y * sw + Math.min(sw - 1, boxX + boxW + 5)) * 4;
+        const lumRightInner = data[idxRightInner] * 0.299 + data[idxRightInner + 1] * 0.587 + data[idxRightInner + 2] * 0.114;
+        const lumRightOuter = data[idxRightOuter] * 0.299 + data[idxRightOuter + 1] * 0.587 + data[idxRightOuter + 2] * 0.114;
         rightEdgeContrast += Math.abs(lumRightInner - lumRightOuter);
       }
 
@@ -397,8 +458,8 @@ export function SmartNicScanner({
       // Sharpness check inside the card (Laplacian variance approximation)
       let sharpnessSum = 0;
       let centerSamples = 0;
-      for (let y = boxY + 12; y < boxY + boxH - 12; y += 6) {
-        for (let x = boxX + 12; x < boxX + boxW - 12; x += 6) {
+      for (let y = boxY + 14; y < boxY + boxH - 14; y += 8) {
+        for (let x = boxX + 14; x < boxX + boxW - 14; x += 8) {
           const idx = (y * sw + x) * 4;
           const idxRight = (y * sw + x + 1) * 4;
           const idxDown = ((y + 1) * sw + x) * 4;
@@ -411,44 +472,38 @@ export function SmartNicScanner({
       }
       const avgSharpness = centerSamples > 0 ? (sharpnessSum / centerSamples) : 0;
 
-      // Detection scoring logic
-      // Edge contrast threshold: ~18-25 represents a clear border against counter
-      const borderEdgesDetected = (avgTop > 14 ? 1 : 0) + 
-                                  (avgBot > 14 ? 1 : 0) + 
-                                  (avgLeft > 14 ? 1 : 0) + 
-                                  (avgRight > 14 ? 1 : 0);
+      // Detection threshold: cards have clear border contrast against tables
+      const borderEdgesDetected = (avgTop > 12 ? 1 : 0) + 
+                                  (avgBot > 12 ? 1 : 0) + 
+                                  (avgLeft > 12 ? 1 : 0) + 
+                                  (avgRight > 12 ? 1 : 0);
 
-      const isSharp = avgSharpness > 6.0;
+      const isSharp = avgSharpness > 5.0;
 
       if (borderEdgesDetected >= 3 && isSharp) {
         // High confidence card match!
-        setDetectionStatus('locked');
-        setFeedbackMsg('NIC Detected! Hold steady...');
         lockCounterRef.current += 1;
+        const currentProg = Math.min(100, Math.round((lockCounterRef.current / 12) * 100));
 
-        const currentProg = Math.min(100, Math.round((lockCounterRef.current / 14) * 100));
-        setLockProgress(currentProg);
+        updateDetectionUI('locked', 'NIC Detected! Hold steady...', currentProg);
 
         if (lockCounterRef.current === 1) {
           playAudioCue('lock');
         }
 
-        // After holding steady for ~800ms (approx 14 checks), trigger auto-snap!
-        if (lockCounterRef.current >= 14 && !isAutoCapturingRef.current) {
+        // Trigger auto-snap after holding steady for ~750ms (approx 12 checks)
+        if (lockCounterRef.current >= 12 && !isAutoCapturingRef.current) {
           capturePhoto(true);
         }
-      } else if (borderEdgesDetected >= 2 || avgSharpness > 10.0) {
-        // Card is entering or aligning
-        setDetectionStatus('aligning');
-        setFeedbackMsg('Aligning NIC edges with guide frame...');
+      } else if (borderEdgesDetected >= 2 || avgSharpness > 8.0) {
+        // Aligning
         lockCounterRef.current = Math.max(0, lockCounterRef.current - 1);
-        setLockProgress(Math.min(100, Math.round((lockCounterRef.current / 14) * 100)));
+        const currentProg = Math.min(100, Math.round((lockCounterRef.current / 12) * 100));
+        updateDetectionUI('aligning', 'Aligning NIC edges with guide frame...', currentProg);
       } else {
-        // Still looking for card
-        setDetectionStatus('searching');
-        setFeedbackMsg('Place NIC card flat inside the frame');
+        // Searching
         lockCounterRef.current = 0;
-        setLockProgress(0);
+        updateDetectionUI('searching', 'Place NIC card flat inside the frame', 0);
       }
     };
 
@@ -458,11 +513,12 @@ export function SmartNicScanner({
       isRunning = false;
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
       }
     };
   }, [stream, autoCaptureEnabled, capturedImage, capturePhoto, playAudioCue]);
 
-  // Initial lifecycle
+  // Initial lifecycle: start once on mount if autoStart is true
   useEffect(() => {
     enumerateCameras();
     if (autoStart && !capturedImage) {
@@ -471,7 +527,7 @@ export function SmartNicScanner({
     return () => {
       stopCamera();
     };
-  }, [autoStart, enumerateCameras, startCamera, stopCamera]);
+  }, []); // Run ONCE on mount!
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
