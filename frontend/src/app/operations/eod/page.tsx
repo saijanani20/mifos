@@ -1094,16 +1094,34 @@ function EndOfDayContent() {
 
   const loadCustomerData = async () => {
     try {
-      let activeBranch = selectedBranch;
-      if (!activeBranch && currentUser) {
-        activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'HQ');
+      let allCustomers: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const from = page * pageSize;
+        const to = from + pageSize - 1;
+        const { data, error } = await supabase
+          .from('stock_customers')
+          .select('*')
+          .order('name', { ascending: true })
+          .range(from, to);
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          allCustomers = allCustomers.concat(data);
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
       }
 
-      let query = supabase.from('stock_customers').select('*');
-      // Removed branch_id filter because stock_customers table lacks this column
-      const { data, error } = await query.order('name', { ascending: true });
-      if (error) throw error;
-      setStockCustomers(data || []);
+      setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
     } catch (err) {
       console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
@@ -1112,14 +1130,7 @@ function EndOfDayContent() {
       if (local) {
         try {
           const allItems = JSON.parse(local);
-          let activeBranch = selectedBranch;
-          if (!activeBranch && currentUser) {
-            activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'HQ');
-          }
-          const filtered = activeBranch && activeBranch !== 'ALL'
-            ? allItems.filter((item: any) => item.branch_id === activeBranch)
-            : allItems;
-          setStockCustomers(filtered);
+          setStockCustomers(allItems);
         } catch (e) {
           setStockCustomers([]);
         }
@@ -1410,12 +1421,20 @@ function EndOfDayContent() {
   const getCustomerForBill = (billNo: string, branchStr?: string) => {
     if (!billNo) return null;
     const cleanBill = billNo.trim().toLowerCase();
+    const cleanNorm = stripBranchPrefix(billNo).toLowerCase().replace(/[\s\-_/]+/g, '');
     const targetBranch = branchStr ? normalizeBranchId(branchStr) : null;
 
     const matchFn = (c: any) => {
       if (!c.bill_numbers) return false;
-      const bills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
-      if (!bills.includes(cleanBill)) return false;
+      const rawBills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
+      const normBills = c.bill_numbers.split(",").map((b: string) => stripBranchPrefix(b).toLowerCase().replace(/[\s\-_/]+/g, ''));
+
+      const isMatched = 
+        rawBills.includes(cleanBill) || 
+        normBills.includes(cleanNorm) ||
+        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))));
+
+      if (!isMatched) return false;
       if (targetBranch && (c.branch_id || c.branch)) {
         return normalizeBranchId(c.branch_id || c.branch) === targetBranch;
       }

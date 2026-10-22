@@ -541,16 +541,34 @@ export default function ClientsPage() {
 
   const loadCustomerData = async () => {
     try {
-      let query = supabase.from('stock_customers').select('*');
-      const targetBranch = selectedBranchFilter !== 'ALL' ? selectedBranchFilter : (branchId && branchId !== 'HQ' && branchId !== 'ALL' ? branchId : null);
-      if (targetBranch) {
-        const terms = getBranchSearchTerms(targetBranch);
-        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-        query = query.or(orClause);
+      let allCustomers: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const from = page * pageSize;
+        const to = from + pageSize - 1;
+        const { data, error } = await supabase
+          .from('stock_customers')
+          .select('*')
+          .order('name', { ascending: true })
+          .range(from, to);
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          allCustomers = allCustomers.concat(data);
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
       }
-      const { data, error } = await query.order('name', { ascending: true });
-      if (error) throw error;
-      setStockCustomers(data || []);
+
+      setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
     } catch (err) {
       console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
