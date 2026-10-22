@@ -78,6 +78,21 @@ export async function POST(request: Request) {
     const branchObj = CANONICAL_BRANCHES.find(b => b.id === effectiveBranch);
     const effectiveBranchName = branchObj ? branchObj.name : (effectiveBranch === 'HQ' ? 'Head Office' : (profile?.branch_name || effectiveBranch));
 
+    // Keep database profile in sync with selected operating branch
+    if (profile && effectiveBranch && effectiveBranch !== normalizeBranchId(profile.branch_id)) {
+      try {
+        await adminSupabase
+          .from('profiles')
+          .update({
+            branch_id: effectiveBranch,
+            branch_name: effectiveBranchName
+          })
+          .eq('id', authData.user.id);
+      } catch (profErr) {
+        console.warn('Failed to update profile branch on login:', profErr);
+      }
+    }
+
     const token = authData.session?.access_token || '';
 
     const response = NextResponse.json({

@@ -137,7 +137,8 @@ export async function POST(request: Request) {
     }
 
     const trimmedNic = String(nic).trim();
-    let effectiveBranchId = normalizeBranchId(branchId || session?.branchId || 'HQ');
+    const headerBranch = request.headers.get('x-branch-id') || request.headers.get('X-Branch-Id');
+    let effectiveBranchId = normalizeBranchId(branchId || headerBranch || session?.branchId || 'HQ');
     let effectiveUserId = session?.user?.id || (isUUID(createdByUserId) ? createdByUserId : null);
 
     // If effectiveUserId is missing or invalid, fetch valid profile ID from DB or fallback
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
 
     const isHeadSession = !session?.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
     if (session && !isHeadSession && session.role !== 'ADMIN') {
-      effectiveBranchId = normalizeBranchId(session.branchId);
+      effectiveBranchId = normalizeBranchId(session.branchId || branchId || headerBranch);
     }
 
     // 0. SCOPED IDENTIFIER LOGIC:

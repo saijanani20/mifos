@@ -54,6 +54,13 @@ export function getAuthHeaders(extraHeaders?: Record<string, string>): Record<st
     }
   }
 
+  if (!branchId) {
+    const rawUserBranch = localStorage.getItem('user_branch');
+    if (rawUserBranch) {
+      branchId = normalizeBranchId(rawUserBranch);
+    }
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(extraHeaders || {}),
@@ -63,7 +70,9 @@ export function getAuthHeaders(extraHeaders?: Record<string, string>): Record<st
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  if (branchId) {
+  if (extraHeaders?.['x-branch-id'] || extraHeaders?.['X-Branch-Id']) {
+    headers['x-branch-id'] = normalizeBranchId(extraHeaders['x-branch-id'] || extraHeaders['X-Branch-Id']);
+  } else if (branchId) {
     headers['x-branch-id'] = branchId;
   }
 
@@ -78,16 +87,19 @@ export function getCurrentUser(): UserSession | null {
   if (typeof window === 'undefined') return null;
 
   const storedUser = localStorage.getItem('user');
-  if (!storedUser) return null;
+  const rawBranch = localStorage.getItem('user_branch');
+
+  if (!storedUser && !rawBranch) return null;
 
   try {
-    const u = JSON.parse(storedUser) as UserSession;
-    if (u.branchId) {
-      u.branchId = normalizeBranchId(u.branchId);
+    const u = storedUser ? (JSON.parse(storedUser) as UserSession) : ({} as UserSession);
+    const effBranch = normalizeBranchId(u.branchId || rawBranch || '');
+    if (effBranch) {
+      u.branchId = effBranch;
     }
     return u;
   } catch {
-    return null;
+    return rawBranch ? ({ branchId: normalizeBranchId(rawBranch), role: localStorage.getItem('user_role') || 'TELLER' } as UserSession) : null;
   }
 }
 

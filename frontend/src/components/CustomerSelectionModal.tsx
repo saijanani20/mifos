@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
+import { normalizeBranchId } from '@/lib/branch-mapping';
 import { SmartNicScanner } from './SmartNicScanner';
 import { compressImage } from '@/lib/image-compression';
 
@@ -349,15 +350,24 @@ export function CustomerSelectionModal({
         last_name: lastName,
         phone: newPhone.trim(),
         address: newAddress.trim(),
-        branchId: branchId || 'HQ',
-        branch_id: branchId || 'HQ',
+        branchId: normalizeBranchId(
+          branchId ||
+          (typeof window !== 'undefined' ? (localStorage.getItem('user_branch') || (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').branchId : '')) : '') ||
+          'HQ'
+        ),
+        branch_id: normalizeBranchId(
+          branchId ||
+          (typeof window !== 'undefined' ? (localStorage.getItem('user_branch') || (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').branchId : '')) : '') ||
+          'HQ'
+        ),
         nic_image: nicImage,
         signature_image: signatureImage
       };
 
+      const branchToPass = payload.branchId;
       const res = await fetch('/api/clients', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders({ 'x-branch-id': branchToPass }) },
         body: JSON.stringify(payload),
       });
 

@@ -499,14 +499,22 @@ export default function ClientsPage() {
   const loadClients = async (overrideBranch?: string) => {
     try {
       setLoading(true);
-      const storedUser = localStorage.getItem('user');
+      const rawUserBranch = typeof window !== 'undefined' ? localStorage.getItem('user_branch') : null;
+      let effectiveActiveBranch = rawUserBranch ? normalizeBranchId(rawUserBranch) : '';
+
+      const storedUser = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
       if (storedUser) {
         try {
           const user = JSON.parse(storedUser);
-          setBranchId(user.branchId || 'HQ');
+          if (!effectiveActiveBranch && user.branchId) {
+            effectiveActiveBranch = normalizeBranchId(user.branchId);
+          }
           setUserId(user.id || '');
           setUserRole(user.role || 'TELLER');
         } catch {}
+      }
+      if (effectiveActiveBranch) {
+        setBranchId(effectiveActiveBranch);
       }
 
       // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
@@ -667,7 +675,21 @@ export default function ClientsPage() {
       // Serialize Front and Back NIC scan base64 frames into a single robust JSON payload string
       const serializedNicImage = JSON.stringify({ front: compressedFront, back: compressedBack });
 
-      const headers = getAuthHeaders();
+      // Guarantee effective operating branch is never empty or fallen back to HQ
+      const rawUserBranch = typeof window !== 'undefined' ? localStorage.getItem('user_branch') : null;
+      let effectiveActiveBranch = rawUserBranch ? normalizeBranchId(rawUserBranch) : '';
+      if (!effectiveActiveBranch) {
+        const storedUser = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+        if (storedUser) {
+          try {
+            const user = JSON.parse(storedUser);
+            if (user.branchId) effectiveActiveBranch = normalizeBranchId(user.branchId);
+          } catch {}
+        }
+      }
+      const branchToSave = normalizeBranchId(branchId || effectiveActiveBranch || 'HQ');
+
+      const headers = getAuthHeaders({ 'x-branch-id': branchToSave });
 
       const res = await fetch(url, {
         method,
@@ -680,7 +702,7 @@ export default function ClientsPage() {
           address,
           nicImage: serializedNicImage,
           signatureImage: compressedSign,
-          branchId, 
+          branchId: branchToSave, 
           createdByUserId: userId 
         })
       });

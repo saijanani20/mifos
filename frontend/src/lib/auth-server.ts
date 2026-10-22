@@ -77,12 +77,7 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       request.headers.get('X-BRANCH-ID');
     
     if (selectedBranch && selectedBranch.trim() !== '') {
-      const normSelected = normalizeBranchId(selectedBranch.trim());
-      if (role === 'TELLER' && profile?.branch_id && normalizeBranchId(profile.branch_id) !== 'HQ') {
-        branchId = normalizeBranchId(profile.branch_id);
-      } else {
-        branchId = normSelected;
-      }
+      branchId = normalizeBranchId(selectedBranch.trim());
     }
 
     // Tellers are strictly prohibited from operating as Head Office (HQ)

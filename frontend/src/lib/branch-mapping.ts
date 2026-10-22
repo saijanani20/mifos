@@ -110,6 +110,9 @@ export function getBranchSearchTerms(branchId: string | null | undefined): strin
     terms.add('KAH');
     terms.add('Kahathuduwa');
     terms.add('Kahathotuwa');
+  } else if (norm === 'DHW') {
+    terms.add('DEHIWALA');
+    terms.add('Dehiwala');
   } else if (norm === 'PND') {
     terms.add('PAN');
     terms.add('Panadura');
@@ -124,9 +127,13 @@ export function getBranchSearchTerms(branchId: string | null | undefined): strin
     terms.add('Kadawatha');
   } else if (norm === 'KTW') {
     terms.add('Kottawa');
+  } else if (norm === 'KOT') {
+    terms.add('Kotikawatta');
   } else if (norm === 'HMG') {
     terms.add('HOM');
     terms.add('Homagama');
+  } else if (norm === 'KIR') {
+    terms.add('Kiribathgoda');
   } else if (norm === 'W4') {
     terms.add('WAT4');
   } else if (norm === 'W3') {
