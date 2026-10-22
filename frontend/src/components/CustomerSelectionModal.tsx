@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
 import { SmartNicScanner } from './SmartNicScanner';
+import { compressImage } from '@/lib/image-compression';
 
 export interface SelectedCustomerData {
   id: string;
@@ -192,16 +193,13 @@ export function CustomerSelectionModal({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) {
-          const dataUrl = evt.target.result as string;
+      compressImage(file).then((dataUrl) => {
+        if (dataUrl) {
           if (activeKycTab === 'front') setKycFront(dataUrl);
           else if (activeKycTab === 'back') setKycBack(dataUrl);
           else setKycSign(dataUrl);
         }
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
 
@@ -331,14 +329,19 @@ export function CustomerSelectionModal({
     try {
       const nameParts = newName.trim().split(' ');
       const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
+      const lastName = nameParts.slice(1).join(' ') || '.';
 
-      const nicImage = (kycFront || kycBack) ? JSON.stringify({ front: kycFront, back: kycBack }) : null;
-      const signatureImage = kycSign || null;
+      const [compressedFront, compressedBack, compressedSign] = await Promise.all([
+        compressImage(kycFront),
+        compressImage(kycBack),
+        compressImage(kycSign)
+      ]);
+
+      const nicImage = (compressedFront || compressedBack) ? JSON.stringify({ front: compressedFront, back: compressedBack }) : null;
+      const signatureImage = compressedSign || null;
 
       const payload = {
         nic: newNic.trim(),
-        nationalId: newNic.trim(),
         national_id: newNic.trim(),
         firstName,
         first_name: firstName,
@@ -348,9 +351,7 @@ export function CustomerSelectionModal({
         address: newAddress.trim(),
         branchId: branchId || 'HQ',
         branch_id: branchId || 'HQ',
-        nicImage,
         nic_image: nicImage,
-        signatureImage,
         signature_image: signatureImage
       };
 
@@ -361,11 +362,26 @@ export function CustomerSelectionModal({
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Failed to register customer');
+        let errorMsg = 'Failed to register customer';
+        try {
+          const errJson = await res.json();
+          errorMsg = errJson.error || errJson.message || errorMsg;
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text.toLowerCase().includes('request entity too large') || text.toLowerCase().includes('requested en') || res.status === 413) {
+            errorMsg = 'Images are too large. Please use smaller photos.';
+          } else if (text) {
+            errorMsg = text.slice(0, 150);
+          }
+        }
+        throw new Error(errorMsg);
       }
 
-      const createdClient = await res.json();
+      let createdClient: any = {};
+      try {
+        createdClient = await res.json();
+      } catch {}
+
       toast.success('Customer registered successfully ✓', { id: toastId });
 
       stopCamera();

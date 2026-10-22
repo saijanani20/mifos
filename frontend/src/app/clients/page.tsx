@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { printLoanAgreement } from "@/lib/loanAgreementPrint"
 import { SmartNicScanner } from "@/components/SmartNicScanner"
+import { compressImage } from "@/lib/image-compression"
 
 // Reusable Live Webcam Capture Component
 const WebcamCapture = ({ 
@@ -162,16 +163,13 @@ const WebcamCapture = ({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) {
-          const base64 = evt.target.result as string;
+      compressImage(file).then((base64) => {
+        if (base64) {
           setCapturedImage(base64);
           onCapture(base64);
           stopCamera();
         }
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
 
@@ -659,8 +657,15 @@ export default function ClientsPage() {
       const url = editingClient ? `/api/clients/${editingClient.id}` : '/api/clients';
       const method = editingClient ? 'PATCH' : 'POST';
 
+      // Compress both NIC scans and signature to guarantee lightweight, safe payload
+      const [compressedFront, compressedBack, compressedSign] = await Promise.all([
+        compressImage(nicFrontImage),
+        compressImage(nicBackImage),
+        compressImage(signatureImage)
+      ]);
+
       // Serialize Front and Back NIC scan base64 frames into a single robust JSON payload string
-      const serializedNicImage = JSON.stringify({ front: nicFrontImage, back: nicBackImage });
+      const serializedNicImage = JSON.stringify({ front: compressedFront, back: compressedBack });
 
       const headers = getAuthHeaders();
 
@@ -674,15 +679,26 @@ export default function ClientsPage() {
           phone, 
           address,
           nicImage: serializedNicImage,
-          signatureImage,
+          signatureImage: compressedSign,
           branchId, 
           createdByUserId: userId 
         })
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || "Failed to save");
+        let errorMsg = `Failed to save customer (${res.status})`;
+        try {
+          const errorData = await res.json();
+          errorMsg = errorData.error || errorData.message || errorMsg;
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text.toLowerCase().includes('request entity too large') || text.toLowerCase().includes('requested en') || res.status === 413) {
+            errorMsg = 'Images are too large. Please use smaller photos.';
+          } else if (text) {
+            errorMsg = text.slice(0, 150);
+          }
+        }
+        throw new Error(errorMsg);
       }
 
       toast.success(editingClient ? "Customer updated successfully!" : "Customer saved successfully!", { id: toastId });

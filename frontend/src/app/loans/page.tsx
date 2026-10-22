@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { buildPawnReminderSms } from "@/lib/sms"
+import { compressImage } from "@/lib/image-compression"
 
 export default function PawnesPage() {
   const [isOpen, setIsOpen]       = useState(false);
@@ -585,10 +586,24 @@ export default function PawnesPage() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to register customer');
+        let errorMsg = 'Failed to register customer';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || err.message || errorMsg;
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text.toLowerCase().includes('request entity too large') || text.toLowerCase().includes('requested en') || res.status === 413) {
+            errorMsg = 'Images are too large. Please use smaller photos.';
+          } else if (text) {
+            errorMsg = text.slice(0, 150);
+          }
+        }
+        throw new Error(errorMsg);
       }
-      const newClient = await res.json();
+      let newClient: any = {};
+      try {
+        newClient = await res.json();
+      } catch {}
       toast.dismiss(toastId);
       // Auto-select the newly registered customer
       setClientId(nicVal);
@@ -659,13 +674,32 @@ export default function PawnesPage() {
     setIsSavingKyc(true);
     const toastId = toast.loading('Saving KYC photos...');
     try {
-      const nicImage = JSON.stringify({ front: kycFront, back: kycBack });
+      const [compressedFront, compressedBack, compressedSign] = await Promise.all([
+        compressImage(kycFront),
+        compressImage(kycBack),
+        compressImage(kycSign)
+      ]);
+      const nicImage = JSON.stringify({ front: compressedFront, back: compressedBack });
       const res = await fetch(`/api/clients/${newClientId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ nicImage, signatureImage: kycSign }),
+        body: JSON.stringify({ nicImage, signatureImage: compressedSign }),
       });
-      if (!res.ok) throw new Error('Failed to save photos');
+      if (!res.ok) {
+        let errorMsg = 'Failed to save photos';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || err.message || errorMsg;
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text.toLowerCase().includes('request entity too large') || text.toLowerCase().includes('requested en') || res.status === 413) {
+            errorMsg = 'Images are too large. Please use smaller photos.';
+          } else if (text) {
+            errorMsg = text.slice(0, 150);
+          }
+        }
+        throw new Error(errorMsg);
+      }
       toast.success('KYC photos saved ✓', { id: toastId });
     } catch (err: any) {
       toast.error(err.message || 'Could not save photos', { id: toastId });

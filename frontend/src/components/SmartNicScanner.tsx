@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { compressImage } from '@/lib/image-compression';
 
 export interface SmartNicScannerProps {
   onCapture: (base64: string | null) => void;
@@ -304,8 +305,15 @@ export function SmartNicScanner({
       const cropX = Math.max(0, (vw - cropW) / 2);
       const cropY = Math.max(0, (vh - cropH) / 2);
 
-      canvas.width = Math.round(cropW);
-      canvas.height = Math.round(cropH);
+      let finalW = Math.round(cropW);
+      let finalH = Math.round(cropH);
+      if (finalW > 1280 || finalH > 960) {
+        const ratio = Math.min(1280 / finalW, 960 / finalH);
+        finalW = Math.round(finalW * ratio);
+        finalH = Math.round(finalH * ratio);
+      }
+      canvas.width = finalW;
+      canvas.height = finalH;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         if (mirrored) {
@@ -313,23 +321,30 @@ export function SmartNicScanner({
           ctx.scale(-1, 1);
         }
         ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
-        const base64 = canvas.toDataURL('image/jpeg', 0.92);
+        const base64 = canvas.toDataURL('image/jpeg', 0.85);
         setCapturedImage(base64);
         onCaptureRef.current(base64);
         stopCamera();
       }
     } else {
       // Full frame capture
-      canvas.width = vw;
-      canvas.height = vh;
+      let finalW = vw;
+      let finalH = vh;
+      if (finalW > 1280 || finalH > 960) {
+        const ratio = Math.min(1280 / finalW, 960 / finalH);
+        finalW = Math.round(finalW * ratio);
+        finalH = Math.round(finalH * ratio);
+      }
+      canvas.width = finalW;
+      canvas.height = finalH;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         if (mirrored) {
           ctx.translate(canvas.width, 0);
           ctx.scale(-1, 1);
         }
-        ctx.drawImage(video, 0, 0, vw, vh);
-        const base64 = canvas.toDataURL('image/jpeg', 0.90);
+        ctx.drawImage(video, 0, 0, vw, vh, 0, 0, canvas.width, canvas.height);
+        const base64 = canvas.toDataURL('image/jpeg', 0.85);
         setCapturedImage(base64);
         onCaptureRef.current(base64);
         stopCamera();
@@ -532,16 +547,13 @@ export function SmartNicScanner({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) {
-          const base64 = evt.target.result as string;
+      compressImage(file).then((base64) => {
+        if (base64) {
           setCapturedImage(base64);
-          onCapture(base64);
+          onCaptureRef.current(base64);
           stopCamera();
         }
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
 
