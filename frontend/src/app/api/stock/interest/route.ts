@@ -54,24 +54,69 @@ export async function GET(req: Request) {
     let supabaseFailed = false;
 
     if (adminSupabase) {
-      let query = adminSupabase
-        .from('stock_interests')
-        .select('*')
-        .order('created_at', { ascending: false });
+      try {
+        let query = adminSupabase
+          .from('stock_interests')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (billNo) {
-        query = query.eq('bill_no', billNo);
-      }
-      if (branch && branch.toUpperCase() !== 'ALL') {
-        query = query.eq('branch', branch.toUpperCase());
-      }
+        if (billNo) {
+          query = query.eq('bill_no', billNo);
+        }
+        if (branch && branch.toUpperCase() !== 'ALL') {
+          query = query.eq('branch', branch.toUpperCase());
+        }
 
-      const { data, error } = await query;
+        const { data, error } = await query;
 
-      if (!error && data) {
-        records = data;
-      } else {
+        if (!error && data && data.length > 0) {
+          records = data;
+        } else {
+          supabaseFailed = true;
+        }
+      } catch (e) {
         supabaseFailed = true;
+      }
+
+      // Cloud Fallback: If stock_interests table is missing or empty, fetch from audit_logs
+      if (supabaseFailed || records.length === 0) {
+        try {
+          let auditQuery = adminSupabase
+            .from('audit_logs')
+            .select('details')
+            .eq('action', 'RECORD_STOCK_INTEREST')
+            .order('created_at', { ascending: false });
+
+          if (branch && branch.toUpperCase() !== 'ALL') {
+            auditQuery = auditQuery.ilike('branch_id', branch.toUpperCase());
+          }
+
+          const { data: auditData } = await auditQuery;
+          if (auditData && Array.isArray(auditData) && auditData.length > 0) {
+            let extracted = auditData.map((a: any) => a.details).filter(Boolean);
+            if (billNo) {
+              extracted = extracted.filter((r: any) => (r.bill_no || '').trim().toUpperCase() === billNo.trim().toUpperCase());
+            }
+            if (itemId) {
+              extracted = extracted.filter((r: any) => !r.item_id || r.item_id === itemId);
+            }
+            // Deduplicate by ID
+            const seen = new Set();
+            const deduplicated = extracted.filter((r: any) => {
+              if (r && r.id && !seen.has(r.id)) {
+                seen.add(r.id);
+                return true;
+              }
+              return false;
+            });
+            if (deduplicated.length > 0) {
+              records = deduplicated;
+              supabaseFailed = false;
+            }
+          }
+        } catch (auditErr) {
+          console.warn('[Audit logs fallback read error]:', auditErr);
+        }
       }
     } else {
       supabaseFailed = true;
@@ -152,6 +197,19 @@ export async function POST(req: Request) {
         supabaseError = e?.message || 'Exception during Supabase insert';
         savedToSupabase = false;
       }
+
+      // Supabase Cloud Fallback: Always record into audit_logs so interest is never lost across devices
+      try {
+        await adminSupabase.from('audit_logs').insert([{
+          action: 'RECORD_STOCK_INTEREST',
+          resource: 'stock_interests',
+          branch_id: cleanBranch,
+          details: insertedData
+        }]);
+        savedToSupabase = true;
+      } catch (auditErr: any) {
+        console.warn('[Supabase audit_logs fallback error]:', auditErr.message);
+      }
     }
 
     // Server-side JSON file sync if filesystem is available
@@ -197,6 +255,15 @@ export async function DELETE(req: Request) {
           .from('stock_interests')
           .delete()
           .eq('id', id);
+      } catch (e) {}
+
+      // Delete from audit_logs fallback as well
+      try {
+        await adminSupabase
+          .from('audit_logs')
+          .delete()
+          .eq('action', 'RECORD_STOCK_INTEREST')
+          .contains('details', { id });
       } catch (e) {}
     }
 

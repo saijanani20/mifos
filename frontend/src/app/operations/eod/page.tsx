@@ -509,6 +509,44 @@ function EndOfDayContent() {
       setStockInterests(combined);
       localStorage.setItem('local_stock_interests', JSON.stringify(combined));
     }
+
+    // Auto-Sync to Cloud: If the tablet/browser has local interest records that are not in remote database,
+    // automatically sync them to the server so they become visible to all tellers and devices.
+    if (localRecords.length > 0) {
+      const unsynced = localRecords.filter(loc => {
+        if (!loc || !loc.bill_no || !loc.interest_value) return false;
+        return !remoteRecords.some(rem => 
+          rem.id === loc.id || 
+          ((rem.bill_no || '').trim().toUpperCase() === (loc.bill_no || '').trim().toUpperCase() &&
+           (rem.branch || '').trim().toUpperCase() === (loc.branch || '').trim().toUpperCase() &&
+           rem.date === loc.date &&
+           parseFloat(rem.interest_value) === parseFloat(loc.interest_value))
+        );
+      });
+
+      if (unsynced.length > 0) {
+        console.log(`[Auto-Sync] Syncing ${unsynced.length} tablet interest records to cloud...`);
+        toast.info(`Syncing ${unsynced.length} offline interest payment(s) from this tablet to Cloud...`);
+        Promise.all(unsynced.map(item => 
+          fetch('/api/stock/interest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+          }).catch(e => console.warn('[Auto-Sync] Failed for item:', item, e))
+        )).then(() => {
+          console.log('[Auto-Sync] Local interest records successfully synced to cloud.');
+          toast.success(`Successfully restored ${unsynced.length} interest payments to Database!`);
+          fetch('/api/stock/interest')
+            .then(r => r.json())
+            .then(json => {
+              if (json && json.data && Array.isArray(json.data)) {
+                setStockInterests(json.data);
+                localStorage.setItem('local_stock_interests', JSON.stringify(json.data));
+              }
+            }).catch(() => {});
+        });
+      }
+    }
   };
 
   useEffect(() => {

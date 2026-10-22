@@ -46,11 +46,36 @@ export async function GET(req: Request) {
     }
 
     // 1. Fetch Interest Entries from stock_interests
-    let interestQuery = adminSupabase.from('stock_interests').select('*').eq('date', dateParam);
-    if (effectiveBranch && effectiveBranch.toUpperCase() !== 'ALL') {
-      interestQuery = interestQuery.ilike('branch', effectiveBranch);
+    let interestItems: any[] = [];
+    try {
+      let interestQuery = adminSupabase.from('stock_interests').select('*').eq('date', dateParam);
+      if (effectiveBranch && effectiveBranch.toUpperCase() !== 'ALL') {
+        interestQuery = interestQuery.ilike('branch', effectiveBranch);
+      }
+      const { data, error } = await interestQuery;
+      if (!error && data && data.length > 0) {
+        interestItems = data;
+      }
+    } catch (e) {}
+
+    // Cloud Fallback: If stock_interests is missing or empty, fetch from audit_logs
+    if (interestItems.length === 0) {
+      try {
+        let auditQuery = adminSupabase
+          .from('audit_logs')
+          .select('details')
+          .eq('action', 'RECORD_STOCK_INTEREST');
+        if (effectiveBranch && effectiveBranch.toUpperCase() !== 'ALL') {
+          auditQuery = auditQuery.ilike('branch_id', effectiveBranch);
+        }
+        const { data: auditData } = await auditQuery;
+        if (auditData && Array.isArray(auditData)) {
+          interestItems = auditData
+            .map((a: any) => a.details)
+            .filter((d: any) => d && (!dateParam || d.date === dateParam));
+        }
+      } catch (e) {}
     }
-    const { data: interestItems, error: interestErr } = await interestQuery;
 
     // 2. Fetch Daily Ledger Transactions for F/S and R
     let ledgerTxQuery = adminSupabase
