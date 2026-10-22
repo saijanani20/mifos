@@ -34,7 +34,10 @@ export async function GET(request: Request) {
     let queryError: any = null;
 
     try {
-      let query = adminSupabase.from('clients').select('*');
+      let query = adminSupabase
+        .from('clients')
+        .select('*')
+        .order('created_at', { ascending: false });
 
       // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
       if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
@@ -60,7 +63,8 @@ export async function GET(request: Request) {
 
       let fallbackQuery = adminSupabase
         .from('clients')
-        .select('id, national_id, first_name, last_name, phone, address, branch_id, status, created_at, created_by_user_id');
+        .select('id, national_id, first_name, last_name, phone, address, branch_id, status, created_at, created_by_user_id')
+        .order('created_at', { ascending: false });
 
       if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
         const terms = getBranchSearchTerms(requestedBranch);

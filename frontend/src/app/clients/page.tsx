@@ -522,7 +522,7 @@ export default function ClientsPage() {
       const targetBranch = overrideBranch !== undefined ? overrideBranch : selectedBranchFilter;
       const queryParam = targetBranch && targetBranch !== 'ALL' ? `?branchId=${encodeURIComponent(targetBranch)}` : '';
 
-      const res = await fetch(`/api/clients${queryParam}`, { headers });
+      const res = await fetch(`/api/clients${queryParam}`, { headers, cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setClients(Array.isArray(data) ? data : []);
@@ -927,30 +927,36 @@ export default function ClientsPage() {
     }
   };
 
-  const filteredClients = clients.filter(client => {
-    // 1. Branch filter
-    if (selectedBranchFilter && selectedBranchFilter !== 'ALL') {
-      const cBranch = String(client.branch_id || client.branchId || '').toUpperCase().trim();
-      const sBranch = selectedBranchFilter.toUpperCase().trim();
-      const terms = getBranchSearchTerms(sBranch);
-      const branchMatches = terms.some(t => cBranch === t.toUpperCase() || cBranch.includes(t.toUpperCase())) || cBranch === sBranch;
-      if (!branchMatches) return false;
-    }
+  const filteredClients = clients
+    .filter(client => {
+      // 1. Branch filter
+      if (selectedBranchFilter && selectedBranchFilter !== 'ALL') {
+        const cBranch = String(client.branch_id || client.branchId || '').toUpperCase().trim();
+        const sBranch = selectedBranchFilter.toUpperCase().trim();
+        const terms = getBranchSearchTerms(sBranch);
+        const branchMatches = terms.some(t => cBranch === t.toUpperCase() || cBranch.includes(t.toUpperCase())) || cBranch === sBranch;
+        if (!branchMatches) return false;
+      }
 
-    // 2. Search query filter
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase().trim();
+      // 2. Search query filter
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
 
-    return (
-      (client.first_name || client.firstName)?.toLowerCase().includes(q) ||
-      (client.last_name || client.lastName)?.toLowerCase().includes(q) ||
-      (client.national_id || client.nationalId)?.toLowerCase().includes(q) ||
-      (client.display_national_id || stripBranchPrefix(client.national_id || client.nationalId))?.toLowerCase().includes(q) ||
-      client.address?.toLowerCase().includes(q) ||
-      (client.branch_id || client.branchId)?.toLowerCase().includes(q) ||
-      client.phone?.toLowerCase().includes(q)
-    );
-  });
+      return (
+        (client.first_name || client.firstName)?.toLowerCase().includes(q) ||
+        (client.last_name || client.lastName)?.toLowerCase().includes(q) ||
+        (client.national_id || client.nationalId)?.toLowerCase().includes(q) ||
+        (client.display_national_id || stripBranchPrefix(client.national_id || client.nationalId))?.toLowerCase().includes(q) ||
+        client.address?.toLowerCase().includes(q) ||
+        (client.branch_id || client.branchId)?.toLowerCase().includes(q) ||
+        client.phone?.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      const timeA = new Date(a.created_at || a.createdAt || 0).getTime();
+      const timeB = new Date(b.created_at || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
 
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-700">
