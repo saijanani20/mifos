@@ -129,7 +129,9 @@ export async function POST(request: Request) {
       }
     }
 
-    if (!branch_id || !ledger_date) {
+    const canonicalBranchId = normalizeBranchId(branch_id);
+
+    if (!canonicalBranchId || !ledger_date) {
       return NextResponse.json({ error: 'branch_id and ledger_date are required' }, { status: 400 });
     }
 
@@ -177,7 +179,7 @@ export async function POST(request: Request) {
 
     // 2. Upsert Daily Ledger
     const ledgerPayload: Record<string, any> = {
-      branch_id,
+      branch_id: canonicalBranchId,
       ledger_date,
       cp_balance: userClosingCapital,
       opening_capital: userOpeningCapital,
@@ -204,7 +206,7 @@ export async function POST(request: Request) {
 
     let { data: ledger, error: ledgerErr } = await adminSupabase
       .from('daily_ledgers')
-      .upsert(ledgerPayload, { onConflict: 'branch_id, ledger_date' })
+      .upsert(ledgerPayload, { onConflict: 'branch_id,ledger_date' })
       .select('*')
       .single();
 
@@ -218,7 +220,7 @@ export async function POST(request: Request) {
 
       const retryRes = await adminSupabase
         .from('daily_ledgers')
-        .upsert(ledgerPayload, { onConflict: 'branch_id, ledger_date' })
+        .upsert(ledgerPayload, { onConflict: 'branch_id,ledger_date' })
         .select('*')
         .single();
 
@@ -226,8 +228,8 @@ export async function POST(request: Request) {
       ledgerErr = retryRes.error;
     }
 
-    if (ledgerErr) {
-      return NextResponse.json({ error: ledgerErr.message }, { status: 500 });
+    if (ledgerErr || !ledger) {
+      return NextResponse.json({ error: ledgerErr?.message || 'Failed to save daily ledger.' }, { status: 500 });
     }
 
     const ledgerId = ledger.id;

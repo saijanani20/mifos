@@ -1,5 +1,7 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
+import { normalizeBranchId } from '@/lib/branch-mapping';
+import { toast } from 'sonner';
 
 import { useState, useEffect, useMemo } from 'react';
 import { 
@@ -180,76 +182,6 @@ export default function DailyLedgerEntryPage() {
     }
   }, [selectedBranch, ledgerDate]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    setFeedback(null);
-
-    const payload = {
-      branch_id: selectedBranch,
-      ledger_date: ledgerDate,
-      cp_balance: cpBalance,
-      opening_balance: openingBalance,
-      transfer_in: transferIn,
-      transfer_out: transferOut,
-      loan_issued_total: loanIssuedTotal,
-      redemption_total: redemptionTotal,
-      interest_rec_total: interestRecTotal,
-      recovery_total: recoveryTotal,
-      insurance_total: insuranceTotal,
-      expenses_total: expensesTotal,
-      closing_balance: userClosingBalance || calculatedClosing,
-      actual_cash_count: actualCashCount,
-      staff_shift: staffShift,
-      created_by: currentUser?.email || 'Teller',
-      status: 'APPROVED',
-      transactions,
-      expenses
-    };
-
-    try {
-      const headers = getAuthHeaders({ 'Content-Type': 'application/json' });
-      const res = await fetch('/api/ledger/daily', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload)
-      });
-      const contentType = res.headers.get('content-type');
-      let data: any = {};
-      if (contentType && contentType.includes('application/json')) {
-        data = await res.json();
-      }
-
-      if (!res.ok) {
-        setFeedback({
-          type: 'error',
-          message: data.error || `Save failed: Server returned status ${res.status}. Please check database connection.`
-        });
-        return;
-      }
-
-      if (data.error) {
-        setFeedback({ type: 'error', message: data.error });
-      } else {
-        if (data.math_status === 'MISMATCH') {
-          setFeedback({
-            type: 'warning',
-            message: `Ledger saved as FLAGGED! Manual Closing differs from Calculated Closing by LKR ${data.math_mismatch_amount}`
-          });
-        } else {
-          setFeedback({
-            type: 'success',
-            message: `Daily Ledger for ${selectedBranch} on ${ledgerDate} saved successfully with 100% Math Balance!`
-          });
-        }
-        fetchLedgerData();
-      }
-    } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   // 3. Real-Time Math Verification Engine
   const calculatedClosing = useMemo(() => {
     const op = Number(openingBalance) || 0;
@@ -340,8 +272,13 @@ export default function DailyLedgerEntryPage() {
     setSaving(true);
     setFeedback(null);
 
+    const effectiveBranch = normalizeBranchId(selectedBranch || 'HQ');
+    const finalClosingCash = (userClosingBalance !== '' && userClosingBalance !== null && userClosingBalance !== undefined)
+      ? Number(userClosingBalance)
+      : calculatedClosing;
+
     const payload = {
-      branch_id: selectedBranch,
+      branch_id: effectiveBranch,
       ledger_date: ledgerDate,
       cp_balance: cpBalance,
       opening_balance: openingBalance,
@@ -353,8 +290,8 @@ export default function DailyLedgerEntryPage() {
       recovery_total: recoveryTotal,
       insurance_total: insuranceTotal,
       expenses_total: expensesTotal,
-      closing_balance: userClosingBalance,
-      actual_cash_count: actualCashCount !== '' ? actualCashCount : null,
+      closing_balance: finalClosingCash,
+      actual_cash_count: actualCashCount !== '' ? actualCashCount : finalClosingCash,
       staff_shift: staffShift,
       created_by: currentUser?.email || 'Teller',
       status: isMathBalanced ? 'APPROVED' : 'FLAGGED',
@@ -362,12 +299,20 @@ export default function DailyLedgerEntryPage() {
       expenses
     };
 
+    const toastId = toast.loading(`Saving Daily Ledger for ${effectiveBranch} (${ledgerDate})...`);
+
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders({ 'x-branch-id': effectiveBranch })
+      };
+
       const res = await fetch('/api/ledger/daily', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload)
       });
+
       let data: any = {};
       try {
         data = await res.json();
@@ -375,23 +320,28 @@ export default function DailyLedgerEntryPage() {
         data = { error: `Server returned ${res.status}: ${res.statusText || 'Unable to parse server response'}` };
       }
 
-      if (data.error) {
-        setFeedback({ type: 'error', message: data.error });
+      if (!res.ok || data.error) {
+        const errorMsg = data.error || `Save failed with status ${res.status}`;
+        toast.error(errorMsg, { id: toastId, duration: 6000 });
+        setFeedback({ type: 'error', message: errorMsg });
       } else {
         if (data.math_status === 'MISMATCH') {
+          toast.warning(`Ledger saved as FLAGGED! Variance: LKR ${data.math_mismatch_amount}`, { id: toastId, duration: 6000 });
           setFeedback({
             type: 'warning',
             message: `Ledger saved as FLAGGED! Manual Closing differs from Calculated Closing by LKR ${data.math_mismatch_amount}`
           });
         } else {
+          toast.success(`Save Success! Daily Ledger for ${effectiveBranch} saved successfully ✓`, { id: toastId, duration: 5000 });
           setFeedback({
             type: 'success',
-            message: `Daily Ledger for ${selectedBranch} on ${ledgerDate} saved successfully with 100% Math Balance!`
+            message: `Daily Ledger for ${effectiveBranch} on ${ledgerDate} saved successfully with 100% Math Balance!`
           });
         }
         fetchLedgerData();
       }
     } catch (err: any) {
+      toast.error(err.message || 'Error occurred while saving ledger', { id: toastId });
       setFeedback({ type: 'error', message: err.message });
     } finally {
       setSaving(false);
