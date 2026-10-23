@@ -916,12 +916,12 @@ export function CustomerSelectionModal({
                   </button>
                 </div>
 
-                {/* Smart NIC Edge Scanner Box */}
+                {/* KYC Photo Capture Box */}
                 <div className="w-full">
                   {activeKycTab === 'front' && (
                     <SmartNicScanner 
                       key="nic_front_capture_modal"
-                      label="NIC Front Side Scan" 
+                      label="NIC Front Side Photo" 
                       onCapture={(base64) => setKycFront(base64)} 
                       initialImage={kycFront} 
                       autoStart={true}
@@ -931,7 +931,7 @@ export function CustomerSelectionModal({
                   {activeKycTab === 'back' && (
                     <SmartNicScanner 
                       key="nic_back_capture_modal"
-                      label="NIC Back Side Scan" 
+                      label="NIC Back Side Photo" 
                       onCapture={(base64) => setKycBack(base64)} 
                       initialImage={kycBack} 
                       autoStart={true}
@@ -941,7 +941,7 @@ export function CustomerSelectionModal({
                   {activeKycTab === 'sign' && (
                     <SmartNicScanner 
                       key="signature_capture_modal"
-                      label="Signature Camera Scan" 
+                      label="Customer Signature Photo" 
                       onCapture={(base64) => setKycSign(base64)} 
                       initialImage={kycSign} 
                       autoStart={true}
