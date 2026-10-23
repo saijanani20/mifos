@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, formatBranchScopedBillNo, stripBranchPrefix, getBranchSearchTerms } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -103,11 +103,12 @@ export async function GET(request: Request, context: any) {
     let dailyLedger: any = null;
     const pawnDateStr = pawn.created_at ? pawn.created_at.split('T')[0] : '';
     if (pawnDateStr && pawn.branch_id) {
+      const searchTerms = getBranchSearchTerms(pawn.branch_id);
       const { data: ledgerRows } = await adminSupabase
-        .from('daily_ledger')
+        .from('daily_ledgers')
         .select('*')
-        .eq('branch_id', pawn.branch_id)
-        .eq('date', pawnDateStr)
+        .in('branch_id', searchTerms)
+        .eq('ledger_date', pawnDateStr)
         .maybeSingle();
       dailyLedger = ledgerRows;
     }

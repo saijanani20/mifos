@@ -1,20 +1,17 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-let adminSupabase: any;
-if (supabaseUrl && supabaseKey) {
-  adminSupabase = createClient(supabaseUrl, supabaseKey);
-}
 
 export const dynamic = 'force-dynamic';
 
 // PUT: Edit an item in Daily Matrix
 export async function PUT(req: Request) {
   try {
+    const session = await getAuthenticatedUser(req);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, category, bill_no, date, amount, branch, notes, remarks, user_id } = body;
 

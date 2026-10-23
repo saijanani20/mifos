@@ -1,24 +1,19 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-let supabase: any;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey);
-}
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    if (!supabase) return NextResponse.json({ error: 'Supabase not initialized' }, { status: 500 });
+    const session = await getAuthenticatedUser(request);
+    if (!session || session.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Forbidden. Admin authentication required.' }, { status: 403 });
+    }
 
     const logs: string[] = [];
 
     // 1. Find branches with long IDs (UUID-like)
-    const { data: branches, error: bError } = await supabase
+    const { data: branches, error: bError } = await adminSupabase
       .from('branches')
       .select('*');
 
@@ -36,11 +31,11 @@ export async function GET() {
       logs.push(`Migrating branch "${branch.name}" from ${branch.id} to ${targetId}...`);
 
       // Check if targetId already exists
-      const { data: existing } = await supabase.from('branches').select('id').eq('id', targetId).maybeSingle();
+      const { data: existing } = await adminSupabase.from('branches').select('id').eq('id', targetId).maybeSingle();
       
       if (!existing) {
         // Create new branch
-        const { error: insError } = await supabase.from('branches').insert({
+        const { error: insError } = await adminSupabase.from('branches').insert({
           ...branch,
           id: targetId
         });
@@ -54,7 +49,7 @@ export async function GET() {
       }
 
       // Update profiles
-      const { data: updateRes, error: uError, count } = await supabase
+      const { data: updateRes, error: uError, count } = await adminSupabase
         .from('profiles')
         .update({ branch_id: targetId })
         .eq('branch_id', branch.id)
@@ -67,11 +62,11 @@ export async function GET() {
       }
       
       // Update branch_status if exists
-      await supabase.from('branch_status').update({ branch_id: targetId }).eq('branch_id', branch.id);
+      await adminSupabase.from('branch_status').update({ branch_id: targetId }).eq('branch_id', branch.id);
 
       // Keep the old branch for now to be safe, or delete if profiles updated
       // If we are confident, delete:
-      const { error: delError } = await supabase.from('branches').delete().eq('id', branch.id);
+      const { error: delError } = await adminSupabase.from('branches').delete().eq('id', branch.id);
       if (delError) logs.push(`  Could not delete old branch ${branch.id}: ${delError.message}`);
       else logs.push(`  Deleted old branch ${branch.id}.`);
     }

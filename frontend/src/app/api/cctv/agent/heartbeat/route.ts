@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/auth-server';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export async function POST(req: Request) {
   try {
+    const session = await getAuthenticatedUser(req);
+    const secretHeader = req.headers.get('x-cctv-secret') || req.headers.get('authorization')?.replace('Bearer ', '');
+    const validSecret = process.env.CCTV_AGENT_SECRET || 'mifos_cctv_agent_secret_2024';
+
+    if (!session && secretHeader !== validSecret) {
+      return NextResponse.json({ error: 'Unauthorized. CCTV agent secret or session required.' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { agent_id, branch_id, camera_id, camera_status, disk_free_gb, cpu_percent } = body;
 

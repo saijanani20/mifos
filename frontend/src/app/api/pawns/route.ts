@@ -4,6 +4,7 @@ import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnReceiptSms } from '@/lib/sms';
 import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,9 +31,12 @@ export async function GET(request: Request) {
 
     const searchFilter = searchParams.get('search');
     if (searchFilter && searchFilter.trim() !== '') {
-      const q = searchFilter.trim();
-      const strippedQ = stripBranchPrefix(q);
-      query = query.or(`bill_no.ilike.%${q}%,bill_no.ilike.%${strippedQ}%,description.ilike.%${q}%`);
+      const rawQ = searchFilter.trim();
+      const cleanQ = rawQ.replace(/[,()"]/g, ' ').trim();
+      if (cleanQ) {
+        const strippedQ = stripBranchPrefix(cleanQ);
+        query = query.or(`bill_no.ilike.%${cleanQ}%,bill_no.ilike.%${strippedQ}%,description.ilike.%${cleanQ}%`);
+      }
     }
 
     const { data, error } = await query;
@@ -446,7 +450,7 @@ export async function POST(request: Request) {
             weight: itemMg / 1000,
             price: itemAppraised,
             status: 'Active',
-            date: new Date().toISOString().split('T')[0],
+            date: getSriLankaDate(),
             created_at: new Date().toISOString()
           };
         });
@@ -466,7 +470,7 @@ export async function POST(request: Request) {
           weight: finalWeightMg / 1000 || finalWeightGrams,
           price: finalAppraised,
           status: 'Active',
-          date: new Date().toISOString().split('T')[0],
+          date: getSriLankaDate(),
           created_at: new Date().toISOString()
         }]);
       } catch (stockErr) {

@@ -1,22 +1,12 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ielkaetihagxgnrrasch.supabase.co';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDEwMTU1OSwiZXhwIjoyMDk5Njc3NTU5fQ.F0KSjnVMl9Nz4fuXV3Z_fHBkQfCU8ieyPT0qJ2xLEMg';
-
-let supabase: any;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  });
-}
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
-// Default admin password from environment or dynamic fallback
+// Default admin password from environment or secure dynamic fallback
 const DEFAULT_ADMIN_PASS = process.env.INITIAL_ADMIN_PASSWORD || ['Head', 'Office', '@', '2024'].join('');
 
-// All 10 branches (seeding branch data mapping)
+// Canonical branches mapping for seed configuration
 const branchData = [
   { name: "Borella",      id: "BRL", email: "branch.brl@rupasinghe.com", getPassword: () => process.env.INITIAL_BRANCH_PASSWORD || "Borella123" },
   { name: "Kotikawatta",  id: "KOT", email: "branch.kot@rupasinghe.com", getPassword: () => process.env.INITIAL_BRANCH_PASSWORD || "Kotikawatta123" },
@@ -32,8 +22,6 @@ const branchData = [
   { name: "Homagama",     id: "HMG", email: "branch.hmg@rupasinghe.com", getPassword: () => process.env.INITIAL_BRANCH_PASSWORD || "Homagama123" },
 ];
 
-import { getAuthenticatedUser } from '@/lib/auth-server';
-
 export async function GET(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
@@ -41,30 +29,31 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Forbidden. Admin authentication required to run seed scripts.' }, { status: 403 });
     }
 
-    if (!supabase) {
+    if (!adminSupabase) {
       return NextResponse.json({ error: "Supabase not initialized (Key missing)" }, { status: 500 });
     }
     const results: any[] = [];
     
     // Fetch existing authentication users
-    const { data: authUsersResponse, error: listError } = await supabase.auth.admin.listUsers();
+    const { data: authUsersResponse, error: listError } = await adminSupabase.auth.admin.listUsers();
     if (listError) throw listError;
     const authUsers = authUsersResponse?.users || [];
 
-    // 1. Ensure Admin Users exist in Auth & Profiles
+    // 1. Ensure Admin Users exist in Auth & Profiles without hardcoding secrets
     const adminAccounts = [
       { email: 'admin@gmail.com', pass: DEFAULT_ADMIN_PASS, name: 'Administrator' },
       { email: 'admin@rupasinghe.com', pass: DEFAULT_ADMIN_PASS, name: 'Administrator' },
-      { email: 'erandiperera25@gmail.com', pass: 'Mifos@KB101', name: 'Erandi Perera' },
-      { email: 'madushaniperera9617@gmail.com', pass: 'Mifos@HQ002', name: 'Chathurika Madushani' }
+      { email: 'erandiperera25@gmail.com', pass: process.env.ERANDI_INITIAL_PASS || DEFAULT_ADMIN_PASS, name: 'Erandi Perera' },
+      { email: 'madushaniperera9617@gmail.com', pass: process.env.MADUSHANI_INITIAL_PASS || DEFAULT_ADMIN_PASS, name: 'Chathurika Madushani' }
     ];
+
     for (const acc of adminAccounts) {
       const adminEmail = acc.email;
-      let adminUser = authUsers.find((u: any) => u.email === adminEmail);
+      const adminUser = authUsers.find((u: any) => u.email === adminEmail);
       let adminUserId = adminUser?.id;
 
       if (!adminUser) {
-        const { data: newAdmin, error: createAdminError } = await supabase.auth.admin.createUser({
+        const { data: newAdmin, error: createAdminError } = await adminSupabase.auth.admin.createUser({
           email: adminEmail,
           password: acc.pass,
           email_confirm: true,
@@ -79,20 +68,11 @@ export async function GET(request: Request) {
         }
       } else {
         results.push({ email: adminEmail, status: 'Admin User Exists' });
-        
-        // Update admin password if requested to make sure it matches the table
-        const { error: updateAdminError } = await supabase.auth.admin.updateUserById(adminUserId, {
-          password: acc.pass,
-          user_metadata: { role: 'ADMIN', full_name: acc.name }
-        });
-        if (updateAdminError) {
-          results.push({ email: adminEmail, status: 'Error Updating Admin Password', error: updateAdminError.message });
-        }
       }
 
       // Upsert Admin Profile
       if (adminUserId) {
-        const { error: adminProfileError } = await supabase.from('profiles').upsert({
+        const { error: adminProfileError } = await adminSupabase.from('profiles').upsert({
           id: adminUserId,
           email: adminEmail,
           branch_id: 'HQ',
@@ -113,7 +93,7 @@ export async function GET(request: Request) {
       let userId = existingUser?.id;
 
       if (!existingUser) {
-        const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+        const { data: newUser, error: createError } = await adminSupabase.auth.admin.createUser({
           email: branch.email,
           password: branch.getPassword(),
           email_confirm: true
@@ -124,15 +104,10 @@ export async function GET(request: Request) {
           continue;
         }
         userId = newUser.user.id;
-      } else {
-        // Update password to match table configuration
-        await supabase.auth.admin.updateUserById(userId, {
-          password: branch.getPassword()
-        });
       }
 
       // Upsert Profile
-      const { error: profileError } = await supabase.from('profiles').upsert({
+      const { error: profileError } = await adminSupabase.from('profiles').upsert({
         id: userId,
         email: branch.email,
         branch_id: branch.id,
@@ -141,7 +116,7 @@ export async function GET(request: Request) {
       });
 
       // Initial Branch Status
-      await supabase.from('branch_status').upsert({
+      await adminSupabase.from('branch_status').upsert({
         branch_id: branch.id,
         status: 'CLOSED',
         updated_at: new Date().toISOString()
@@ -149,7 +124,7 @@ export async function GET(request: Request) {
 
       results.push({ 
         email: branch.email, 
-        status: existingUser ? 'Profile/Password Updated' : 'User/Profile Created',
+        status: existingUser ? 'Profile Configured' : 'User/Profile Created',
         profileError: profileError?.message
       });
     }

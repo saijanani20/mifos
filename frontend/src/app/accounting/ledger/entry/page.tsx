@@ -368,7 +368,12 @@ export default function DailyLedgerEntryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = { error: `Server returned ${res.status}: ${res.statusText || 'Unable to parse server response'}` };
+      }
 
       if (data.error) {
         setFeedback({ type: 'error', message: data.error });

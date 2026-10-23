@@ -606,7 +606,10 @@ function EndOfDayContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEntry)
       });
-      const json = await res.json();
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {}
       const savedEntry = (json && json.data) ? json.data : { ...newEntry, id: 'loc_' + Date.now() };
 
       // Update state and localStorage IMMEDIATELY so it never shows 0 or disappears

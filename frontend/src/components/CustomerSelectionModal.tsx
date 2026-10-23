@@ -341,6 +341,20 @@ export function CustomerSelectionModal({
       const nicImage = (compressedFront || compressedBack) ? JSON.stringify({ front: compressedFront, back: compressedBack }) : null;
       const signatureImage = compressedSign || null;
 
+      let storedBranch = '';
+      if (typeof window !== 'undefined') {
+        try {
+          storedBranch = localStorage.getItem('user_branch') || '';
+          if (!storedBranch) {
+            const rawUser = localStorage.getItem('user');
+            if (rawUser) storedBranch = JSON.parse(rawUser)?.branchId || '';
+          }
+        } catch {
+          storedBranch = '';
+        }
+      }
+      const safeBranch = normalizeBranchId(branchId || storedBranch || 'HQ');
+
       const payload = {
         nic: newNic.trim(),
         national_id: newNic.trim(),
@@ -350,16 +364,8 @@ export function CustomerSelectionModal({
         last_name: lastName,
         phone: newPhone.trim(),
         address: newAddress.trim(),
-        branchId: normalizeBranchId(
-          branchId ||
-          (typeof window !== 'undefined' ? (localStorage.getItem('user_branch') || (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').branchId : '')) : '') ||
-          'HQ'
-        ),
-        branch_id: normalizeBranchId(
-          branchId ||
-          (typeof window !== 'undefined' ? (localStorage.getItem('user_branch') || (localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').branchId : '')) : '') ||
-          'HQ'
-        ),
+        branchId: safeBranch,
+        branch_id: safeBranch,
         nic_image: nicImage,
         signature_image: signatureImage
       };

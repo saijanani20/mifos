@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
+import { getSriLankaDate } from '@/lib/date-utils';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-let adminSupabase: any;
-if (supabaseUrl && supabaseKey) {
-  adminSupabase = createClient(supabaseUrl, supabaseKey);
-}
 
 export const dynamic = 'force-dynamic';
 
@@ -147,6 +140,7 @@ export async function GET(req: Request) {
 // POST: Add a new interest record
 export async function POST(req: Request) {
   try {
+    const session = await getAuthenticatedUser(req);
     const body = await req.json();
     const { bill_no, item_id, date, interest_value, branch, notes } = body;
 
@@ -242,6 +236,10 @@ export async function POST(req: Request) {
 // DELETE: Remove an interest record by ID
 export async function DELETE(req: Request) {
   try {
+    const session = await getAuthenticatedUser(req);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 

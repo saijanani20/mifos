@@ -1,16 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { getAuthenticatedUser } from '@/lib/auth-server';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { normalizeBranchId } from '@/lib/branch-mapping';
 import { buildInventoryCacheKey, getInventoryCache, setInventoryCache } from '@/lib/redis';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-let adminSupabase: any;
-if (supabaseUrl && supabaseKey) {
-  adminSupabase = createClient(supabaseUrl, supabaseKey);
-}
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +10,7 @@ export async function GET(req: Request) {
   try {
     const session = await getAuthenticatedUser(req);
     const { searchParams } = new URL(req.url);
-    const dateParam = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const dateParam = searchParams.get('date') || getSriLankaDate();
     const branchParam = searchParams.get('branch') || '';
 
     const isHead = !session?.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
