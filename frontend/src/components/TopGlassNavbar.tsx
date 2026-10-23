@@ -31,7 +31,9 @@ import {
   User,
   Building2,
   Smartphone,
-  Package
+  Package,
+  Percent,
+  Receipt
 } from 'lucide-react';
 
 const navGroups = [
@@ -49,6 +51,7 @@ const navGroups = [
     items: [
       { name: 'Customers', href: '/clients', icon: Users },
       { name: 'Pawnings', href: '/loans', icon: Wallet },
+      { name: 'Interest', href: '/finance/interest', icon: Percent },
       { name: 'Journal Records', href: '/accounting/ledger?tab=journal', icon: FileText },
       { name: 'Ledger Entry', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
       { name: 'Branch Matrix', href: '/accounting/ledger?tab=matrix', icon: Layers },
@@ -99,6 +102,7 @@ const auditorNavItems = [
   { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
   { name: 'Customers', href: '/clients', icon: Users },
   { name: 'Pawnings', href: '/loans', icon: Wallet },
+  { name: 'Interest', href: '/finance/interest', icon: Percent },
   { name: 'Vault Stock', href: '/operations/eod?tab=stock', icon: Layers },
   { name: 'Audit Logs', href: '/operations/audit-logs', icon: History },
 ];
@@ -106,6 +110,7 @@ const auditorNavItems = [
 const tellerNavItems = [
   { name: 'Customer', href: '/clients', icon: Users },
   { name: 'Pawning', href: '/loans', icon: Wallet },
+  { name: 'Interest', href: '/finance/interest', icon: Percent },
   { name: 'Stock Management', href: '/operations/eod?tab=stock', icon: Package },
   { name: 'Daily ledger', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: User },
