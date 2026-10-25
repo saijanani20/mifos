@@ -25,11 +25,12 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const branchFilter = url.searchParams.get('branch_id');
 
-    let { data: cameras, error } = await adminSupabase
+    const { data, error } = await adminSupabase
       .from('cctv_cameras')
       .select('*')
       .order('created_at', { ascending: false });
 
+    let cameras = data;
     if (error || !cameras) {
       console.warn('[CCTV Cameras API] Using fallback demo camera list due to table query:', error?.message);
       cameras = DEMO_CAMERAS;

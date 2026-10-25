@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export async function GET(request: Request) {
   try {
@@ -30,7 +31,8 @@ export async function POST(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
     const body = await request.json();
-    let { fromVault, toVault, amount, currency, notes, initiatedBy } = body;
+    const { toVault, amount, currency, notes } = body;
+    let { fromVault, initiatedBy } = body;
     
     if (session) {
       if (session.role === 'TELLER') {
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await adminSupabase.from('vault_transfer').insert([{
       id: transferId,
-      date: dateObj.toISOString().split('T')[0],
+      date: getSriLankaDate(dateObj),
       time: dateObj.toTimeString().slice(0, 5),
       from_vault: fromVault,
       to_vault: toVault,
@@ -99,8 +101,8 @@ export async function PATCH(request: Request) {
     // Automated Double-Entry GL Posting if transfer is completed
     if (data && status === 'Completed') {
       try {
-        const jeId = `JE-VAULT-${Date.now()}`;
-        const dateStr = new Date().toISOString().split('T')[0];
+        const jeId = `JE-VAULT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+        const dateStr = getSriLankaDate();
         const transferAmount = Number(data.amount || 0);
 
         await adminSupabase.from('journal_entry').insert([{

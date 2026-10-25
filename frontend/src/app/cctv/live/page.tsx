@@ -208,7 +208,7 @@ export default function CctvLivePage() {
                   </div>
 
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-left space-y-1 font-mono text-[11px]">
-                    <div className="text-slate-500">// Run on Branch PC Terminal:</div>
+                    <div className="text-slate-500">{"// Run on Branch PC Terminal:"}</div>
                     <div className="text-emerald-400">cd cctv-agent</div>
                     <div className="text-emerald-400">node agent.js</div>
                   </div>

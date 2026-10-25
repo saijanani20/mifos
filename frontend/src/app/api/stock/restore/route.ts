@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export async function POST(req: Request) {
   try {
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Format history notes
-    const todayStr = restoreDate || new Date().toISOString().split('T')[0];
+    const todayStr = restoreDate || getSriLankaDate();
     const interestVal = parseFloat(interestPaid) || 0;
     const interestStr = interestVal > 0 ? `Interest Paid: Rs. ${interestVal.toLocaleString('en-US')}` : 'Interest Paid: N/A';
     const cleanNotes = (notes || '').trim();

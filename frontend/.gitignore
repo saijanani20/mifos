@@ -33,6 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# scratch files
+scratch_*.js
+sync_pawns.js
+
+
 # vercel
 .vercel
 

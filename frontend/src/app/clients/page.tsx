@@ -788,24 +788,24 @@ export default function ClientsPage() {
 
       {/* New Customer Dialog */}
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl max-h-[95vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
+        <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl h-[90dvh] max-h-[90dvh] sm:h-auto sm:max-h-[90vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden my-auto">
           <div className="h-2 bg-primary animate-pulse shrink-0" />
           
           {/* Fixed Header */}
-          <div className="p-4 sm:p-6 pb-3 border-b border-slate-100 shrink-0 bg-white">
+          <div className="p-3 sm:p-6 pb-2.5 sm:pb-3 border-b border-slate-100 shrink-0 bg-white">
             <DialogHeader>
-              <DialogTitle className="text-xl sm:text-2xl font-black tracking-tighter flex items-center gap-2.5 sm:gap-3">
+              <DialogTitle className="text-lg sm:text-2xl font-black tracking-tighter flex items-center gap-2 sm:gap-3">
                  {editingClient ? <UserCog className="w-5 h-5 sm:w-6 sm:h-6 text-primary shrink-0" /> : <UserPlus className="w-5 h-5 sm:w-6 sm:h-6 text-primary shrink-0" />}
                  <span>{editingClient ? "Edit Customer Record" : "Register New Customer"}</span>
               </DialogTitle>
-              <DialogDescription className="font-medium text-slate-500 text-xs sm:text-sm mt-1">
+              <DialogDescription className="font-medium text-slate-500 text-[11px] sm:text-sm mt-0.5 sm:mt-1">
                 {editingClient ? "Update current customer KYC and profile." : "Enter customer details and capture webcam images for KYC verification."}
               </DialogDescription>
             </DialogHeader>
           </div>
 
           {/* Scrollable Form Body */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-5 overscroll-contain">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 items-start">
               {/* Left Column: Form Inputs */}
               <div className="space-y-4">
@@ -1089,23 +1089,29 @@ export default function ClientsPage() {
           </div>
 
           {/* Fixed Footer */}
-          <div className="p-4 sm:p-6 pt-3 border-t border-slate-100/80 bg-slate-50/80 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 w-full sm:w-auto">
+          <div className="p-3 sm:p-5 border-t border-slate-200/90 bg-white/95 backdrop-blur-md shrink-0 flex flex-col sm:flex-row justify-between items-center gap-2.5 sm:gap-3 z-30 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 w-full sm:w-auto justify-center sm:justify-start">
               {(!nicFrontImage || !nicBackImage || !signatureImage) ? (
-                <span className="flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                <span className="flex items-center gap-1.5 text-amber-800 bg-amber-50 border border-amber-300/80 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold w-full sm:w-auto justify-center sm:justify-start">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                  <span>Pictures required: {!nicFrontImage ? 'NIC Front' : ''} {!nicBackImage ? (!nicFrontImage ? '• NIC Back' : 'NIC Back') : ''} {!signatureImage ? (!nicFrontImage || !nicBackImage ? '• Signature' : 'Signature') : ''}</span>
+                  <span className="truncate">Required: {!nicFrontImage ? 'NIC Front' : ''} {!nicBackImage ? (!nicFrontImage ? '• NIC Back' : 'NIC Back') : ''} {!signatureImage ? (!nicFrontImage || !nicBackImage ? '• Signature' : 'Signature') : ''}</span>
                 </span>
               ) : (
-                <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold w-full sm:w-auto justify-center sm:justify-start">
                   <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 stroke-[3]" />
-                  <span>All 3 KYC pictures captured</span>
+                  <span>All 3 KYC pictures captured ✓</span>
                 </span>
               )}
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-              <Button variant="ghost" className="font-bold text-slate-500 h-11 sm:h-12 rounded-xl w-full sm:w-auto" onClick={() => { setIsOpen(false); setEditingClient(null); }}>Cancel</Button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <Button 
+                variant="outline" 
+                className="font-bold text-slate-600 h-10 sm:h-11 rounded-xl flex-1 sm:flex-none border-slate-200 text-xs sm:text-sm" 
+                onClick={() => { setIsOpen(false); setEditingClient(null); }}
+              >
+                Cancel
+              </Button>
               <Button 
                 disabled={isSaving}
                 onClick={handleSave} 
@@ -1113,14 +1119,16 @@ export default function ClientsPage() {
                   duplicateClientMatch
                     ? "bg-red-600 hover:bg-red-700 text-white shadow-red-600/20"
                     : "bg-primary hover:bg-primary/90 text-white shadow-primary/20"
-                } font-black px-8 h-11 sm:h-12 rounded-xl shadow-lg gap-2 cursor-pointer w-full sm:w-auto transition-all`}
+                } font-black px-5 sm:px-8 h-10 sm:h-11 rounded-xl shadow-lg gap-1.5 sm:gap-2 cursor-pointer flex-[2] sm:flex-none transition-all text-xs sm:text-sm`}
               >
-                {isSaving ? <RefreshCcw className="w-4 h-4 animate-spin" /> : null}
-                {isSaving 
-                  ? "Saving Record..." 
-                  : duplicateClientMatch 
-                    ? "Customer Exists - Switch to Edit" 
-                    : (editingClient ? "Update Customer" : "Register Customer")}
+                {isSaving ? <RefreshCcw className="w-4 h-4 animate-spin shrink-0" /> : null}
+                <span className="truncate">
+                  {isSaving 
+                    ? "Saving..." 
+                    : duplicateClientMatch 
+                      ? "Customer Exists - Edit" 
+                      : (editingClient ? "Update Customer" : "Register Customer")}
+                </span>
               </Button>
             </div>
           </div>

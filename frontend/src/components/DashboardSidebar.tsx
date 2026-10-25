@@ -141,7 +141,10 @@ export default function DashboardSidebar({
       group.items.some(item => pathname === item.href)
     );
     if (active) {
-      setOpenGroup(prev => (prev !== active.label ? active.label : prev));
+      const timer = setTimeout(() => {
+        setOpenGroup(prev => (prev !== active.label ? active.label : prev));
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [pathname]);
 

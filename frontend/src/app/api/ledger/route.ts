@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Debits and Credits must balance identically." }, { status: 400 });
     }
 
-    const entryId = `JE-${Date.now()}`;
+    const entryId = `JE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
     // Insert Header
     const { error: headerError } = await adminSupabase.from('journal_entry').insert([{

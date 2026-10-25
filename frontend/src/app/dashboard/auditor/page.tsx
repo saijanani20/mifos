@@ -1744,7 +1744,7 @@ export default function AuditorDashboard() {
                         </p>
                         {auditMap[selectedPawn.bill_no].notes && (
                           <p className="text-xs text-slate-700 italic bg-white/70 p-2 rounded-lg border border-amber-200">
-                            "{auditMap[selectedPawn.bill_no].notes}"
+                            &quot;{auditMap[selectedPawn.bill_no].notes}&quot;
                           </p>
                         )}
                       </div>

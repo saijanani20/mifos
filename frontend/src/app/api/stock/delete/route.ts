@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { oldSupabase } from '@/lib/supabase';
+import { oldSupabase } from '@/lib/old-supabase-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 

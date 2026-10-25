@@ -42,11 +42,11 @@ export async function sendFreeSms(params: SendSmsParams) {
     // Check branch-specific config
     const branchConfig = (branchId && globalConfig?.branches?.[branchId]) ? globalConfig.branches[branchId] : null;
 
-    let targetDeviceId = branchConfig?.deviceId || globalConfig?.deviceId || defaultDeviceId;
-    let targetApiKey = branchConfig?.apiKey || globalConfig?.apiKey || defaultTextbeeApiKey;
-    let targetUrl = branchConfig?.gatewayUrl || globalConfig?.gatewayUrl || defaultTextbeeUrl;
-    let targetEnabled = branchConfig?.enabled !== undefined ? branchConfig.enabled : (globalConfig?.enabled !== false);
-    let isBranchCustom = !!(branchConfig?.deviceId && branchConfig?.apiKey);
+    const targetDeviceId = branchConfig?.deviceId || globalConfig?.deviceId || defaultDeviceId;
+    const targetApiKey = branchConfig?.apiKey || globalConfig?.apiKey || defaultTextbeeApiKey;
+    const targetUrl = branchConfig?.gatewayUrl || globalConfig?.gatewayUrl || defaultTextbeeUrl;
+    const targetEnabled = branchConfig?.enabled !== undefined ? branchConfig.enabled : (globalConfig?.enabled !== false);
+    const isBranchCustom = !!(branchConfig?.deviceId && branchConfig?.apiKey);
 
     if (!targetEnabled) {
       return {

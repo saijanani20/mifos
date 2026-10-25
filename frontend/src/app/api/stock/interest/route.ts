@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { getSriLankaDate } from '@/lib/date-utils';
+import { recordAuditLog } from '@/lib/audit-logger';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -141,6 +142,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const session = await getAuthenticatedUser(req);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
     const body = await req.json();
     const { bill_no, item_id, date, interest_value, branch, notes } = body;
 
@@ -170,39 +174,61 @@ export async function POST(req: Request) {
 
     let insertedData: any = payload;
     let savedToSupabase = false;
-    let supabaseError: string | null = null;
+    const supabaseError: string | null = null;
 
     if (adminSupabase) {
       try {
+        // Prevent duplicate interest entries during offline tablet auto-sync
+        const { data: existingRecords } = await adminSupabase
+          .from('stock_interests')
+          .select('*')
+          .eq('bill_no', bill_no.trim())
+          .eq('date', date)
+          .eq('branch', cleanBranch);
+
+        const dup = (existingRecords || []).find((r: any) => 
+          parseFloat(r.interest_value) === numericValue
+        );
+
+        if (dup) {
+          return NextResponse.json({ 
+            success: true, 
+            data: dup, 
+            savedToSupabase: true,
+            isDuplicate: true 
+          });
+        }
+
         const { data, error } = await adminSupabase
           .from('stock_interests')
           .insert([payload])
           .select()
           .single();
 
-        if (!error && data) {
+        if (error) {
+          console.error('[Supabase stock_interests insert error]:', error.message);
+          return NextResponse.json({ 
+            error: `Failed to record stock interest in database: ${error.message}` 
+          }, { status: 500 });
+        }
+
+        if (data) {
           insertedData = data;
           savedToSupabase = true;
-        } else if (error) {
-          supabaseError = error.message;
-          console.warn('[Supabase stock_interests insert warning]:', error.message);
         }
-      } catch (e: any) {
-        supabaseError = e?.message || 'Exception during Supabase insert';
-        savedToSupabase = false;
-      }
 
-      // Supabase Cloud Fallback: Always record into audit_logs so interest is never lost across devices
-      try {
-        await adminSupabase.from('audit_logs').insert([{
+        // Record into audit_logs for permanent activity tracking
+        await recordAuditLog(session, {
           action: 'RECORD_STOCK_INTEREST',
-          resource: 'stock_interests',
-          branch_id: cleanBranch,
+          resource: `Stock Item Interest: Bill #${payload.bill_no}`,
+          branchId: cleanBranch,
           details: insertedData
-        }]);
-        savedToSupabase = true;
-      } catch (auditErr: any) {
-        console.warn('[Supabase audit_logs fallback error]:', auditErr.message);
+        });
+      } catch (e: any) {
+        console.error('[Exception during stock_interests insert]:', e);
+        return NextResponse.json({ 
+          error: `Database exception: ${e?.message || 'Failed to save interest'}` 
+        }, { status: 500 });
       }
     }
 

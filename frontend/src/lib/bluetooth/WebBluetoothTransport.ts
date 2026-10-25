@@ -1,4 +1,3 @@
-// @ts-nocheck
 import type { PrinterTransport } from './types';
 
 export class WebBluetoothTransport implements PrinterTransport {
@@ -36,7 +35,7 @@ export class WebBluetoothTransport implements PrinterTransport {
   }
 
   async connect(): Promise<boolean> {
-    if (!this.isAvailable()) {
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
       throw new Error('Web Bluetooth is not supported by this browser.');
     }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { normalizeBranchId } from '@/lib/branch-mapping';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,7 @@ export async function GET(request: Request) {
     }
 
     // Calculate Summary Stats
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getSriLankaDate();
     const todayLogs = logs.filter(l => l.created_at && l.created_at.startsWith(todayStr));
     const activeUsersToday = new Set(todayLogs.map(l => l.user_email).filter(Boolean)).size;
 

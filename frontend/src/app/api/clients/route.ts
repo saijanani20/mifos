@@ -5,7 +5,6 @@ import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScop
 export const dynamic = 'force-dynamic';
 
 const isUUID = (str: string) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
-const HARDCODED_FALLBACK_USER_ID = '1423f690-f46a-455d-bc25-a778d2bd9e47'; // Guaranteed valid profile UUID
 
 // In-memory cache for clients directory to prevent multi-megabyte socket timeouts
 interface CacheEntry {
@@ -21,6 +20,9 @@ export function invalidateClientsCache() {
 export async function GET(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
     const { searchParams } = new URL(request.url);
     const requestedBranch = searchParams.get('branchId');
 
@@ -85,11 +87,11 @@ export async function GET(request: Request) {
       display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
     }));
 
-    // Cache valid data for 3 minutes (180,000 ms)
+    // Cache valid data for 15 seconds to prevent burst socket timeouts while keeping data fresh
     if (mappedClients) {
       clientsMemoryCache.set(cacheKey, {
         data: mappedClients,
-        expiresAt: Date.now() + 180_000
+        expiresAt: Date.now() + 15_000
       });
     }
 
@@ -103,6 +105,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
     const body = await request.json();
     const nic = body.nic || body.nationalId || body.national_id;
     const firstName = body.firstName || body.first_name || (body.name ? body.name.split(' ')[0] : '');
@@ -143,13 +148,7 @@ export async function POST(request: Request) {
     const trimmedNic = String(nic).trim();
     const headerBranch = request.headers.get('x-branch-id') || request.headers.get('X-Branch-Id');
     let effectiveBranchId = normalizeBranchId(branchId || headerBranch || session?.branchId || 'HQ');
-    let effectiveUserId = session?.user?.id || (isUUID(createdByUserId) ? createdByUserId : null);
-
-    // If effectiveUserId is missing or invalid, fetch valid profile ID from DB or fallback
-    if (!effectiveUserId) {
-      const { data: profileRow } = await adminSupabase.from('profiles').select('id').limit(1).maybeSingle();
-      effectiveUserId = profileRow?.id || HARDCODED_FALLBACK_USER_ID;
-    }
+    const effectiveUserId = session.user.id;
 
     const isHeadSession = !session?.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
     if (session && !isHeadSession && session.role !== 'ADMIN') {
@@ -166,12 +165,16 @@ export async function POST(request: Request) {
 
     // DUPLICATE PREVENTION:
     // Non-NIC book IDs only check for duplicates within the current branch!
+    const cleanEffectiveNic = String(effectiveNic || '').replace(/[,()"]/g, '').trim();
+    const cleanTrimmedNic = String(trimmedNic || '').replace(/[,()"]/g, '').trim();
+    const cleanBranchId = String(effectiveBranchId || '').replace(/[,()"]/g, '').trim();
+
     let existingClient = null;
     let snakeQuery = adminSupabase.from('clients').select('*');
     if (isGovNic) {
       snakeQuery = snakeQuery.eq('national_id', effectiveNic);
     } else {
-      snakeQuery = snakeQuery.or(`national_id.eq.${effectiveNic},and(national_id.eq.${trimmedNic},branch_id.eq.${effectiveBranchId})`);
+      snakeQuery = snakeQuery.or(`national_id.eq."${cleanEffectiveNic}",and(national_id.eq."${cleanTrimmedNic}",branch_id.eq."${cleanBranchId}")`);
     }
     const { data: snakeExisting } = await snakeQuery.limit(1).maybeSingle();
       
@@ -182,7 +185,7 @@ export async function POST(request: Request) {
       if (isGovNic) {
         camelQuery = camelQuery.eq('nationalId', effectiveNic);
       } else {
-        camelQuery = camelQuery.or(`nationalId.eq.${effectiveNic},and(nationalId.eq.${trimmedNic},branchId.eq.${effectiveBranchId})`);
+        camelQuery = camelQuery.or(`nationalId.eq."${cleanEffectiveNic}",and(nationalId.eq."${cleanTrimmedNic}",branchId.eq."${cleanBranchId}")`);
       }
       const { data: camelExisting } = await camelQuery.limit(1).maybeSingle();
       if (camelExisting) {
@@ -191,14 +194,27 @@ export async function POST(request: Request) {
     }
 
     if (existingClient) {
+      const existingFirst = existingClient.first_name || existingClient.firstName || '';
+      const validNewFirst = (firstName && firstName.trim() !== '' && firstName !== 'Valued Customer') ? firstName.trim() : null;
+      const finalFirst = validNewFirst || existingFirst || 'Valued Customer';
+
+      const existingLast = existingClient.last_name || existingClient.lastName || '.';
+      const validNewLast = (lastName && lastName.trim() !== '' && lastName !== '.') ? lastName.trim() : null;
+      const finalLast = validNewLast || existingLast;
+
+      const finalPhone = (phone && phone.trim() !== '') ? phone.trim() : (existingClient.phone || null);
+      const finalAddress = (address && address.trim() !== '') ? address.trim() : (existingClient.address || null);
+      const finalNicImage = (nicImage && nicImage.trim() !== '') ? nicImage : (existingClient.nic_image || existingClient.nicImage || null);
+      const finalSigImage = (signatureImage && signatureImage.trim() !== '') ? signatureImage : (existingClient.signature_image || existingClient.signatureImage || null);
+
       // 1. Try snake_case update first (matching active database schema)
       const snakeUpdateData: any = {
-        first_name: firstName,
-        last_name: lastName || existingClient.last_name || existingClient.lastName || '.',
-        phone: phone || existingClient.phone,
-        address: address || existingClient.address,
-        nic_image: nicImage || existingClient.nic_image,
-        signature_image: signatureImage || existingClient.signature_image
+        first_name: finalFirst,
+        last_name: finalLast,
+        phone: finalPhone,
+        address: finalAddress,
+        nic_image: finalNicImage,
+        signature_image: finalSigImage
       };
       
       const { data: updatedClient, error: updateErr } = await adminSupabase
@@ -215,12 +231,12 @@ export async function POST(request: Request) {
 
       // 2. Fallback to camelCase update if needed
       const camelUpdateData: any = {
-        firstName: firstName,
-        lastName: lastName || existingClient.lastName || existingClient.last_name || '.',
-        phone: phone || existingClient.phone,
-        address: address || existingClient.address,
-        nic_image: nicImage || existingClient.nic_image,
-        signature_image: signatureImage || existingClient.signature_image
+        firstName: finalFirst,
+        lastName: finalLast,
+        phone: finalPhone,
+        address: finalAddress,
+        nicImage: finalNicImage,
+        signatureImage: finalSigImage
       };
 
       const { data: camelUpdatedClient } = await adminSupabase

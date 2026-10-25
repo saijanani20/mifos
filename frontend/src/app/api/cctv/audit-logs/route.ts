@@ -29,12 +29,13 @@ const DEMO_AUDIT_LOGS = [
 export async function GET(req: Request) {
   try {
     const session = await getAuthenticatedUser(req);
-    let { data: logs, error } = await adminSupabase
+    const { data, error } = await adminSupabase
       .from('cctv_audit_logs')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(100);
 
+    let logs = data;
     if (error || !logs || logs.length === 0) {
       logs = DEMO_AUDIT_LOGS;
     }

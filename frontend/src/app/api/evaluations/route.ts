@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/auth-server';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
+    const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const status = searchParams.get('status');
@@ -16,8 +21,9 @@ export async function GET(request: Request) {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (billNo) {
-      query = query.ilike('status', `%${billNo}%`);
+    if (billNo && billNo.trim() !== '') {
+      const cleanBill = billNo.trim();
+      query = query.or(`status.eq.BILL:${cleanBill},status.eq.${cleanBill}`);
     } else if (status) {
       query = query.eq('status', status);
     }
@@ -34,6 +40,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const {
       billNo,

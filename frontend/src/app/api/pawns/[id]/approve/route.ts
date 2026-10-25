@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { normalizeBranchId } from '@/lib/branch-mapping';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export async function POST(
   request: Request,
@@ -124,8 +125,8 @@ export async function POST(
     }
 
     // 4. Generate Automated Double-Entry General Ledger Posting
-    const jeId = `JE-AUTO-${Date.now()}`;
-    const dateStr = new Date().toISOString().split('T')[0];
+    const jeId = `JE-AUTO-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const dateStr = getSriLankaDate();
 
     const { error: jeError } = await adminSupabase.from('journal_entry').insert([{
       id: jeId,

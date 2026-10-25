@@ -54,7 +54,9 @@ interface PawnItem {
   bill_no: string;
   client_id?: string;
   client?: ClientItem;
-  amount: number | string;
+  clients?: ClientItem;
+  amount?: number | string;
+  disbursed_amount?: number | string;
   created_at?: string;
   pawning_date?: string;
   status?: string;
@@ -194,7 +196,8 @@ export default function InterestPaymentPage() {
         if (Array.isArray(allPawns)) {
           clientBills = allPawns.filter((p: any) => {
             const matchClient = p.client_id === clientId || 
-              (p.client && (p.client.national_id === nic || p.client.id === clientId));
+              (p.client && (p.client.national_id === nic || p.client.id === clientId)) ||
+              (p.clients && (p.clients.national_id === nic || p.clients.id === clientId));
             return matchClient && p.status !== 'REDEEMED' && p.status !== 'CANCELLED';
           });
         }
@@ -231,7 +234,7 @@ export default function InterestPaymentPage() {
     loadInterestHistory(bill.bill_no);
 
     // Calculate standard 1 month interest
-    const principal = parseFloat(String(bill.amount || '0')) || 0;
+    const principal = parseFloat(String(bill.disbursed_amount || bill.amount || '0')) || 0;
     const rate = bill.interest_rate || monthlyRatePercent || 2.5;
     const oneMonth = Math.round((principal * (rate / 100)));
 
@@ -272,7 +275,7 @@ export default function InterestPaymentPage() {
   const handleSelectMonths = (months: number) => {
     setPaidMonthsOption(months);
     if (!selectedBill) return;
-    const principal = parseFloat(String(selectedBill.amount || '0')) || 0;
+    const principal = parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')) || 0;
     const rate = selectedBill.interest_rate || monthlyRatePercent || 2.5;
     const calculated = Math.round(principal * (rate / 100) * months);
     setInterestAmount(String(calculated));
@@ -351,7 +354,7 @@ export default function InterestPaymentPage() {
         customerNic: selectedClient?.national_id || selectedClient?.nationalId || selectedClient?.nic || 'N/A',
         customerPhone: selectedClient?.phone || selectedClient?.mobile || 'N/A',
         customerAddress: selectedClient?.address || selectedClient?.address_line1 || 'Sri Lanka',
-        principal: parseFloat(String(selectedBill.amount || '0')),
+        principal: parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')),
         articleDescription: selectedBill.description || 'Pawned Gold Articles',
         weight: selectedBill.weight ? `${selectedBill.weight}` : 'N/A',
         interestPaid: numericAmount,
@@ -419,14 +422,14 @@ export default function InterestPaymentPage() {
         adapter.text(`${sep}\n`),
 
         // ── CUSTOMER INFO ──
-        adapter.text(`Customer   : ${cleanSinhala(data.customerName)}\n`),
+        adapter.text(`Customer   : ${cleanSinhala(data.customerName) || 'Customer'}\n`),
         adapter.text(`NIC        : ${data.customerNic}\n`),
         adapter.text(`Phone      : ${data.customerPhone}\n`),
-        adapter.text(`Address    : ${cleanSinhala(data.customerAddress)}\n`),
+        adapter.text(`Address    : ${cleanSinhala(data.customerAddress) || 'Sri Lanka'}\n`),
         adapter.text(`${sep}\n`),
 
         // ── ARTICLE & LOAN INFO ──
-        adapter.text(`Article    : ${cleanSinhala(data.articleDescription)}\n`),
+        adapter.text(`Article    : ${cleanSinhala(data.articleDescription) || 'Pawned Articles'}\n`),
         adapter.text(`Weight     : ${data.weight}\n`),
         adapter.text(`Principal  : Rs. ${fmt(data.principal)}\n`),
         adapter.text(`${sep}\n`),
@@ -438,7 +441,7 @@ export default function InterestPaymentPage() {
 
         // ── DETAILS (left) ──
         adapter.align(0),
-        adapter.text(`Notes / Period : ${cleanSinhala(data.paidPeriod)}\n`),
+        adapter.text(`Notes / Period : ${cleanSinhala(data.paidPeriod) || 'Interest Payment'}\n`),
         adapter.text(`Payment Mode   : ${data.paymentMode}\n`),
         adapter.text(`Total Paid Till: Rs. ${fmt(data.totalPaidToDate)}\n`),
         adapter.text(`Cashier / User : ${data.cashier}\n`),
@@ -651,7 +654,7 @@ export default function InterestPaymentPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {pawnBills.map((bill) => {
                   const isSelected = selectedBill?.id === bill.id;
-                  const principal = parseFloat(String(bill.amount || '0')) || 0;
+                  const principal = parseFloat(String(bill.disbursed_amount || bill.amount || '0')) || 0;
                   const dateStr = bill.created_at ? bill.created_at.split('T')[0] : (bill.pawning_date || 'N/A');
 
                   return (
@@ -725,7 +728,7 @@ export default function InterestPaymentPage() {
                 </div>
 
                 <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 font-mono font-bold">
-                  Principal: Rs. {(parseFloat(String(selectedBill.amount || '0')) || 0).toLocaleString()}
+                  Principal: Rs. {(parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')) || 0).toLocaleString()}
                 </Badge>
               </div>
 
@@ -757,7 +760,7 @@ export default function InterestPaymentPage() {
                     onChange={(e) => {
                       const rate = parseFloat(e.target.value) || 0;
                       setMonthlyRatePercent(rate);
-                      const principal = parseFloat(String(selectedBill.amount || '0')) || 0;
+                      const principal = parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')) || 0;
                       setInterestAmount(String(Math.round(principal * (rate / 100) * paidMonthsOption)));
                     }}
                     className="h-11 bg-slate-950 border-slate-700 text-white font-mono font-bold rounded-xl"
@@ -772,7 +775,7 @@ export default function InterestPaymentPage() {
                 </Label>
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                   {[1, 2, 3, 6].map((m) => {
-                    const principal = parseFloat(String(selectedBill.amount || '0')) || 0;
+                    const principal = parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')) || 0;
                     const calculated = Math.round(principal * (monthlyRatePercent / 100) * m);
                     const isSelected = paidMonthsOption === m;
 
@@ -948,7 +951,7 @@ export default function InterestPaymentPage() {
                               customerNic: selectedClient?.national_id || selectedClient?.nationalId || selectedClient?.nic || 'N/A',
                               customerPhone: selectedClient?.phone || selectedClient?.mobile || 'N/A',
                               customerAddress: selectedClient?.address || selectedClient?.address_line1 || 'Sri Lanka',
-                              principal: parseFloat(String(selectedBill.amount || '0')),
+                              principal: parseFloat(String(selectedBill.disbursed_amount || selectedBill.amount || '0')),
                               articleDescription: selectedBill.description || 'Pawned Gold Articles',
                               weight: selectedBill.weight ? `${selectedBill.weight}` : 'N/A',
                               interestPaid: rec.interest_value,

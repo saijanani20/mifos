@@ -3,8 +3,8 @@ import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
-// Default admin password from environment or secure dynamic fallback
-const DEFAULT_ADMIN_PASS = process.env.INITIAL_ADMIN_PASSWORD || ['Head', 'Office', '@', '2024'].join('');
+// Default admin password strictly from environment (or generated fallback)
+const DEFAULT_ADMIN_PASS = process.env.INITIAL_ADMIN_PASSWORD || crypto.randomUUID();
 
 // Canonical branches mapping for seed configuration
 const branchData = [
@@ -39,12 +39,9 @@ export async function GET(request: Request) {
     if (listError) throw listError;
     const authUsers = authUsersResponse?.users || [];
 
-    // 1. Ensure Admin Users exist in Auth & Profiles without hardcoding secrets
+    // 1. Ensure System Administrator exists in Auth & Profiles without hardcoding secrets
     const adminAccounts = [
-      { email: 'admin@gmail.com', pass: DEFAULT_ADMIN_PASS, name: 'Administrator' },
-      { email: 'admin@rupasinghe.com', pass: DEFAULT_ADMIN_PASS, name: 'Administrator' },
-      { email: 'erandiperera25@gmail.com', pass: process.env.ERANDI_INITIAL_PASS || DEFAULT_ADMIN_PASS, name: 'Erandi Perera' },
-      { email: 'madushaniperera9617@gmail.com', pass: process.env.MADUSHANI_INITIAL_PASS || DEFAULT_ADMIN_PASS, name: 'Chathurika Madushani' }
+      { email: 'admin@rupasinghe.com', pass: DEFAULT_ADMIN_PASS, name: 'System Administrator' }
     ];
 
     for (const acc of adminAccounts) {

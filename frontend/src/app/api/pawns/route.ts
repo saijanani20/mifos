@@ -15,6 +15,9 @@ const HIGH_VALUE_APPROVAL_THRESHOLD = 100000; // Rs. 100,000 dual approval thres
 export async function GET(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
+    }
     const { searchParams } = new URL(request.url);
     const filterBranch = searchParams.get('filterBranch');
     const branchIdParam = searchParams.get('branchId');
@@ -92,7 +95,7 @@ export async function GET(request: Request) {
     // Map clients with lightweight boolean indicators for NIC and Signature
     const hasNicSet = new Set((nicClientsRes.data || []).map((c: any) => c.id));
     const hasSigSet = new Set((sigClientsRes.data || []).map((c: any) => c.id));
-    let clientsByIdMap: Record<string, any> = {};
+    const clientsByIdMap: Record<string, any> = {};
 
     if (clientRowsRes.data) {
       clientRowsRes.data.forEach((c: any) => {
@@ -108,7 +111,7 @@ export async function GET(request: Request) {
     }
 
     // Map pawn items
-    let itemsMap: Record<string, any[]> = {};
+    const itemsMap: Record<string, any[]> = {};
     if (allItemsRes.data) {
       allItemsRes.data.forEach((item: any) => {
         if (!itemsMap[item.pawn_id]) itemsMap[item.pawn_id] = [];
@@ -117,7 +120,7 @@ export async function GET(request: Request) {
     }
 
     // Map scale evaluation records
-    let evalsByBillMap: Record<string, any> = {};
+    const evalsByBillMap: Record<string, any> = {};
     if (evalsRes.data) {
       evalsRes.data.forEach((ev: any) => {
         if (ev.status && ev.status.startsWith('BILL:')) {
@@ -131,9 +134,9 @@ export async function GET(request: Request) {
     }
 
     // Map packet sticker QR codes
-    let packetQrByPawnIdMap: Record<string, string | null> = {};
-    let packetQrByBranchBillMap: Record<string, string | null> = {};
-    let packetQrByBillMap: Record<string, string | null> = {};
+    const packetQrByPawnIdMap: Record<string, string | null> = {};
+    const packetQrByBranchBillMap: Record<string, string | null> = {};
+    const packetQrByBillMap: Record<string, string | null> = {};
 
     if (packetLogsRes.data) {
       packetLogsRes.data.forEach((l: any) => {
@@ -239,6 +242,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Active login session is required to create a pawn ticket.' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { clientId, clientName, customerName, phone: clientPhone, address: clientAddress, description, appraisedValue, disbursedAmount, branchId, createdByUserId, billNo, weight, weightGrams, weightMg, interestRate, periodMonths, itemType, items, airWeightPhoto, waterWeightPhoto, waterWeight, specificGravity, estimatedKarat } = body;
 
@@ -246,22 +253,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields: Customer and Disbursed Amount' }, { status: 400 });
     }
 
-    // Determine target branch & user ID from session if available
-    let targetBranchId = normalizeBranchId(branchId || session?.branchId || 'HQ');
-    let targetUserId = session?.user?.id || (isUUID(createdByUserId) ? createdByUserId : HARDCODED_FALLBACK_USER_ID);
+    if (session.role === 'AUDITOR') {
+      return NextResponse.json({ error: 'Forbidden. Auditors are not permitted to originate loans.' }, { status: 403 });
+    }
 
-    if (session) {
-      if (session.role === 'AUDITOR') {
-        return NextResponse.json({ error: 'Forbidden. Auditors are not permitted to originate loans.' }, { status: 403 });
+    // Determine target branch & user ID strictly from verified session
+    let targetBranchId = normalizeBranchId(session.branchId || 'HQ');
+    const targetUserId = session.user.id;
+
+    if (session.role === 'ADMIN') {
+      if (branchId) {
+        targetBranchId = normalizeBranchId(branchId);
       }
-      if (session.role === 'TELLER' || session.role === 'MANAGER') {
-        const normReq = normalizeBranchId(branchId);
-        const normSess = normalizeBranchId(session.branchId);
-        if (branchId && normReq !== normSess) {
-          return NextResponse.json({ error: 'Forbidden. You cannot create pawn tickets for another branch.' }, { status: 403 });
-        }
-        targetBranchId = normSess;
+    } else {
+      // TELLER or MANAGER: strictly bound to session branch
+      const normReq = normalizeBranchId(branchId);
+      const normSess = normalizeBranchId(session.branchId);
+      if (branchId && normReq !== normSess) {
+        return NextResponse.json({ error: 'Forbidden. You cannot create pawn tickets for another branch.' }, { status: 403 });
       }
+      targetBranchId = normSess;
     }
 
     // 1. Resolve valid Client UUID (with branch scoping for book ledger IDs)
@@ -272,13 +283,16 @@ export async function POST(request: Request) {
       const trimmedId = String(clientId).trim();
       const isGovId = isNationalId(trimmedId);
       const effectiveLookupId = isGovId ? trimmedId.toUpperCase() : formatBranchScopedId(trimmedId, targetBranchId);
+      const cleanLookup = String(effectiveLookupId || '').replace(/[,()"]/g, '').trim();
+      const cleanTrimmed = String(trimmedId || '').replace(/[,()"]/g, '').trim();
+      const cleanBranch = String(targetBranchId || '').replace(/[,()"]/g, '').trim();
 
       let existingClients = null;
       let snakeQuery = adminSupabase.from('clients').select('*');
       if (isGovId) {
         snakeQuery = snakeQuery.eq('national_id', effectiveLookupId);
       } else {
-        snakeQuery = snakeQuery.or(`national_id.eq.${effectiveLookupId},and(national_id.eq.${trimmedId},branch_id.eq.${targetBranchId})`);
+        snakeQuery = snakeQuery.or(`national_id.eq."${cleanLookup}",and(national_id.eq."${cleanTrimmed}",branch_id.eq."${cleanBranch}")`);
       }
       const { data: snakeExisting } = await snakeQuery.limit(1);
 
@@ -289,7 +303,7 @@ export async function POST(request: Request) {
         if (isGovId) {
           camelQuery = camelQuery.eq('nationalId', effectiveLookupId);
         } else {
-          camelQuery = camelQuery.or(`nationalId.eq.${effectiveLookupId},and(nationalId.eq.${trimmedId},branchId.eq.${targetBranchId})`);
+          camelQuery = camelQuery.or(`nationalId.eq."${cleanLookup}",and(nationalId.eq."${cleanTrimmed}",branchId.eq."${cleanBranch}")`);
         }
         const { data: camelExisting } = await camelQuery.limit(1);
         if (camelExisting && camelExisting.length > 0) {
@@ -325,7 +339,11 @@ export async function POST(request: Request) {
         const clientPayload: any = {
           id: newClientId,
           national_id: effectiveLookupId,
-          first_name: (clientName && clientName !== 'Valued Customer') ? clientName : (customerName && customerName !== 'Valued Customer') ? customerName : null,
+          first_name: (clientName && clientName.trim() !== '' && clientName !== 'Valued Customer') 
+            ? clientName.trim() 
+            : (customerName && customerName.trim() !== '' && customerName !== 'Valued Customer') 
+              ? customerName.trim() 
+              : 'Valued Customer',
           last_name: '.',
           phone: clientPhone || null,
           address: clientAddress || null,
@@ -388,8 +406,9 @@ export async function POST(request: Request) {
     const targetBill = scopedBillNo || billNo;
     if (targetBill && (airWeightPhoto || waterWeightPhoto)) {
       try {
+        const computedAirWeight = finalWeightGrams > 0 ? finalWeightGrams : (finalWeightMg > 0 ? finalWeightMg / 1000 : 0);
         await adminSupabase.from('rejected_evaluations').insert([{
-          air_weight: parseFloat(weightMg) || 0,
+          air_weight: computedAirWeight,
           water_weight: parseFloat(waterWeight) || 0,
           specific_gravity: parseFloat(specificGravity) || 0,
           estimated_karat: estimatedKarat || '22K',
@@ -428,7 +447,15 @@ export async function POST(request: Request) {
           description: `${itemDescText} (${subBillNo})`
         };
       });
-      await adminSupabase.from('pawn_items').insert(pawnItemsPayload);
+
+      const { error: itemsErr } = await adminSupabase.from('pawn_items').insert(pawnItemsPayload);
+      if (itemsErr) {
+        console.warn("pawn_items insert notice:", itemsErr.message);
+        if (itemsErr.message?.includes('purity')) {
+          const fallbackPayload = pawnItemsPayload.map(({ purity, ...rest }: any) => rest);
+          await adminSupabase.from('pawn_items').insert(fallbackPayload);
+        }
+      }
 
       // Create individual matching stock items for each collateral sub-item
       try {
@@ -493,45 +520,72 @@ export async function POST(request: Request) {
       details: { pawnId, disbursedAmount: finalDisbursed, billNo, clientId: targetClientId }
     });
 
-    // 5. Automatically trigger CCTV Evidence Capture (20s clip for all branch cameras)
+    // 4b. Post Automated Double-Entry General Ledger Entry for standard loans (<= 100k)
+    if (initialStatus === 'ACTIVE' && finalDisbursed > 0) {
+      try {
+        const jeId = `JE-AUTO-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+        const dateStr = getSriLankaDate();
+        const pawnRef = scopedBillNo || billNo || pawnId.substring(0, 8).toUpperCase();
+
+        const { error: jeErr } = await adminSupabase.from('journal_entry').insert([{
+          id: jeId,
+          date: dateStr,
+          description: `Automated Posting - Originated Pawn: ${description || `${finalPeriodMonths}M Pawn Ticket`}`,
+          reference: `PAWN-${pawnRef}`,
+          total_debit: finalDisbursed,
+          total_credit: finalDisbursed,
+          created_by: session?.user?.email || targetUserId || 'Teller'
+        }]);
+
+        if (!jeErr) {
+          await adminSupabase.from('journal_entry_line').insert([
+            {
+              journal_entry_id: jeId,
+              account_name: 'Pawn Loan Portfolio (Asset)',
+              debit: finalDisbursed,
+              credit: 0
+            },
+            {
+              journal_entry_id: jeId,
+              account_name: 'Vault Cash (Asset)',
+              debit: 0,
+              credit: finalDisbursed
+            }
+          ]);
+        }
+      } catch (glErr) {
+        console.warn('Standard pawn GL automated posting warning (non-fatal):', glErr);
+      }
+    }
+
+    // 5. Trigger CCTV evidence recording request for active branch cameras
     try {
       const cctvPawnId = billNo || pawnId;
-      const sampleVideos = [
-        'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-        'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-        'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'
-      ];
-
       const { data: branchCams } = await adminSupabase
         .from('cctv_cameras')
         .select('*')
-        .eq('branch_id', targetBranchId);
+        .eq('branch_id', targetBranchId)
+        .eq('is_active', true);
 
-      const targetCams = (branchCams && branchCams.length > 0) ? branchCams : [
-        { id: `CAM-${targetBranchId}-01` },
-        { id: `CAM-${targetBranchId}-02` },
-        { id: `CAM-${targetBranchId}-03` }
-      ];
+      if (branchCams && branchCams.length > 0) {
+        const cctvPayloads = branchCams.map((cam: any) => ({
+          id: `REC-${cctvPawnId}-${cam.id}-${Date.now()}`,
+          branch_id: targetBranchId,
+          camera_id: cam.id,
+          pawn_id: cctvPawnId,
+          cashier_id: session?.user?.email || targetUserId,
+          start_time: new Date(Date.now() - 20000).toISOString(),
+          end_time: new Date().toISOString(),
+          duration: 20,
+          file_path: '',
+          status: 'PENDING',
+          created_at: new Date().toISOString()
+        }));
 
-      const cctvPayloads = targetCams.map((cam: any, idx: number) => ({
-        id: `REC-${cctvPawnId}-${cam.id}`,
-        branch_id: targetBranchId,
-        camera_id: cam.id,
-        pawn_id: cctvPawnId,
-        cashier_id: session?.user?.email || targetUserId,
-        start_time: new Date(Date.now() - 20000).toISOString(),
-        end_time: new Date().toISOString(),
-        duration: 20,
-        file_path: sampleVideos[idx % sampleVideos.length],
-        file_size: 3200000 + (idx * 200000),
-        mime_type: 'video/mp4',
-        status: 'COMPLETED',
-        created_at: new Date().toISOString()
-      }));
-
-      await adminSupabase.from('cctv_recordings').insert(cctvPayloads);
+        await adminSupabase.from('cctv_recordings').insert(cctvPayloads);
+      }
     } catch (cctvErr) {
-      console.warn("CCTV Auto-capture trigger notice:", cctvErr);
+      console.warn("CCTV evidence trigger notice:", cctvErr);
     }
 
     // 6. Dispatch Free SMS Receipt via Android SIM Gateway

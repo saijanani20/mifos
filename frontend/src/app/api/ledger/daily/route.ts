@@ -93,9 +93,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Authentication required.' }, { status: 401 });
+    }
     const body = await request.json();
-    let {
-      branch_id,
+    let { branch_id, created_by = 'System User' } = body;
+    const {
       ledger_date,
       cp_balance = 0,
       opening_capital = 0,
@@ -114,19 +117,16 @@ export async function POST(request: Request) {
       actual_cash_count = null,
       staff_shift = '',
       status = 'APPROVED',
-      created_by = 'System User',
-      transactions = [],
-      expenses = []
+      transactions,
+      expenses
     } = body;
 
-    if (session) {
-      const isPostHead = !session.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
-      if (!isPostHead && session.role !== 'ADMIN') {
-        branch_id = session.branchId;
-      }
-      if (session.user?.email) {
-        created_by = session.user.email;
-      }
+    const isPostHead = !session.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
+    if (!isPostHead && session.role !== 'ADMIN') {
+      branch_id = session.branchId;
+    }
+    if (session.user?.email) {
+      created_by = session.user.email;
     }
 
     const canonicalBranchId = normalizeBranchId(branch_id);
@@ -234,16 +234,10 @@ export async function POST(request: Request) {
 
     const ledgerId = ledger.id;
 
-    // 3. Clear and Re-insert Child Transactions & Expenses
-    await Promise.all([
-      adminSupabase.from('daily_ledger_transactions').delete().eq('ledger_id', ledgerId),
-      adminSupabase.from('daily_ledger_expenses').delete().eq('ledger_id', ledgerId)
-    ]);
-
-    if (Array.isArray(transactions) && transactions.length > 0) {
+    // 3. Clear and Re-insert Child Transactions (only if explicitly provided in payload)
+    if (transactions !== undefined && Array.isArray(transactions)) {
       const txRows = transactions.map((t: any) => {
-        let finalRemarks = t.remarks || '';
-        
+        const finalRemarks = t.remarks || '';
         return {
           ledger_id: ledgerId,
           transaction_type: t.transaction_type || 'LOAN_ISSUED',
@@ -262,19 +256,39 @@ export async function POST(request: Request) {
           remarks: finalRemarks
         };
       });
-      const { error: txErr } = await adminSupabase.from('daily_ledger_transactions').insert(txRows);
-      if (txErr) {
-        return NextResponse.json({ error: 'Failed to save transactions: ' + txErr.message }, { status: 500 });
+
+      const { error: delTxErr } = await adminSupabase.from('daily_ledger_transactions').delete().eq('ledger_id', ledgerId);
+      if (delTxErr) {
+        console.warn("Notice clearing old ledger transactions:", delTxErr);
+      }
+
+      if (txRows.length > 0) {
+        const { error: txErr } = await adminSupabase.from('daily_ledger_transactions').insert(txRows);
+        if (txErr) {
+          return NextResponse.json({ error: 'Failed to save transactions: ' + txErr.message }, { status: 500 });
+        }
       }
     }
 
-    if (Array.isArray(expenses) && expenses.length > 0) {
+    // 4. Clear and Re-insert Expenses (only if explicitly provided in payload)
+    if (expenses !== undefined && Array.isArray(expenses)) {
       const expRows = expenses.map((e: any) => ({
         ledger_id: ledgerId,
         description: e.description || 'Expense',
         amount: Number(e.amount) || 0
       }));
-      await adminSupabase.from('daily_ledger_expenses').insert(expRows);
+
+      const { error: delExpErr } = await adminSupabase.from('daily_ledger_expenses').delete().eq('ledger_id', ledgerId);
+      if (delExpErr) {
+        console.warn("Notice clearing old ledger expenses:", delExpErr);
+      }
+
+      if (expRows.length > 0) {
+        const { error: expErr } = await adminSupabase.from('daily_ledger_expenses').insert(expRows);
+        if (expErr) {
+          return NextResponse.json({ error: 'Failed to save expenses: ' + expErr.message }, { status: 500 });
+        }
+      }
     }
 
     return NextResponse.json({
@@ -296,15 +310,26 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Authentication required.' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
     if (!id) return NextResponse.json({ error: 'id parameter is required' }, { status: 400 });
 
-    if (session && session.role === 'TELLER') {
-      const { data: ledger } = await adminSupabase.from('daily_ledgers').select('branch_id').eq('id', id).single();
-      if (ledger && ledger.branch_id !== session.branchId) {
+    const { data: ledger } = await adminSupabase.from('daily_ledgers').select('branch_id, status').eq('id', id).single();
+    if (!ledger) {
+      return NextResponse.json({ error: 'Daily ledger not found' }, { status: 404 });
+    }
+
+    if (session.role === 'TELLER') {
+      if (ledger.branch_id !== session.branchId) {
         return NextResponse.json({ error: 'Forbidden. You cannot delete a daily ledger belonging to another branch.' }, { status: 403 });
+      }
+      if (ledger.status === 'APPROVED') {
+        return NextResponse.json({ error: 'Forbidden. Tellers cannot delete approved daily ledgers.' }, { status: 403 });
       }
     }
 
@@ -320,10 +345,14 @@ export async function DELETE(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized. Authentication required.' }, { status: 401 });
+    }
+
     const { id, is_flag_ignored } = await request.json();
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-    if (session && session.role === 'TELLER') {
+    if (session.role === 'TELLER') {
       const { data: ledger } = await adminSupabase.from('daily_ledgers').select('branch_id').eq('id', id).single();
       if (ledger && ledger.branch_id !== session.branchId) {
         return NextResponse.json({ error: 'Forbidden. You cannot modify a daily ledger belonging to another branch.' }, { status: 403 });

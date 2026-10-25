@@ -4,6 +4,7 @@ import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnRedeemSms } from '@/lib/sms';
 import { normalizeBranchId } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
+import { getSriLankaDate } from '@/lib/date-utils';
 
 export async function POST(
   request: Request,
@@ -93,7 +94,7 @@ export async function POST(
     try {
       await adminSupabase.from('stock_items').update({
         status: 'Withdrawn',
-        withdrawal_date: new Date().toISOString().split('T')[0],
+        withdrawal_date: getSriLankaDate(),
         withdrawal_reason: 'Pawn Redeemed (Closed)'
       }).eq('bill_no', pawn.bill_no || id.substring(0, 8));
 
@@ -119,8 +120,8 @@ export async function POST(
     }
 
     // 5. Post Balanced Double-Entry Journal Entry
-    const jeId = `JE-AUTO-RED-${Date.now()}`;
-    const dateStr = new Date().toISOString().split('T')[0];
+    const jeId = `JE-AUTO-RED-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const dateStr = getSriLankaDate();
 
     const { error: jeError } = await adminSupabase.from('journal_entry').insert([{
       id: jeId,
@@ -132,7 +133,27 @@ export async function POST(
       created_by: approvedBy || 'Teller / Cashier'
     }]);
 
-    if (jeError) throw jeError;
+    if (jeError) {
+      console.error("Journal entry creation failed during redemption:", jeError);
+      // Compensating rollback of pawn ticket and stock item
+      await adminSupabase.from('pawns').update({
+        status: pawn.status,
+        redeemed_at: null,
+        redeemed_by: null,
+        redeem_amount: null,
+        redeem_interest: null
+      }).eq('id', id);
+
+      await adminSupabase.from('stock_items').update({
+        status: 'Active',
+        withdrawal_date: null,
+        withdrawal_reason: null
+      }).eq('bill_no', pawn.bill_no || id.substring(0, 8));
+
+      return NextResponse.json({ 
+        error: 'Accounting General Ledger posting failed. Redemption has been safely rolled back. Please retry: ' + jeError.message 
+      }, { status: 500 });
+    }
 
     // Generate balanced double-entry lines
     const journalLines = [
@@ -159,7 +180,22 @@ export async function POST(
       });
     }
 
-    await adminSupabase.from('journal_entry_line').insert(journalLines);
+    const { error: linesError } = await adminSupabase.from('journal_entry_line').insert(journalLines);
+    if (linesError) {
+      console.error("Journal lines insert failed during redemption:", linesError);
+      await adminSupabase.from('journal_entry').delete().eq('id', jeId);
+      await adminSupabase.from('pawns').update({
+        status: pawn.status,
+        redeemed_at: null,
+        redeemed_by: null,
+        redeem_amount: null,
+        redeem_interest: null
+      }).eq('id', id);
+
+      return NextResponse.json({ 
+        error: 'Accounting entry line posting failed. Redemption rolled back: ' + linesError.message 
+      }, { status: 500 });
+    }
 
     // 6. Record Security Audit Log
     recordAuditLog(session, {

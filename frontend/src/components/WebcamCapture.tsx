@@ -2,6 +2,8 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Camera, X, Check, Upload } from 'lucide-react';
 
+import { compressImage } from '@/lib/image-compression';
+
 interface WebcamCaptureProps {
   onCapture: (base64Image: string) => void;
   onClose: () => void;
@@ -79,6 +81,7 @@ export function WebcamCapture({ onCapture, onClose, initialImage }: WebcamCaptur
         ctx.drawImage(video, 0, 0, width, height);
         const image = canvas.toDataURL('image/jpeg', 0.85);
         setCapturedImage(image);
+        stopCamera();
       }
     }
   };
@@ -86,49 +89,20 @@ export function WebcamCapture({ onCapture, onClose, initialImage }: WebcamCaptur
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          const rawBase64 = event.target.result as string;
-          const img = new Image();
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const MAX_WIDTH = 1280;
-            const MAX_HEIGHT = 1280;
-            let width = img.width;
-            let height = img.height;
-
-            if (width > height) {
-              if (width > MAX_WIDTH) {
-                height = Math.round((height * MAX_WIDTH) / width);
-                width = MAX_WIDTH;
-              }
-            } else {
-              if (height > MAX_HEIGHT) {
-                width = Math.round((width * MAX_HEIGHT) / height);
-                height = MAX_HEIGHT;
-              }
-            }
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, width, height);
-              const compressed = canvas.toDataURL('image/jpeg', 0.82);
-              setCapturedImage(compressed);
-            } else {
-              setCapturedImage(rawBase64);
-            }
-          };
-          img.src = rawBase64;
+      compressImage(file, 1280, 960, 0.85).then((compressed) => {
+        if (compressed) {
+          setCapturedImage(compressed);
+          stopCamera();
         }
-      };
-      reader.readAsDataURL(file);
+      });
+      // Clear file input value so user can select the same file again if they retake
+      e.target.value = '';
     }
   };
 
   const handleRetake = () => {
     setCapturedImage(null);
+    startCamera();
   };
 
   const handleConfirm = () => {

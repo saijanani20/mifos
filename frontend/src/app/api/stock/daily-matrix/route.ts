@@ -70,15 +70,15 @@ export async function GET(req: Request) {
     }
 
     // 2. Fetch Daily Ledger Transactions for F/S and R
-    let ledgerTxQuery = adminSupabase
+    const ledgerTxQuery = adminSupabase
       .from('daily_ledger_transactions')
       .select('*, daily_ledgers(ledger_date, branch_id)')
       .order('created_at', { ascending: false });
 
     const { data: rawLedgerTxs, error: ledgerErr } = await ledgerTxQuery;
 
-    let fsItems: any[] = [];
-    let receiptItems: any[] = [];
+    const fsItems: any[] = [];
+    const receiptItems: any[] = [];
 
     if (rawLedgerTxs && Array.isArray(rawLedgerTxs)) {
       rawLedgerTxs.forEach((tx: any) => {
@@ -120,7 +120,7 @@ export async function GET(req: Request) {
     }
 
     // 3. Fetch Stock Items (Loans & Redeems) - Paginated to prevent 1000 row truncation
-    let allStock: any[] = [];
+    const allStock: any[] = [];
     let page = 0;
     const pageSize = 1000;
     while (true) {
@@ -142,8 +142,8 @@ export async function GET(req: Request) {
       page++;
     }
 
-    let loanItems: any[] = [];
-    let redeemItems: any[] = [];
+    const loanItems: any[] = [];
+    const redeemItems: any[] = [];
 
     if (Array.isArray(allStock)) {
       allStock.forEach((s: any) => {
@@ -162,7 +162,7 @@ export async function GET(req: Request) {
             id: s.id,
             bill_no: s.bill_no,
             date: effectiveLoanDate,
-            amount: Number(s.price) || Number(s.disbursed_amount) || 0,
+            amount: Number(s.disbursed_amount) || Number(s.price) || 0,
             weight: Number(s.weight) || 0,
             item_type: s.item_type || 'GOLD',
             branch: s.branch_id || 'DMT',
@@ -176,7 +176,7 @@ export async function GET(req: Request) {
             id: s.id,
             bill_no: s.bill_no,
             date: itemWithdrawDate,
-            amount: Number(s.price) || Number(s.disbursed_amount) || 0,
+            amount: Number(s.redeem_amount) || Number(s.disbursed_amount) || Number(s.price) || 0,
             weight: Number(s.weight) || 0,
             reason: s.withdrawal_reason || 'Pawn Redeemed',
             branch: s.branch_id || 'DMT',

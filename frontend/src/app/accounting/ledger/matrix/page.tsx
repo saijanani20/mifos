@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Building2, Calendar, CheckCircle2, AlertTriangle, FileSpreadsheet, 
   RefreshCw, ArrowLeft, ChevronRight, Layers, BarChart3
@@ -34,7 +34,7 @@ export default function LedgerMatrixPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchMatrix = async () => {
+  const fetchMatrix = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -52,11 +52,11 @@ export default function LedgerMatrixPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedYear]);
 
   useEffect(() => {
     fetchMatrix();
-  }, [selectedYear]);
+  }, [fetchMatrix]);
 
   // Total summary statistics
   const grandTotalEntered = Object.values(matrixData).reduce((sum, b) => sum + (b.total_entered || 0), 0);

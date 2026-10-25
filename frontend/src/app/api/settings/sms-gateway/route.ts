@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       branches: {}
     };
 
-    let updatedBranches = { ...(existingConfig.branches || {}) };
+    const updatedBranches = { ...(existingConfig.branches || {}) };
 
     if (branchId) {
       // Update specific branch config

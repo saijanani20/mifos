@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeBranchId } from './branch-mapping';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ielkaetihagxgnrrasch.supabase.co';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDEwMTU1OSwiZXhwIjoyMDk5Njc3NTU5fQ.F0KSjnVMl9Nz4fuXV3Z_fHBkQfCU8ieyPT0qJ2xLEMg';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export const adminSupabase = createClient(supabaseUrl, supabaseServiceKey, {
@@ -70,19 +70,24 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
     let branchId = normalizeBranchId(profile?.branch_id || 'HQ');
     const branchName = profile?.branch_name || '';
 
-    // Branch identification: check selected branch header x-branch-id
+    // Branch identification: Only ADMIN or HQ users can switch target branch via header
     const selectedBranch =
       request.headers.get('x-branch-id') ||
       request.headers.get('X-Branch-Id') ||
       request.headers.get('X-BRANCH-ID');
     
-    if (selectedBranch && selectedBranch.trim() !== '') {
-      branchId = normalizeBranchId(selectedBranch.trim());
+    if (role === 'ADMIN' || (role === 'AUDITOR' && normalizeBranchId(profile?.branch_id || 'HQ') === 'HQ')) {
+      if (selectedBranch && selectedBranch.trim() !== '') {
+        branchId = normalizeBranchId(selectedBranch.trim());
+      }
+    } else {
+      // Non-admin staff (TELLER, MANAGER) are strictly bound to their profile assigned branch
+      branchId = normalizeBranchId(profile?.branch_id || 'HQ');
     }
 
     // Tellers are strictly prohibited from operating as Head Office (HQ)
     if (role === 'TELLER' && (branchId === 'HQ' || branchId === 'HEAD OFFICE')) {
-      branchId = '';
+      branchId = normalizeBranchId(profile?.branch_id || '');
     }
 
     return {

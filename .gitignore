@@ -53,6 +53,9 @@ err.txt
 check_*.js
 seed_*.js
 update_*.js
+scratch_*.js
+sync_pawns.js
+*CREDENTIALS*
 *.ps1
 env*.txt
 __pycache__/
@@ -63,3 +66,4 @@ Thumbs.db
 
 # Local runtime data
 data/
+backups/

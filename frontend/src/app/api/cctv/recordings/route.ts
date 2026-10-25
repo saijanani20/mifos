@@ -36,8 +36,9 @@ export async function GET(req: Request) {
       query = query.ilike('pawn_id', `%${pawnId.trim()}%`);
     }
 
-    let { data: recordings, error } = await query;
+    const { data, error } = await query;
 
+    let recordings = data;
     if (error || !recordings || recordings.length === 0) {
       recordings = DEMO_RECORDINGS;
       if (pawnId) {

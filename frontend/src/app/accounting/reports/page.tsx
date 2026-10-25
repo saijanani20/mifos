@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -25,7 +25,7 @@ export default function FinancialReportsPage() {
     } catch (e) { console.error(e); }
   };
 
-  const loadFinancials = async () => {
+  const loadFinancials = useCallback(async () => {
     setLoading(true);
     try {
       const stored = localStorage.getItem('user');
@@ -49,7 +49,7 @@ export default function FinancialReportsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterBranch]);
 
   useEffect(() => {
     loadBranches();
@@ -57,7 +57,7 @@ export default function FinancialReportsPage() {
 
   useEffect(() => {
     loadFinancials();
-  }, [filterBranch]);
+  }, [loadFinancials]);
 
   const handlePrint = () => {
     window.print();

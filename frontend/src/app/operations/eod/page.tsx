@@ -50,7 +50,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { supabase, oldSupabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
@@ -1190,14 +1190,10 @@ function EndOfDayContent() {
       let hasMore = true;
 
       while (hasMore) {
-        const { data, error } = await oldSupabase
-          .from('stock_items')
-          .select('*')
-          .eq('status', 'Active')
-          .order('date', { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        if (error) throw error;
+        const res = await fetch(`/api/stock/old?type=items&page=${page}&pageSize=${pageSize}`);
+        if (!res.ok) throw new Error('Failed to load legacy stock');
+        const json = await res.json();
+        const data = json.items || [];
 
         if (data && data.length > 0) {
           allOldFetchedStock = allOldFetchedStock.concat(data);
@@ -1226,12 +1222,10 @@ function EndOfDayContent() {
 
   const loadOldCustomerData = async () => {
     try {
-      const { data, error } = await oldSupabase
-        .from('stock_customers')
-        .select('*')
-        .order('name', { ascending: true });
-      if (error) throw error;
-      setOldStockCustomers(data || []);
+      const res = await fetch('/api/stock/old?type=customers');
+      if (!res.ok) throw new Error('Failed to load legacy customers');
+      const json = await res.json();
+      setOldStockCustomers(json.customers || []);
     } catch (err) {
       setOldStockCustomers([]);
     }

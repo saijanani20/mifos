@@ -1,7 +1,7 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
 
-import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   Building2, Calendar, Calculator, CheckCircle2, AlertTriangle, 
@@ -213,8 +213,8 @@ function MainLedgerContent() {
         redeem_no: '',
         interest_rs: '',
         cash_received: '',
-        type_ir: 'R' as 'R',
-        fs_type: '' as '',
+        type_ir: 'R' as const,
+        fs_type: '' as const,
         quantity: '',
         remarks: ''
       }
@@ -248,8 +248,8 @@ function MainLedgerContent() {
         redeem_no: field === 'redeem_no' ? `${prefix} ` : '',
         interest_rs: '',
         cash_received: '',
-        type_ir: 'R' as 'R',
-        fs_type: '' as '',
+        type_ir: 'R' as const,
+        fs_type: '' as const,
         quantity: '',
         remarks: ''
       }
@@ -333,7 +333,8 @@ function MainLedgerContent() {
 
 
   // Fetch Ledger Data
-  const fetchLedgerData = async () => {
+  const fetchLedgerData = useCallback(async () => {
+    if (!selectedBranch || !ledgerDate) return;
     setLoadingLedger(true);
     setFeedback(null);
     try {
@@ -455,13 +456,13 @@ function MainLedgerContent() {
     } finally {
       setLoadingLedger(false);
     }
-  };
+  }, [selectedBranch, ledgerDate]);
 
   useEffect(() => {
-    if (activeTab === 'entry' && selectedBranch && ledgerDate) {
+    if (activeTab === 'entry') {
       fetchLedgerData();
     }
-  }, [activeTab, selectedBranch, ledgerDate]);
+  }, [activeTab, fetchLedgerData]);
 
   const handleSaveLedger = async () => {
     setSavingLedger(true);
@@ -626,7 +627,7 @@ function MainLedgerContent() {
     }
   };
 
-  const fetchMatrix = async () => {
+  const fetchMatrix = useCallback(async () => {
     setLoadingMatrix(true);
     setMatrixError(null);
     try {
@@ -647,11 +648,11 @@ function MainLedgerContent() {
     } finally {
       setLoadingMatrix(false);
     }
-  };
+  }, [selectedYear]);
 
   useEffect(() => {
     if (activeTab === 'matrix') fetchMatrix();
-  }, [activeTab, selectedYear]);
+  }, [activeTab, fetchMatrix]);
 
   const grandTotalEntered = Object.values(matrixData).reduce((sum, b: any) => sum + (b.total_entered || 0), 0);
   const grandTotalFlagged = Object.values(matrixData).reduce((sum, b: any) => sum + (b.total_flagged || 0), 0);

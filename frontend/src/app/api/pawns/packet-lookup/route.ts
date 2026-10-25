@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { adminSupabase } from '@/lib/auth-server';
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { extractBillNoFromQr } from '@/app/api/pawns/[id]/packet-qr/route';
 import { stripBranchPrefix } from '@/lib/branch-mapping';
 
@@ -7,6 +7,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
+    const session = await getAuthenticatedUser(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const qr = searchParams.get('qr');
 
@@ -40,13 +45,13 @@ export async function GET(request: Request) {
         .from('audit_logs')
         .select('*')
         .eq('action', 'PACKET_STICKER_ATTACHED')
+        .filter('details->>packet_qr', 'eq', trimmedQr)
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(1);
 
-      const foundLog = (logs || []).find((l: any) => l.details?.packet_qr === trimmedQr);
-      if (foundLog) {
-        matchedPawnId = foundLog.details?.pawn_id || null;
-        matchedBillNo = foundLog.resource || foundLog.details?.bill_no;
+      if (logs && logs.length > 0) {
+        matchedPawnId = logs[0].details?.pawn_id || null;
+        matchedBillNo = logs[0].resource || logs[0].details?.bill_no;
       }
     }
 

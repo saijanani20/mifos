@@ -3,7 +3,7 @@ import { getAuthHeaders } from '@/lib/getAuthHeaders';
 import { normalizeBranchId } from '@/lib/branch-mapping';
 import { toast } from 'sonner';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Building2, Calendar, DollarSign, Calculator, CheckCircle2, AlertTriangle, 
   FileSpreadsheet, Plus, Trash2, Save, ArrowLeft, RefreshCw, ShieldCheck, UserCheck, Scale
@@ -111,7 +111,8 @@ export default function DailyLedgerEntryPage() {
   }, []);
 
   // 2. Fetch existing ledger for selected branch & date
-  const fetchLedgerData = async () => {
+  const fetchLedgerData = useCallback(async () => {
+    if (!selectedBranch || !ledgerDate) return;
     setLoading(true);
     setFeedback(null);
     try {
@@ -174,13 +175,11 @@ export default function DailyLedgerEntryPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedBranch, ledgerDate]);
 
   useEffect(() => {
-    if (selectedBranch && ledgerDate) {
-      fetchLedgerData();
-    }
-  }, [selectedBranch, ledgerDate]);
+    fetchLedgerData();
+  }, [fetchLedgerData]);
 
   // 3. Real-Time Math Verification Engine
   const calculatedClosing = useMemo(() => {

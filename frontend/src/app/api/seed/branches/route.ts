@@ -1,13 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-let supabase: any;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey);
-}
+import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,17 +16,24 @@ const INITIAL_BRANCHES = [
   { id: 'W2',  name: 'Wattala 2' },
   { id: 'W3',  name: 'Wattala 3' },
   { id: 'W4',  name: 'Wattala 4' },
-  { id: 'KHT', name: 'Kahathuduwa' },
+  { id: 'KHT', name: 'Kahathotuwa' },
   { id: 'HQ',  name: 'Head Office' },
 ];
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    if (!supabase) return NextResponse.json({ error: 'Supabase not initialized' }, { status: 500 });
+    const session = await getAuthenticatedUser(request);
+    if (!session || session.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Forbidden. Admin authentication required.' }, { status: 403 });
+    }
+
+    if (!adminSupabase) {
+      return NextResponse.json({ error: 'Database service not initialized' }, { status: 500 });
+    }
 
     const results = [];
     for (const branch of INITIAL_BRANCHES) {
-      const { data, error } = await supabase
+      const { error } = await adminSupabase
         .from('branches')
         .upsert({
           id: branch.id,
@@ -53,14 +52,8 @@ export async function GET() {
     }
 
     return NextResponse.json({ 
-      message: 'Migration attempt finished.', 
-      results,
-      sqlNeeded: `CREATE TABLE IF NOT EXISTS branches (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  is_active BOOLEAN DEFAULT TRUE
-);`
+      message: 'Branch seed finished.', 
+      results
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

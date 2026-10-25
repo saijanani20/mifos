@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { normalizeBranchId } from '@/lib/branch-mapping';
+import { normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
 import { SmartNicScanner } from './SmartNicScanner';
 import { compressImage } from '@/lib/image-compression';
 
@@ -209,25 +209,32 @@ export function CustomerSelectionModal({
   // Filter matching existing clients by typed NIC
   const matchingClients = searchNic.trim()
     ? activeClients.filter(c => {
-        const nic = String(c.national_id || c.nationalId || c.nic || c.id || '').toLowerCase();
+        const rawNic = String(c.national_id || c.nationalId || c.nic || c.id || '').toLowerCase();
+        const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
         const name = `${c.first_name || c.firstName || ''} ${c.last_name || c.lastName || ''}`.toLowerCase();
+        const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
         const q = searchNic.toLowerCase().trim();
-        return nic.includes(q) || name.includes(q);
+        const cleanQ = stripBranchPrefix(q).toLowerCase();
+        return rawNic.includes(q) || cleanNic.includes(cleanQ) || name.includes(q) || phone.includes(q);
       })
     : [];
 
   // Real-time duplicate cross-check against database when adding new customer details
   const normalizedNewNic = newNic.trim().toLowerCase();
+  const cleanNewNic = stripBranchPrefix(normalizedNewNic).toLowerCase();
   const normalizedNewPhone = newPhone.replace(/\D/g, '');
 
   const existingCustomerMatch = (normalizedNewNic.length >= 3 || normalizedNewPhone.length >= 9)
     ? activeClients.find(c => {
         const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
+        const cleanCNic = stripBranchPrefix(cNic).toLowerCase();
         const cPhone = String(c.phone || c.mobile || '').replace(/\D/g, '');
 
         const nicExactMatch = normalizedNewNic.length >= 3 && (
           cNic === normalizedNewNic || 
-          cNic.replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '')
+          cleanCNic === cleanNewNic ||
+          cNic.replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '') ||
+          cleanCNic.replace(/[^a-z0-9]/g, '') === cleanNewNic.replace(/[^a-z0-9]/g, '')
         );
         const phoneExactMatch = normalizedNewPhone.length >= 9 && cPhone.length >= 9 && cPhone === normalizedNewPhone;
 
@@ -315,12 +322,24 @@ export function CustomerSelectionModal({
       toast.error('Full name is required');
       return;
     }
-    if (!newPhone.trim()) {
-      toast.error('Mobile number is required');
+    const phoneDigits = newPhone.replace(/\D/g, '');
+    if (!phoneDigits || phoneDigits.length < 10) {
+      toast.error('Invalid mobile number', {
+        description: 'Mobile number must be at least 10 digits.'
+      });
       return;
     }
     if (!newAddress.trim()) {
       toast.error('Address is required');
+      return;
+    }
+    if (!kycFront || !kycBack || !kycSign) {
+      toast.error('Please capture KYC pictures', {
+        description: 'Please capture NIC Front, NIC Back, and Signature pictures before proceeding.'
+      });
+      if (!kycFront) setActiveKycTab('front');
+      else if (!kycBack) setActiveKycTab('back');
+      else if (!kycSign) setActiveKycTab('sign');
       return;
     }
 
@@ -423,16 +442,16 @@ export function CustomerSelectionModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl max-h-[95vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden">
+      <DialogContent className="w-[98vw] sm:w-[95vw] md:max-w-4xl lg:max-w-5xl xl:max-w-6xl h-[90dvh] max-h-[90dvh] sm:h-auto sm:max-h-[90vh] bg-white border border-slate-200 shadow-2xl p-0 rounded-2xl sm:rounded-[2.5rem] flex flex-col overflow-hidden my-auto">
         {/* Top Accent Bar */}
         <div className="h-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-500 shrink-0" />
 
         {/* Modal Header */}
-        <div className="p-4 sm:p-6 pb-3 border-b border-slate-100 bg-white shrink-0">
+        <div className="p-3 sm:p-6 pb-2.5 sm:pb-3 border-b border-slate-100 bg-white shrink-0">
           <DialogHeader>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <DialogTitle className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2.5">
+                <DialogTitle className="text-lg sm:text-2xl font-black text-slate-900 flex items-center gap-2 sm:gap-2.5">
                   {mode === 'EXISTING' ? (
                     <div className="p-2 bg-amber-500/10 text-amber-600 rounded-2xl">
                       <UserCheck className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -444,7 +463,7 @@ export function CustomerSelectionModal({
                   )}
                   <span>{mode === 'EXISTING' ? 'Customer Identification' : 'Register New Customer'}</span>
                 </DialogTitle>
-                <DialogDescription className="font-semibold text-slate-500 text-xs mt-1">
+                <DialogDescription className="font-semibold text-slate-500 text-[11px] sm:text-xs mt-0.5 sm:mt-1">
                   {mode === 'EXISTING' 
                     ? 'Search borrower by NIC number or register a new customer before originating pawn.'
                     : 'Enter customer details and capture webcam images for KYC verification.'}
@@ -499,7 +518,7 @@ export function CustomerSelectionModal({
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-6 space-y-5 sm:space-y-6 overscroll-contain">
           {/* ─────────────────────────────────────────────────────────── */}
           {/* TAB 1: EXISTING CUSTOMER SEARCH                             */}
           {/* ─────────────────────────────────────────────────────────── */}
@@ -961,25 +980,25 @@ export function CustomerSelectionModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 sm:p-6 pt-3 border-t border-slate-100 bg-slate-50 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div className="p-3 sm:p-5 border-t border-slate-200/90 bg-white/95 backdrop-blur-md shrink-0 flex flex-col sm:flex-row justify-between items-center gap-2.5 sm:gap-3 z-30 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
           {mode === 'EXISTING' ? (
             <>
-              <div className="text-xs font-bold text-slate-500">
+              <div className="text-xs font-bold text-slate-500 w-full sm:w-auto text-center sm:text-left">
                 {selectedExistingClient ? (
-                  <span className="text-emerald-700 flex items-center gap-1.5">
+                  <span className="text-emerald-700 flex items-center justify-center sm:justify-start gap-1.5">
                     <Check className="w-4 h-4 text-emerald-600 stroke-[3]" />
-                    Ready to proceed with {selectedExistingClient.first_name || selectedExistingClient.firstName}
+                    <span>Ready to proceed with {selectedExistingClient.first_name || selectedExistingClient.firstName}</span>
                   </span>
                 ) : (
                   <span>Please select a customer from the dropdown above</span>
                 )}
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => onOpenChange(false)}
-                  className="font-bold text-slate-500 rounded-xl"
+                  className="font-bold text-slate-600 h-10 sm:h-11 rounded-xl flex-1 sm:flex-none border-slate-200 text-xs sm:text-sm"
                 >
                   Cancel
                 </Button>
@@ -987,56 +1006,56 @@ export function CustomerSelectionModal({
                   type="button"
                   disabled={!selectedExistingClient}
                   onClick={handleContinueWithExisting}
-                  className="bg-amber-500 hover:bg-amber-600 text-white font-black px-6 h-11 rounded-xl shadow-lg shadow-amber-500/20 gap-2 cursor-pointer disabled:opacity-50"
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-black px-5 sm:px-6 h-10 sm:h-11 rounded-xl shadow-lg shadow-amber-500/20 gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-50 flex-[2] sm:flex-none text-xs sm:text-sm"
                 >
-                  <span>Continue to Pawn Origination</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span className="truncate">Continue to Pawn</span>
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-500 w-full sm:w-auto">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 w-full sm:w-auto justify-center sm:justify-start">
                 {(!kycFront || !kycBack || !kycSign) ? (
-                  <span className="flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                  <span className="flex items-center gap-1.5 text-amber-800 bg-amber-50 border border-amber-300/80 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold w-full sm:w-auto justify-center sm:justify-start">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                    <span>Pictures recommended: {!kycFront ? 'NIC Front' : ''} {!kycBack ? (!kycFront ? '• NIC Back' : 'NIC Back') : ''} {!kycSign ? (!kycFront || !kycBack ? '• Signature' : 'Signature') : ''}</span>
+                    <span className="truncate">Recommended: {!kycFront ? 'NIC Front' : ''} {!kycBack ? (!kycFront ? '• NIC Back' : 'NIC Back') : ''} {!kycSign ? (!kycFront || !kycBack ? '• Signature' : 'Signature') : ''}</span>
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                  <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold w-full sm:w-auto justify-center sm:justify-start">
                     <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 stroke-[3]" />
-                    <span>All 3 KYC pictures captured</span>
+                    <span>All 3 KYC pictures captured ✓</span>
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   onClick={() => setMode('EXISTING')}
-                  className="font-bold text-slate-500 rounded-xl"
+                  className="font-bold text-slate-600 h-10 sm:h-11 rounded-xl flex-1 sm:flex-none border-slate-200 text-xs sm:text-sm"
                 >
-                  Back to Search
+                  Back
                 </Button>
                 <Button
                   type="button"
                   disabled={isRegistering || !newNic.trim() || (!existingCustomerMatch && (!newName.trim() || !newPhone.trim() || !newAddress.trim()))}
                   onClick={handleRegisterNewCustomer}
-                  className={`font-black px-7 h-11 rounded-xl shadow-lg gap-2 cursor-pointer disabled:opacity-50 transition-all ${
+                  className={`font-black px-5 sm:px-7 h-10 sm:h-11 rounded-xl shadow-lg gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-50 transition-all flex-[2] sm:flex-none text-xs sm:text-sm ${
                     existingCustomerMatch
                       ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/20'
                       : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
                   }`}
                 >
-                  {isRegistering ? <RefreshCcw className="w-4 h-4 animate-spin mr-1" /> : null}
-                  <span>
+                  {isRegistering ? <RefreshCcw className="w-4 h-4 animate-spin mr-1 shrink-0" /> : null}
+                  <span className="truncate">
                     {isRegistering 
                       ? 'Processing...' 
                       : existingCustomerMatch 
-                        ? 'Use Existing Customer & Continue' 
-                        : 'Register Customer & Continue'}
+                        ? 'Use Existing Customer' 
+                        : 'Register Customer'}
                   </span>
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
             </>

@@ -25,7 +25,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           localStorage.removeItem('last_activity');
           document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
           document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-          setIsAuthenticated(false);
+          setTimeout(() => setIsAuthenticated(false), 0);
           router.push('/login');
           return;
         }
@@ -34,7 +34,9 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     const isAuth = Boolean(token && storedUser);
 
-    setIsAuthenticated(prev => (prev !== isAuth ? isAuth : prev));
+    setTimeout(() => {
+      setIsAuthenticated(prev => (prev !== isAuth ? isAuth : prev));
+    }, 0);
 
     if (isAuth && pathname === '/login') {
       router.push('/');

@@ -227,12 +227,15 @@ export default function TopGlassNavbar() {
 
   // Close menus and synchronize active mobile group on route changes safely
   useEffect(() => {
-    setActiveDropdown(prev => (prev !== null ? null : prev));
-    setMobileMenuOpen(prev => (prev ? false : prev));
-    const active = navGroups.find(g => g.items.some(i => pathname === i.href || pathname.startsWith(i.href.split('?')[0])));
-    if (active) {
-      setOpenMobileGroup(prev => (prev !== active.label ? active.label : prev));
-    }
+    const timer = setTimeout(() => {
+      setActiveDropdown(prev => (prev !== null ? null : prev));
+      setMobileMenuOpen(prev => (prev ? false : prev));
+      const active = navGroups.find(g => g.items.some(i => pathname === i.href || pathname.startsWith(i.href.split('?')[0])));
+      if (active) {
+        setOpenMobileGroup(prev => (prev !== active.label ? active.label : prev));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [pathname]);
 
   // Prevent body scroll when mobile menu is open

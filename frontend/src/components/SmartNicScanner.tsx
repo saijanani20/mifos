@@ -65,7 +65,10 @@ export function SmartNicScanner({
 
   // Sync initialImage prop
   useEffect(() => {
-    setCapturedImage(initialImage || null);
+    const timer = setTimeout(() => {
+      setCapturedImage(initialImage || null);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [initialImage]);
 
   // Shutter audio cue via Web Audio API
@@ -188,11 +191,16 @@ export function SmartNicScanner({
 
   // Initial lifecycle
   useEffect(() => {
-    enumerateCameras();
-    if (autoStart && !capturedImage) {
-      startCamera();
-    }
+    let mounted = true;
+    const initCameras = async () => {
+      await enumerateCameras();
+      if (mounted && autoStart && !capturedImage) {
+        await startCamera();
+      }
+    };
+    initCameras();
     return () => {
+      mounted = false;
       stopCamera();
     };
   }, []);
@@ -245,6 +253,8 @@ export function SmartNicScanner({
           stopCamera();
         }
       });
+      // Clear file input value so user can select the same file again if they retake
+      e.target.value = '';
     }
   };
 
@@ -386,7 +396,7 @@ export function SmartNicScanner({
       <div className={`relative w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center transition-all ${
         isExpanded 
           ? 'h-[75vh] max-w-4xl border-2 border-amber-500/40 shadow-2xl' 
-          : 'min-h-[300px] sm:min-h-[360px] md:min-h-[400px] max-h-[500px] border border-slate-800'
+          : 'h-[220px] sm:h-[300px] md:h-[340px] max-h-[360px] border border-slate-800'
       }`}>
         {/* Shutter Flash Animation */}
         {isCapturingFlash && (
@@ -395,21 +405,21 @@ export function SmartNicScanner({
 
         {/* 1. Captured Photo Display */}
         {capturedImage ? (
-          <div className="relative w-full h-full min-h-[300px] flex flex-col items-center justify-center bg-slate-950 p-2 group">
+          <div className="relative w-full h-full min-h-[180px] flex flex-col items-center justify-center bg-slate-950 p-2 group">
             <img 
               src={capturedImage} 
               alt={label} 
-              className="max-w-full max-h-[420px] object-contain rounded-xl shadow-lg cursor-pointer"
+              className="max-w-full max-h-[180px] sm:max-h-[280px] object-contain rounded-xl shadow-lg cursor-pointer"
               onClick={() => setPreviewZoom(true)}
               title="Click to view full photo"
             />
 
             {/* Top View Full Button */}
-            <div className="absolute top-3 right-3 flex items-center gap-1.5 pointer-events-auto">
+            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 pointer-events-auto">
               <button
                 type="button"
                 onClick={() => setPreviewZoom(true)}
-                className="bg-slate-900/90 hover:bg-slate-900 text-white text-[10px] font-bold px-3 py-1.5 rounded-xl border border-white/20 flex items-center gap-1.5 shadow-md cursor-pointer backdrop-blur-md"
+                className="bg-slate-900/90 hover:bg-slate-900 text-white text-[10px] font-bold px-2.5 py-1 rounded-xl border border-white/20 flex items-center gap-1.5 shadow-md cursor-pointer backdrop-blur-md"
               >
                 <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
                 <span>View Full</span>
@@ -417,20 +427,20 @@ export function SmartNicScanner({
             </div>
 
             {/* Bottom Actions: Upload other & Retake */}
-            <div className="absolute bottom-3 inset-x-3 flex items-center justify-between pointer-events-auto gap-2">
+            <div className="absolute bottom-2 sm:bottom-3 inset-x-2 sm:inset-x-3 flex items-center justify-between pointer-events-auto gap-2">
               <button 
                 type="button" 
                 onClick={() => fileInputRef.current?.click()}
-                className="bg-slate-900/90 hover:bg-slate-950 text-slate-200 text-xs font-bold px-3.5 py-2 rounded-xl border border-white/10 transition-all cursor-pointer flex items-center gap-1.5 backdrop-blur-md"
+                className="bg-slate-900/90 hover:bg-slate-950 text-slate-200 text-[11px] sm:text-xs font-bold px-3 py-1.5 sm:py-2 rounded-xl border border-white/10 transition-all cursor-pointer flex items-center gap-1.5 backdrop-blur-md"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Upload from Gallery</span>
+                <span>Gallery</span>
               </button>
 
               <button 
                 type="button" 
                 onClick={handleRetake}
-                className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black uppercase tracking-wider px-4 py-2 rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black uppercase tracking-wider px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Retake</span>
@@ -439,7 +449,7 @@ export function SmartNicScanner({
           </div>
         ) : stream ? (
           /* 2. Live Video Viewfinder with Manual Capture Button */
-          <div className="relative w-full h-full min-h-[300px] flex items-center justify-center bg-black overflow-hidden">
+          <div className="relative w-full h-full min-h-[180px] flex items-center justify-center bg-black overflow-hidden">
             <video 
               ref={videoRef}
               autoPlay 
@@ -450,8 +460,8 @@ export function SmartNicScanner({
 
             {/* Subtle Alignment Guide Frame */}
             {!isSignature && (
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6 z-10">
-                <div className="relative w-[88%] max-w-[480px] aspect-[1.586/1] rounded-2xl border-2 border-dashed border-white/30 transition-all">
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-4 sm:p-6 z-10">
+                <div className="relative w-[90%] max-w-[440px] aspect-[1.586/1] rounded-2xl border-2 border-dashed border-white/30 transition-all">
                   <div className="absolute -top-1 -left-1 w-5 h-5 border-t-4 border-l-4 rounded-tl-xl border-amber-400" />
                   <div className="absolute -top-1 -right-1 w-5 h-5 border-t-4 border-r-4 rounded-tr-xl border-amber-400" />
                   <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 rounded-bl-xl border-amber-400" />
@@ -461,24 +471,24 @@ export function SmartNicScanner({
             )}
 
             {/* Bottom Controls Bar: Gallery Upload & Manual "Take Photo" */}
-            <div className="absolute bottom-3 inset-x-3 flex items-center justify-between gap-2 pointer-events-auto z-20">
+            <div className="absolute bottom-2 sm:bottom-3 inset-x-2 sm:inset-x-3 flex items-center justify-between gap-1.5 sm:gap-2 pointer-events-auto z-20">
               {/* Gallery Upload Button */}
               <button 
                 type="button" 
                 onClick={() => fileInputRef.current?.click()}
-                className="bg-slate-900/90 hover:bg-slate-950 text-slate-200 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-white/10 flex items-center gap-1.5 shadow-md backdrop-blur-md cursor-pointer"
+                className="bg-slate-900/90 hover:bg-slate-950 text-slate-200 text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 sm:py-2.5 rounded-xl border border-white/10 flex items-center gap-1 shadow-md backdrop-blur-md cursor-pointer shrink-0"
               >
-                <ImageIcon className="w-4 h-4 text-amber-400" />
-                <span className="hidden sm:inline">Upload from</span> Gallery
+                <ImageIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
+                <span>Gallery</span>
               </button>
 
               {/* Big Manual Take Photo Button (as requested by user) */}
               <button 
                 type="button" 
                 onClick={handleTakePhoto}
-                className="bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider px-6 py-2.5 rounded-2xl shadow-xl shadow-amber-500/25 flex items-center gap-2 cursor-pointer active:scale-95 transition-all border border-amber-300"
+                className="bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider px-3.5 sm:px-6 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl shadow-xl shadow-amber-500/25 flex items-center gap-1.5 sm:gap-2 cursor-pointer active:scale-95 transition-all border border-amber-300 shrink-0"
               >
-                <Camera className="w-4 h-4 stroke-[2.5]" />
+                <Camera className="w-4 h-4 stroke-[2.5] shrink-0" />
                 <span>Take Photo</span>
               </button>
 
@@ -486,7 +496,7 @@ export function SmartNicScanner({
               <button 
                 type="button" 
                 onClick={stopCamera}
-                className="bg-slate-900/90 hover:bg-slate-950 text-slate-400 hover:text-white text-xs font-bold px-3 py-2.5 rounded-xl border border-white/10 shadow-md backdrop-blur-md cursor-pointer"
+                className="bg-slate-900/90 hover:bg-slate-950 text-slate-400 hover:text-white text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 sm:py-2.5 rounded-xl border border-white/10 shadow-md backdrop-blur-md cursor-pointer shrink-0"
               >
                 Pause
               </button>
