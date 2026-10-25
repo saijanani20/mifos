@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
+export const dynamic = 'force-dynamic';
+
 // Fallback demo clips if database table has no rows
 const DEMO_RECORDINGS = [
   {

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
+export const dynamic = 'force-dynamic';
+
 // Demo fallback data if table is not seeded in Supabase yet
 const DEMO_CAMERAS = [
   {

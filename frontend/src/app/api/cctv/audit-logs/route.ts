@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
+export const dynamic = 'force-dynamic';
+
 const DEMO_AUDIT_LOGS = [
   {
     id: '1',

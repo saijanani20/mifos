@@ -4,6 +4,8 @@ import { oldSupabase } from '@/lib/old-supabase-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: Request) {
   try {
     const session = await getAuthenticatedUser(req);
