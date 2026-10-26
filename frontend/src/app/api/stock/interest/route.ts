@@ -3,38 +3,7 @@ import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { getSriLankaDate } from '@/lib/date-utils';
 import { recordAuditLog } from '@/lib/audit-logger';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-
 export const dynamic = 'force-dynamic';
-
-// In serverless environments (e.g. Vercel, AWS Lambda), /var/task is read-only.
-// Use os.tmpdir() which is writable on serverless, or local data/ for development.
-const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NODE_ENV === 'production');
-const DATA_DIR = isServerless ? os.tmpdir() : path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'stock_interests.json');
-
-async function getLocalStockInterests(): Promise<any[]> {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return [];
-    const content = await fs.promises.readFile(DATA_FILE, 'utf-8');
-    return JSON.parse(content || '[]');
-  } catch (e) {
-    return [];
-  }
-}
-
-async function saveLocalStockInterests(data: any[]) {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      await fs.promises.mkdir(DATA_DIR, { recursive: true });
-    }
-    await fs.promises.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (e) {
-    // Gracefully ignore local file write errors in serverless environments
-  }
-}
 
 // GET: Fetch interest records for a specific bill, branch, item, or all bills
 export async function GET(req: Request) {
@@ -114,22 +83,6 @@ export async function GET(req: Request) {
       }
     } else {
       supabaseFailed = true;
-    }
-
-    if (supabaseFailed || records.length === 0) {
-      const localRecords = await getLocalStockInterests();
-      if (localRecords && localRecords.length > 0) {
-        records = localRecords;
-        if (billNo) {
-          records = records.filter(r => (r.bill_no || '').trim().toUpperCase() === billNo.trim().toUpperCase());
-        }
-        if (branch && branch.toUpperCase() !== 'ALL') {
-          records = records.filter(r => (r.branch || '').trim().toUpperCase() === branch.trim().toUpperCase());
-        }
-        if (itemId) {
-          records = records.filter(r => !r.item_id || r.item_id === itemId);
-        }
-      }
     }
 
     return NextResponse.json({ data: records || [] });
@@ -232,15 +185,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Server-side JSON file sync if filesystem is available
-    try {
-      const localRecords = await getLocalStockInterests();
-      const updated = [insertedData, ...localRecords.filter(r => r.id !== insertedData.id)];
-      await saveLocalStockInterests(updated);
-    } catch (fsErr) {
-      // Ignored in read-only / serverless environments
-    }
-
     // Invalidate Redis inventory cache
     try {
       await invalidateBranchInventoryCache(cleanBranch, date);
@@ -290,11 +234,6 @@ export async function DELETE(req: Request) {
           .contains('details', { id });
       } catch (e) {}
     }
-
-    // Remove from local file
-    const localRecords = await getLocalStockInterests();
-    const updated = localRecords.filter(r => r.id !== id);
-    await saveLocalStockInterests(updated);
 
     // Invalidate Redis inventory cache
     try {

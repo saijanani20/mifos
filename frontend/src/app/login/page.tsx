@@ -200,8 +200,7 @@ export default function LoginPage() {
         authUser = data.user;
         tok = data.session?.access_token || '';
         refTok = data.session?.refresh_token || '';
-        const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com' || loginEmail === 'tharushisandumini1111@gmail.com';
-        userRole = profile?.role || data.user.user_metadata?.role || (isAdminEmail ? 'ADMIN' : 'TELLER');
+        userRole = (profile?.role || data.user.user_metadata?.role || 'TELLER').toUpperCase();
       }
 
       const effectiveBranch = normalizeBranchId(authUser?.branchId || effectiveBranchInput);

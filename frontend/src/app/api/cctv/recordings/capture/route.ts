@@ -52,19 +52,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // Demo videos for multi-camera angle simulation
-    const sampleVideos = [
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4'
-    ];
-
-    // 2. Generate 20-second evidence clip records for ALL cameras in this branch
+    // 2. Generate recording trigger records for cameras in this branch, held in PENDING until agent upload
     const createdRecordings: any[] = [];
     for (let i = 0; i < targetCameras.length; i++) {
       const cam = targetCameras[i];
       const recId = `REC-${pawn_id}-${cam.id}`;
-      const videoSample = sampleVideos[i % sampleVideos.length];
 
       const newRecording = {
         id: recId,
@@ -75,10 +67,10 @@ export async function POST(req: Request) {
         start_time: startTime,
         end_time: endTime,
         duration: before_seconds + after_seconds,
-        file_path: videoSample,
-        file_size: 3200000 + (i * 250000),
+        file_path: '',
+        file_size: 0,
         mime_type: 'video/mp4',
-        status: 'COMPLETED',
+        status: 'PENDING',
         created_at: new Date().toISOString()
       };
 

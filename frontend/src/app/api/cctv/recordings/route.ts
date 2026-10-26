@@ -3,25 +3,6 @@ import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
-// Fallback demo clips if database table has no rows
-const DEMO_RECORDINGS = [
-  {
-    id: 'REC-PN202609080001',
-    branch_id: 'HQ',
-    camera_id: 'CAM-HQ-01',
-    pawn_id: 'PN202609080001',
-    cashier_id: 'CASHIER01',
-    start_time: '2026-09-08T10:35:20.000Z',
-    end_time: '2026-09-08T10:35:40.000Z',
-    duration: 20,
-    file_path: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    file_size: 3450000,
-    mime_type: 'video/mp4',
-    status: 'COMPLETED',
-    created_at: '2026-09-08T10:35:41.000Z'
-  }
-];
-
 export async function GET(req: Request) {
   try {
     const session = await getAuthenticatedUser(req);
@@ -38,15 +19,12 @@ export async function GET(req: Request) {
       query = query.ilike('pawn_id', `%${pawnId.trim()}%`);
     }
 
-    const { data, error } = await query;
-
-    let recordings = data;
-    if (error || !recordings || recordings.length === 0) {
-      recordings = DEMO_RECORDINGS;
-      if (pawnId) {
-        recordings = recordings.filter(r => r.pawn_id.toLowerCase().includes(pawnId.toLowerCase()));
-      }
+    if (branchId && branchId !== 'ALL') {
+      query = query.eq('branch_id', branchId.trim());
     }
+
+    const { data, error } = await query;
+    let recordings = error || !data ? [] : data;
 
     // Role-based branch data isolation
     if (session && session.role === 'TELLER') {
@@ -61,7 +39,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: true, recordings });
   } catch (err: any) {
     console.error('CCTV Recordings GET error:', err);
-    return NextResponse.json({ success: true, recordings: DEMO_RECORDINGS });
+    return NextResponse.json({ success: true, recordings: [] });
   }
 }
 

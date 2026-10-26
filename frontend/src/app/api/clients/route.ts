@@ -192,28 +192,29 @@ export async function POST(request: Request) {
     const cleanEffectiveNic = String(effectiveNic || '').replace(/[,()"]/g, '').trim();
     const cleanTrimmedNic = String(trimmedNic || '').replace(/[,()"]/g, '').trim();
     const cleanBranchId = String(effectiveBranchId || '').replace(/[,()"]/g, '').trim();
-
     let existingClient = null;
-    let snakeQuery = adminSupabase.from('clients').select('*');
     if (isGovNic) {
-      snakeQuery = snakeQuery.ilike('national_id', effectiveNic);
-    } else {
-      snakeQuery = snakeQuery.or(`national_id.eq."${cleanEffectiveNic}",and(national_id.eq."${cleanTrimmedNic}",branch_id.eq."${cleanBranchId}")`);
-    }
-    const { data: snakeExisting } = await snakeQuery.limit(1).maybeSingle();
-      
-    if (snakeExisting) {
-      existingClient = snakeExisting;
-    } else {
-      let camelQuery = adminSupabase.from('clients').select('*');
-      if (isGovNic) {
-        camelQuery = camelQuery.ilike('nationalId', effectiveNic);
-      } else {
-        camelQuery = camelQuery.or(`nationalId.eq."${cleanEffectiveNic}",and(nationalId.eq."${cleanTrimmedNic}",branchId.eq."${cleanBranchId}")`);
+      const { data: snakeGov } = await adminSupabase.from('clients').select('*').ilike('national_id', effectiveNic).limit(1).maybeSingle();
+      existingClient = snakeGov;
+      if (!existingClient) {
+        const { data: camelGov } = await adminSupabase.from('clients').select('*').ilike('nationalId', effectiveNic).limit(1).maybeSingle();
+        existingClient = camelGov;
       }
-      const { data: camelExisting } = await camelQuery.limit(1).maybeSingle();
-      if (camelExisting) {
-        existingClient = camelExisting;
+    } else {
+      // 1. Try branch-scoped ID
+      const { data: scopedMatch } = await adminSupabase.from('clients').select('*').ilike('national_id', cleanEffectiveNic).limit(1).maybeSingle();
+      if (scopedMatch) {
+        existingClient = scopedMatch;
+      } else {
+        // 2. Try match within current branch
+        const { data: branchMatch } = await adminSupabase
+          .from('clients')
+          .select('*')
+          .ilike('national_id', cleanTrimmedNic)
+          .eq('branch_id', cleanBranchId)
+          .limit(1)
+          .maybeSingle();
+        existingClient = branchMatch;
       }
     }
 

@@ -211,17 +211,8 @@ ALTER TABLE public.cash_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cash_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cash_transfer_denominations ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Authenticated bank_accounts select" ON public.bank_accounts FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin bank_accounts modify" ON public.bank_accounts FOR ALL USING (public.get_auth_user_role() = 'ADMIN');
+-- Enable RLS across all Cash Management tables
+-- All financial mutations and cross-branch operations are strictly routed through
+-- backend API endpoints using the service role key and validateFinancialActionAuth().
+-- Direct browser client mutations are denied by default.
 
-CREATE POLICY "Authenticated cash_tills select" ON public.cash_tills FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin cash_tills modify" ON public.cash_tills FOR ALL USING (public.get_auth_user_role() = 'ADMIN' OR public.get_auth_user_role() = 'MANAGER');
-
-CREATE POLICY "Authenticated till_sessions access" ON public.till_sessions FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated till_denominations access" ON public.till_denominations FOR ALL USING (auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated cash_requests access" ON public.cash_requests FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated cash_transfers access" ON public.cash_transfers FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated cash_dispatches access" ON public.cash_dispatches FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated cash_receipts access" ON public.cash_receipts FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated cash_transfer_denominations access" ON public.cash_transfer_denominations FOR ALL USING (auth.role() = 'authenticated');

@@ -32,7 +32,7 @@ export async function GET(request: Request) {
         email: u.email || p?.email || '',
         branch_id: p?.branch_id || 'HQ',
         branch_name: p?.branch_name || 'Head Office',
-        role: p?.role || (u.email?.includes('admin') ? 'ADMIN' : 'TELLER'),
+        role: (p?.role || 'TELLER').toUpperCase(),
         lastSignIn: u.last_sign_in_at || p?.last_login || null,
         created_at: u.created_at || p?.created_at || new Date().toISOString(),
       });
