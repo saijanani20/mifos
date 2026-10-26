@@ -404,11 +404,40 @@ export function CustomerSelectionModal({
       };
 
       const branchToPass = payload.branchId;
-      const res = await fetch('/api/clients', {
+      let res = await fetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders({ 'x-branch-id': branchToPass }) },
         body: JSON.stringify(payload),
       });
+
+      // If 401 Unauthorized occurs, attempt silent token refresh and retry
+      if (res.status === 401) {
+        try {
+          const storedRefreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : '';
+          const refreshRes = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: storedRefreshToken })
+          });
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            if (refreshData?.token) {
+              localStorage.setItem('auth_token', refreshData.token);
+              if (refreshData.refreshToken) {
+                localStorage.setItem('refresh_token', refreshData.refreshToken);
+              }
+              // Retry customer registration with fresh token
+              res = await fetch('/api/clients', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders({ 'x-branch-id': branchToPass }) },
+                body: JSON.stringify(payload),
+              });
+            }
+          }
+        } catch (renewErr) {
+          console.warn('Session auto-renewal failed:', renewErr);
+        }
+      }
 
       if (!res.ok) {
         let errorMsg = 'Failed to register customer';

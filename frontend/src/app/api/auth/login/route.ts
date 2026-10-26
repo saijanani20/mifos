@@ -92,6 +92,7 @@ export async function POST(request: Request) {
     }
 
     const token = authData.session?.access_token || '';
+    const refreshToken = authData.session?.refresh_token || '';
 
     const response = NextResponse.json({
       success: true,
@@ -103,7 +104,8 @@ export async function POST(request: Request) {
         branchName: effectiveBranchName
       },
       profile: profile ? { ...profile, branch_id: effectiveBranch, branch_name: effectiveBranchName } : { role, branch_id: effectiveBranch, branch_name: effectiveBranchName },
-      token: token
+      token: token,
+      refreshToken: refreshToken
     });
 
     if (token) {
@@ -122,6 +124,22 @@ export async function POST(request: Request) {
         httpOnly: true,
         secure: isProduction
       });
+      if (refreshToken) {
+        response.cookies.set('sb-refresh-token', refreshToken, {
+          path: '/',
+          maxAge: 7 * 24 * 3600, // 7 days
+          sameSite: 'lax',
+          httpOnly: true,
+          secure: isProduction
+        });
+        response.cookies.set('refresh_token', refreshToken, {
+          path: '/',
+          maxAge: 7 * 24 * 3600,
+          sameSite: 'lax',
+          httpOnly: true,
+          secure: isProduction
+        });
+      }
     }
 
     return response;

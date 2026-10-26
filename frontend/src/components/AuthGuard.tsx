@@ -62,7 +62,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     // Admins do not have session timeouts
     if (isUserAdmin) return;
 
-    const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes in ms
+    const INACTIVITY_TIMEOUT = 45 * 60 * 1000; // 45 minutes in ms (accommodates busy physical branch operations)
 
     // Initialize last activity time if not set
     if (!localStorage.getItem('last_activity')) {
@@ -73,26 +73,38 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       localStorage.setItem('last_activity', Date.now().toString());
     };
 
-    // Attach event listeners for activity tracking
-    const events = ['mousemove', 'mousedown', 'keypress', 'scroll', 'touchstart'];
+    // Attach event listeners for activity tracking (including mobile app switching & touch)
+    const events = ['mousemove', 'mousedown', 'keypress', 'scroll', 'touchstart', 'click', 'focus', 'visibilitychange'];
     events.forEach(event => {
       window.addEventListener(event, resetActivity);
     });
 
     // Check interval to verify inactivity
     const interval = setInterval(() => {
+      // Never trigger logout while user is actively inside an open dialog / modal (e.g. KYC photo capture or transaction modal)
+      const hasActiveModal = Boolean(
+        document.querySelector('[role="dialog"]') || 
+        document.querySelector('video') ||
+        document.querySelector('[data-state="open"]')
+      );
+      if (hasActiveModal) {
+        resetActivity();
+        return;
+      }
+
       const lastActivity = parseInt(localStorage.getItem('last_activity') || '0', 10);
       if (lastActivity && Date.now() - lastActivity > INACTIVITY_TIMEOUT) {
         // Session expired! Clear local session data & cookies
         localStorage.removeItem('auth_token');
+        localStorage.removeItem('refresh_token');
         localStorage.removeItem('user');
         localStorage.removeItem('last_activity');
         document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
         setIsAuthenticated(false);
         router.push('/login?expired=true');
       }
-    }, 5000); // Check every 5 seconds
-
+    }, 10000); // Check every 10 seconds
 
     return () => {
       events.forEach(event => {

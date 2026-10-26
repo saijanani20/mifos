@@ -162,6 +162,7 @@ export default function LoginPage() {
 
       let authUser: any = null;
       let tok = '';
+      let refTok = '';
       let userRole = 'TELLER';
 
       // 1. Primary: Server-side API login (immune to browser adblockers and cross-origin fetch failures)
@@ -175,6 +176,7 @@ export default function LoginPage() {
         if (res.ok && resData.success) {
           authUser = resData.user;
           tok = resData.token || '';
+          refTok = resData.refreshToken || '';
           userRole = resData.user?.role || 'TELLER';
         } else if (!res.ok) {
           throw new Error(resData.error || 'Invalid credentials');
@@ -197,6 +199,7 @@ export default function LoginPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
         authUser = data.user;
         tok = data.session?.access_token || '';
+        refTok = data.session?.refresh_token || '';
         const isAdminEmail = loginEmail.includes('admin') || loginEmail === 'erandiperera25@gmail.com' || loginEmail === 'madushaniperera9617@gmail.com' || loginEmail === 'tharushisandumini1111@gmail.com';
         userRole = profile?.role || data.user.user_metadata?.role || (isAdminEmail ? 'ADMIN' : 'TELLER');
       }
@@ -207,6 +210,11 @@ export default function LoginPage() {
         localStorage.setItem('auth_token', tok);
         document.cookie = `sb-access-token=${tok}; path=/; max-age=28800; SameSite=Lax`;
         document.cookie = `auth_token=${tok}; path=/; max-age=28800; SameSite=Lax`;
+      }
+      if (refTok) {
+        localStorage.setItem('refresh_token', refTok);
+        document.cookie = `sb-refresh-token=${refTok}; path=/; max-age=604800; SameSite=Lax`;
+        document.cookie = `refresh_token=${refTok}; path=/; max-age=604800; SameSite=Lax`;
       }
       localStorage.setItem('user_branch', effectiveBranch);
       localStorage.setItem('user_role', userRole);
