@@ -196,11 +196,11 @@ ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 -- --------------------------------------------------------------------------------
 -- 7. CHART OF ACCOUNTS: ADD VAULT CASH (M12)
 -- --------------------------------------------------------------------------------
-INSERT INTO public.account (id, account_code, account_name, account_type, currency, is_active)
-SELECT gen_random_uuid(), '1010', 'Vault Cash (Asset)', 'ASSET', 'LKR', true
-WHERE NOT EXISTS (
-  SELECT 1 FROM public.account WHERE account_name = 'Vault Cash (Asset)'
-);
+INSERT INTO public.account (id, name, type, balance, interest_rate, status)
+VALUES ('1010', 'Vault Cash (Asset)', 'Asset', 0.00, 0.00, 'Active')
+ON CONFLICT (id) DO UPDATE 
+SET name = EXCLUDED.name, type = EXCLUDED.type, status = 'Active';
+
 
 -- --------------------------------------------------------------------------------
 -- 8. DEACTIVATE TEST BRANCHES IN PRODUCTION (M13)
