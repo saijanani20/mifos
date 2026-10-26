@@ -43,6 +43,7 @@
     "eslint-config-next": "16.2.2",
     "pg": "^8.23.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "xlsx": "^0.18.5"
   }
 }
