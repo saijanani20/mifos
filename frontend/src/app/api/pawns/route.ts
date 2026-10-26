@@ -373,8 +373,12 @@ export async function POST(request: Request) {
     // Determine initial pawn status (High-ValuePawns > Rs. 100,000 require Manager Approval)
     const initialStatus = finalDisbursed > HIGH_VALUE_APPROVAL_THRESHOLD ? 'PENDING_APPROVAL' : 'ACTIVE';
 
+    if (!billNo || !String(billNo).trim()) {
+      return NextResponse.json({ error: "Bill / Ticket Number is required" }, { status: 400 });
+    }
+
     // Format bill_no with branch prefix behind the scenes (e.g. "KDW-3R 14543")
-    const scopedBillNo = billNo ? formatBranchScopedBillNo(billNo, targetBranchId) : null;
+    const scopedBillNo = formatBranchScopedBillNo(billNo, targetBranchId);
 
     // 2. Insert pawn ticket into DB
     const pawnPayload: any = {
@@ -617,6 +621,8 @@ export async function POST(request: Request) {
     if (fullClientObj) {
       newPawn.clients = fullClientObj;
     }
+    newPawn.items = Array.isArray(items) ? items : [];
+    newPawn.weight = finalWeightGrams || (finalWeightMg / 1000) || 0;
 
     return NextResponse.json(newPawn, { status: 201 });
   } catch (error: any) {

@@ -347,14 +347,10 @@ export function CustomerSelectionModal({
       toast.error('Address is required');
       return;
     }
-    if (!kycFront || !kycBack || !kycSign) {
-      toast.error('Please capture KYC pictures', {
-        description: 'Please capture NIC Front, NIC Back, and Signature pictures before proceeding.'
-      });
-      if (!kycFront) setActiveKycTab('front');
-      else if (!kycBack) setActiveKycTab('back');
-      else if (!kycSign) setActiveKycTab('sign');
-      return;
+    const cleanNicInput = newNic.trim().toUpperCase();
+    const hasAnyKyc = Boolean(kycFront || kycBack || kycSign);
+    if (!hasAnyKyc) {
+      toast.info('Registering customer profile (KYC photos can be uploaded anytime)');
     }
 
     setIsRegistering(true);
@@ -389,8 +385,8 @@ export function CustomerSelectionModal({
       const safeBranch = normalizeBranchId(branchId || storedBranch || 'HQ');
 
       const payload = {
-        nic: newNic.trim(),
-        national_id: newNic.trim(),
+        nic: cleanNicInput,
+        national_id: cleanNicInput,
         firstName,
         first_name: firstName,
         lastName,

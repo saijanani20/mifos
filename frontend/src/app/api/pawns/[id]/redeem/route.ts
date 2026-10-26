@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnRedeemSms } from '@/lib/sms';
-import { normalizeBranchId } from '@/lib/branch-mapping';
+import { normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { getSriLankaDate } from '@/lib/date-utils';
 
@@ -92,13 +92,15 @@ export async function POST(
 
     if (updateError) throw updateError;
 
-    // 3.5 Mark matching stock item as Withdrawn
+    // 3.5 Mark matching stock item(s) as Withdrawn (including sub-items)
     try {
+      const cleanBillNo = pawn.bill_no ? stripBranchPrefix(pawn.bill_no) : (id.substring(0, 8));
+      const targetBill = pawn.bill_no || id.substring(0, 8);
       await adminSupabase.from('stock_items').update({
         status: 'Withdrawn',
         withdrawal_date: getSriLankaDate(),
         withdrawal_reason: 'Pawn Redeemed (Closed)'
-      }).eq('bill_no', pawn.bill_no || id.substring(0, 8));
+      }).or(`bill_no.eq."${targetBill}",bill_no.eq."${cleanBillNo}",bill_no.ilike."${cleanBillNo}-%",bill_no.ilike."${targetBill}-%"`);
 
       // Invalidate branch inventory cache
       await invalidateBranchInventoryCache(pawn.branch_id);

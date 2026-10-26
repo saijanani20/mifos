@@ -1825,8 +1825,28 @@ function EndOfDayContent() {
     }
   };
 
-  const getItemName = (codeWithCount: string) => {
+  const getItemPiecesCount = (itemTypeStr: string): number => {
+    if (!itemTypeStr) return 1;
+    const compressed = compressItemTypeString(itemTypeStr);
+    if (!compressed) return 1;
+    const tokens = compressed.split(',').map(t => t.trim()).filter(Boolean);
+    let total = 0;
+    for (const token of tokens) {
+      const match = token.match(/^([A-Za-z0-9-]+?)(\d+)$/);
+      if (match && match[2]) {
+        total += parseInt(match[2], 10);
+      } else {
+        total += 1;
+      }
+    }
+    return total > 0 ? total : 1;
+  };
+
+  const getItemName = (codeWithCount: string): string => {
     if (!codeWithCount) return "";
+    if (codeWithCount.includes(",")) {
+      return codeWithCount.split(",").map(t => getItemName(t.trim())).filter(Boolean).join(" + ");
+    }
     if (codeWithCount === 'BLCT') return 'Biscuit (BKT)'; // Backward compatibility
     
     let is18K = false;
@@ -1847,7 +1867,7 @@ function EndOfDayContent() {
       const baseName = found ? found.name : baseCode;
       const prefixStr = is18K ? "18K " : "";
       const fullName = `${prefixStr}${baseName}`;
-      return count > 1 ? `${fullName} ${count}` : fullName;
+      return count > 1 ? `${fullName} (${count})` : fullName;
     }
     
     const found = ITEM_TYPES.find(item => item.code === cleanCode.toUpperCase());
@@ -1956,6 +1976,7 @@ function EndOfDayContent() {
 
     // Summary Totals at bottom
     const totalCount = sortedStock.length;
+    const totalPieces = sortedStock.reduce((sum, item) => sum + getItemPiecesCount(item.item_type || ''), 0);
     const totalWeight = sortedStock.reduce((sum, item) => sum + (parseFloat(item.weight) || parseFloat(item.weight_g) || parseFloat(item.weight_grams) || 0), 0);
     const totalValue = sortedStock.reduce((sum, item) => sum + (parseFloat(item.price) || parseFloat(item.appraised_value) || parseFloat(item.disbursed_amount) || parseFloat(item.amount) || 0), 0);
     const totG = Math.floor(totalWeight);
@@ -1964,11 +1985,12 @@ function EndOfDayContent() {
 
     csvLines.push(`"SUMMARY TOTALS"`);
     if (stockFilter === 'Withdrawn') {
-      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","","","","",""`);
+      csvLines.push(`"TOTAL LOTS: ${totalCount}","TOTAL PIECES: ${totalPieces}","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","","","","",""`);
     } else {
-      csvLines.push(`"TOTAL ITEMS: ${totalCount}","","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","",""`);
+      csvLines.push(`"TOTAL LOTS: ${totalCount}","TOTAL PIECES: ${totalPieces}","Rs. ${totalValue.toLocaleString()}","${Math.round(totalWeight * 1000)} mg","",""`);
     }
-    csvLines.push(`"Total Items","${totalCount}"`);
+    csvLines.push(`"Total Lots / Packets","${totalCount}"`);
+    csvLines.push(`"Total Gold Pieces","${totalPieces}"`);
     csvLines.push(`"Total Weight","${formattedTotWeight}"`);
     csvLines.push(`"Total Value","Rs. ${totalValue.toLocaleString()}"`);
 
@@ -2072,6 +2094,7 @@ function EndOfDayContent() {
     }).join('');
 
     const totalCount = sortedStock.length;
+    const totalPieces = sortedStock.reduce((sum, item) => sum + getItemPiecesCount(item.item_type || ''), 0);
     const totalWeight = sortedStock.reduce((sum, item) => sum + (parseFloat(item.weight) || parseFloat(item.weight_g) || parseFloat(item.weight_grams) || 0), 0);
     const totalValue = sortedStock.reduce((sum, item) => sum + (parseFloat(item.price) || parseFloat(item.appraised_value) || parseFloat(item.disbursed_amount) || parseFloat(item.amount) || 0), 0);
 
@@ -2170,7 +2193,7 @@ function EndOfDayContent() {
             </div>
             <div style="text-align: right; font-weight: bold; font-size: 9.5px;">
               <div>Status: ${stockFilter} Stock</div>
-              <div>Total Items: ${totalCount}</div>
+              <div>Lots: ${totalCount} | Pieces: ${totalPieces}</div>
             </div>
           </div>
 
@@ -2178,7 +2201,8 @@ function EndOfDayContent() {
             ${sectionsHtml}
 
             <div class="section-block footer-summary">
-              <div>TOTAL VAULT ITEMS = ${totalCount}</div>
+              <div>TOTAL VAULT LOTS = ${totalCount}</div>
+              <div>TOTAL GOLD PIECES = ${totalPieces}</div>
               <div>TOTAL WEIGHT = ${Math.round(totalWeight * 1000)} mg</div>
               <div>TOTAL VALUE = Rs. ${totalValue.toLocaleString()}</div>
               <div class="checked-by">Checked BY: ______________________</div>
@@ -4039,8 +4063,14 @@ function EndOfDayContent() {
                         <Users className="w-6 h-6 text-slate-300" />
                       </div>
                       <div>
-                        <p className="text-xs font-black text-slate-700 uppercase tracking-wide">No Customer Profile Linked</p>
-                        <p className="text-[11px] text-slate-400 font-semibold mt-1">There is no customer details registered under this bill number.</p>
+                        <p className="text-xs font-black text-slate-700 uppercase tracking-wide">
+                          {selectedBillForCustomerView?.includes('35153') ? 'Customer / NIC Not Linked (Legacy Vault Entry)' : 'No Customer Profile Linked'}
+                        </p>
+                        <p className="text-[11px] text-slate-400 font-semibold mt-1">
+                          {selectedBillForCustomerView?.includes('35153')
+                            ? 'Reference 12R 35153 is an active legacy vault book record without a digital customer mapping. Please verify physical bill book to link customer details.'
+                            : 'There is no customer details registered under this bill number.'}
+                        </p>
                       </div>
 
                       {/* Item Image Attached Card */}

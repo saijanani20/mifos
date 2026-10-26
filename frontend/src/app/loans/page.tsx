@@ -786,6 +786,11 @@ export default function PawnesPage() {
 
     try {
       const cleanBill = billNo.trim();
+      if (!cleanBill) {
+        toast.error('Bill / Ticket number is required', { description: 'Please enter a valid bill number before issuing the loan.' });
+        setIsSaving(false);
+        return;
+      }
       let finalBillNo = '';
       if (cleanBill) {
         // If user already typed prefix inside billNo, format cleanly

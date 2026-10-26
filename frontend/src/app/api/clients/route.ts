@@ -119,40 +119,26 @@ export async function POST(request: Request) {
     const branchId = body.branchId || body.branch_id;
     const createdByUserId = body.createdByUserId || body.created_by_user_id;
 
-    if (!nic || !firstName) {
-      return NextResponse.json({ error: "Missing required fields (nic, firstName)" }, { status: 400 });
+    if (!nic || !String(nic).trim()) {
+      return NextResponse.json({ error: "NIC / National ID is required" }, { status: 400 });
+    }
+    if (!firstName || !String(firstName).trim()) {
+      return NextResponse.json({ error: "Customer first name is required" }, { status: 400 });
     }
 
     let formattedPhone = String(phone || '').trim();
     let phoneDigits = formattedPhone.replace(/\D/g, '');
-    if (phoneDigits.length === 9 && phoneDigits.startsWith('7')) {
+    if (phoneDigits.length === 9 && (phoneDigits.startsWith('7') || phoneDigits.startsWith('1'))) {
       formattedPhone = `0${phoneDigits}`;
       phoneDigits = formattedPhone.replace(/\D/g, '');
     } else if (phoneDigits.length === 11 && phoneDigits.startsWith('94')) {
       formattedPhone = `0${phoneDigits.substring(2)}`;
       phoneDigits = formattedPhone.replace(/\D/g, '');
     }
-    if (!phoneDigits || phoneDigits.length < 10) {
-      return NextResponse.json({ error: "invalid mobile number. Must be at least 10 digits (e.g. 0771234567)." }, { status: 400 });
+    if (formattedPhone && (!phoneDigits || phoneDigits.length < 10)) {
+      return NextResponse.json({ error: "Invalid mobile number. Must be at least 10 digits (e.g. 0771234567)." }, { status: 400 });
     }
     phone = formattedPhone;
-
-    let hasNicFront = false;
-    let hasNicBack = false;
-
-    if (nicImage) {
-      try {
-        const parsed = JSON.parse(nicImage);
-        if (parsed.front) hasNicFront = true;
-        if (parsed.back) hasNicBack = true;
-      } catch {
-        if (nicImage) hasNicFront = true;
-      }
-    }
-
-    if (!hasNicFront || !hasNicBack || !signatureImage) {
-      return NextResponse.json({ error: "capture the pictures" }, { status: 400 });
-    }
 
     const trimmedNic = String(nic).trim();
     const headerBranch = request.headers.get('x-branch-id') || request.headers.get('X-Branch-Id');
@@ -181,7 +167,7 @@ export async function POST(request: Request) {
     let existingClient = null;
     let snakeQuery = adminSupabase.from('clients').select('*');
     if (isGovNic) {
-      snakeQuery = snakeQuery.eq('national_id', effectiveNic);
+      snakeQuery = snakeQuery.ilike('national_id', effectiveNic);
     } else {
       snakeQuery = snakeQuery.or(`national_id.eq."${cleanEffectiveNic}",and(national_id.eq."${cleanTrimmedNic}",branch_id.eq."${cleanBranchId}")`);
     }
@@ -192,7 +178,7 @@ export async function POST(request: Request) {
     } else {
       let camelQuery = adminSupabase.from('clients').select('*');
       if (isGovNic) {
-        camelQuery = camelQuery.eq('nationalId', effectiveNic);
+        camelQuery = camelQuery.ilike('nationalId', effectiveNic);
       } else {
         camelQuery = camelQuery.or(`nationalId.eq."${cleanEffectiveNic}",and(nationalId.eq."${cleanTrimmedNic}",branchId.eq."${cleanBranchId}")`);
       }
