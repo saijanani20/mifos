@@ -55,6 +55,7 @@ import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
 import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix } from "@/lib/branch-mapping";
+import { getAuthHeaders } from "@/lib/getAuthHeaders";
 
 // Stock item abbreviations
 const ITEM_TYPES = [
@@ -982,7 +983,8 @@ function EndOfDayContent() {
         const u = JSON.parse(userStr);
         setCurrentUser(u);
         if (u.role !== 'ADMIN') {
-          setSelectedBranch(u.branchId || "HQ");
+          const uBranch = normalizeBranchId(u.branchId || '');
+          setSelectedBranch(uBranch && uBranch !== 'HQ' ? uBranch : 'ALL');
         }
       } catch (e) {
         console.error(e);
@@ -1063,43 +1065,71 @@ function EndOfDayContent() {
       // Determine the active branch filter
       let activeBranch = selectedBranch;
       if (!activeBranch && currentUser) {
-        activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'HQ');
+        activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'ALL');
       }
 
       let allFetchedStock: any[] = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      let fetchSuccess = false;
 
-      while (hasMore) {
-        let query = supabase.from('stock_items').select('*');
-        if (activeBranch && activeBranch !== 'ALL') {
-          const branchTerms = getBranchSearchTerms(activeBranch);
-          query = query.in('branch_id', branchTerms);
-        }
-        if (searchQuery.trim()) {
-          query = query.ilike('bill_no', `%${searchQuery.trim()}%`);
-        }
-        const { data, error } = await query
-          .order('created_at', { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          allFetchedStock = allFetchedStock.concat(data);
-          if (data.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
+      // 1. Primary: Server-side API endpoint (secure, bypasses client RLS drops, supports fast branch indexing)
+      try {
+        const headers = getAuthHeaders();
+        const apiBranch = (activeBranch && activeBranch !== 'HQ') ? activeBranch : (currentUser?.role === 'ADMIN' ? 'ALL' : (currentUser?.branchId && currentUser.branchId !== 'HQ' ? currentUser.branchId : 'ALL'));
+        const queryParams = new URLSearchParams({
+          branch: apiBranch,
+          search: searchQuery.trim(),
+        });
+        const res = await fetch(`/api/stock?${queryParams.toString()}`, { headers });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.items && Array.isArray(json.items)) {
+            allFetchedStock = json.items;
+            fetchSuccess = true;
           }
-        } else {
-          hasMore = false;
+        }
+      } catch (apiErr) {
+        console.warn("Stock API fetch error, falling back to client Supabase:", apiErr);
+      }
+
+      // 2. Fallback: Client-side Supabase query
+      if (!fetchSuccess) {
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
+
+        while (hasMore) {
+          let query = supabase.from('stock_items').select('*');
+          if (activeBranch && activeBranch !== 'ALL' && activeBranch !== 'HQ') {
+            const branchTerms = getBranchSearchTerms(activeBranch);
+            query = query.in('branch_id', branchTerms);
+          }
+          if (searchQuery.trim()) {
+            query = query.ilike('bill_no', `%${searchQuery.trim()}%`);
+          }
+          const { data, error } = await query
+            .order('created_at', { ascending: false })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+            allFetchedStock = allFetchedStock.concat(data);
+            if (data.length < pageSize) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
         }
       }
 
       setStockItems(sortStockItems(allFetchedStock));
       setIsUsingSupabase(true);
+      try {
+        localStorage.setItem('local_stock_items', JSON.stringify(allFetchedStock));
+      } catch {}
     } catch (err: any) {
       console.warn("Supabase fetch failed, falling back to LocalStorage:", err.message);
       setIsUsingSupabase(false);
@@ -1109,10 +1139,10 @@ function EndOfDayContent() {
           const allItems = JSON.parse(localData);
           let activeBranch = selectedBranch;
           if (!activeBranch && currentUser) {
-            activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'HQ');
+            activeBranch = currentUser.role === 'ADMIN' ? 'ALL' : (currentUser.branchId || 'ALL');
           }
           const branchTerms = getBranchSearchTerms(activeBranch);
-          let filtered = activeBranch && activeBranch !== 'ALL'
+          let filtered = activeBranch && activeBranch !== 'ALL' && activeBranch !== 'HQ'
             ? allItems.filter((item: any) => branchTerms.includes(item.branch_id) || normalizeBranchId(item.branch_id) === normalizeBranchId(activeBranch))
             : allItems;
           if (searchQuery.trim()) {
@@ -1136,34 +1166,57 @@ function EndOfDayContent() {
   const loadCustomerData = async () => {
     try {
       let allCustomers: any[] = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      let fetchSuccess = false;
 
-      while (hasMore) {
-        const from = page * pageSize;
-        const to = from + pageSize - 1;
-        const { data, error } = await supabase
-          .from('stock_customers')
-          .select('*')
-          .order('name', { ascending: true })
-          .range(from, to);
-
-        if (error) throw error;
-        if (data && data.length > 0) {
-          allCustomers = allCustomers.concat(data);
-          if (data.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
+      // 1. Primary: Server-side API endpoint
+      try {
+        const headers = getAuthHeaders();
+        const res = await fetch('/api/stock-customers', { headers });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.customers && Array.isArray(json.customers)) {
+            allCustomers = json.customers;
+            fetchSuccess = true;
           }
-        } else {
-          hasMore = false;
+        }
+      } catch (e) {
+        console.warn("Stock customers API error, falling back to Supabase client:", e);
+      }
+
+      // 2. Fallback: Client-side Supabase
+      if (!fetchSuccess) {
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
+
+        while (hasMore) {
+          const from = page * pageSize;
+          const to = from + pageSize - 1;
+          const { data, error } = await supabase
+            .from('stock_customers')
+            .select('*')
+            .order('name', { ascending: true })
+            .range(from, to);
+
+          if (error) throw error;
+          if (data && data.length > 0) {
+            allCustomers = allCustomers.concat(data);
+            if (data.length < pageSize) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
         }
       }
 
       setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
+      try {
+        localStorage.setItem('local_stock_customers', JSON.stringify(allCustomers));
+      } catch {}
     } catch (err) {
       console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
       setIsUsingSupabase(false);
@@ -2604,23 +2657,21 @@ function EndOfDayContent() {
                 </button>
               </div>
 
-              {/* Branch Selector for Admin */}
-              {currentUser?.role === 'ADMIN' && (
-                <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto shrink-0">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 pl-2 whitespace-nowrap">Branch:</span>
-                  <Select value={selectedBranch} onValueChange={(val) => val && setSelectedBranch(val)}>
-                    <SelectTrigger className="h-8 w-44 bg-white border-slate-200 rounded-lg font-bold text-xs shadow-sm">
-                      <SelectValue placeholder="All Branches" />
-                    </SelectTrigger>
-                    <SelectContent className="glass max-h-48 overflow-y-auto">
-                      <SelectItem value="ALL" className="font-semibold text-xs">All Branches</SelectItem>
-                      {branches.map((b: any) => (
-                        <SelectItem key={b.id} value={b.id} className="font-semibold text-xs">{b.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+              {/* Branch Selector */}
+              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto shrink-0">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 pl-2 whitespace-nowrap">Branch:</span>
+                <Select value={selectedBranch} onValueChange={(val) => val && setSelectedBranch(val)}>
+                  <SelectTrigger className="h-8 w-44 bg-white border-slate-200 rounded-lg font-bold text-xs shadow-sm">
+                    <SelectValue placeholder="All Branches" />
+                  </SelectTrigger>
+                  <SelectContent className="glass max-h-48 overflow-y-auto">
+                    <SelectItem value="ALL" className="font-semibold text-xs">All Branches</SelectItem>
+                    {branches.map((b: any) => (
+                      <SelectItem key={b.id} value={b.id} className="font-semibold text-xs">{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Right Controls: Search Input & Action Buttons */}

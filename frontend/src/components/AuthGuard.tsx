@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -10,6 +11,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
+    const refreshToken = localStorage.getItem('refresh_token');
     const storedUser = localStorage.getItem('user');
     
     // Purge any legacy auditor@gmail.com session
@@ -33,6 +35,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     }
 
     const isAuth = Boolean(token && storedUser);
+
+    if (isAuth && token && refreshToken) {
+      supabase.auth.getSession().then(({ data }) => {
+        if (!data?.session) {
+          supabase.auth.setSession({ access_token: token, refresh_token: refreshToken }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
 
     setTimeout(() => {
       setIsAuthenticated(prev => (prev !== isAuth ? isAuth : prev));

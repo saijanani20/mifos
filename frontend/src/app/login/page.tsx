@@ -207,6 +207,16 @@ export default function LoginPage() {
         document.cookie = `sb-refresh-token=${refTok}; path=/; max-age=604800; SameSite=Lax`;
         document.cookie = `refresh_token=${refTok}; path=/; max-age=604800; SameSite=Lax`;
       }
+      if (tok && refTok) {
+        try {
+          await supabase.auth.setSession({
+            access_token: tok,
+            refresh_token: refTok
+          });
+        } catch (setErr) {
+          console.warn('Set supabase session note:', setErr);
+        }
+      }
       localStorage.setItem('user_branch', effectiveBranch);
       localStorage.setItem('user_role', userRole);
       localStorage.setItem('user_name', authUser?.user_metadata?.full_name || authUser?.email?.split('@')[0] || 'User');
