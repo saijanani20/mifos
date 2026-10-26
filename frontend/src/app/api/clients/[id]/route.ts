@@ -34,10 +34,19 @@ export async function PATCH(request: Request, context: any) {
     const body = await request.json();
 
     if (body.phone) {
-      const phoneDigits = String(body.phone).replace(/\D/g, '');
-      if (phoneDigits.length < 10) {
-        return NextResponse.json({ error: "invalid mobile number" }, { status: 400 });
+      let formattedPhone = String(body.phone).trim();
+      let phoneDigits = formattedPhone.replace(/\D/g, '');
+      if (phoneDigits.length === 9 && phoneDigits.startsWith('7')) {
+        formattedPhone = `0${phoneDigits}`;
+        phoneDigits = formattedPhone.replace(/\D/g, '');
+      } else if (phoneDigits.length === 11 && phoneDigits.startsWith('94')) {
+        formattedPhone = `0${phoneDigits.substring(2)}`;
+        phoneDigits = formattedPhone.replace(/\D/g, '');
       }
+      if (phoneDigits.length < 10) {
+        return NextResponse.json({ error: "invalid mobile number. Must be at least 10 digits (e.g. 0771234567)." }, { status: 400 });
+      }
+      body.phone = formattedPhone;
     }
 
     const updatePayload: Record<string, any> = {};

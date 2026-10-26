@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     const nic = body.nic || body.nationalId || body.national_id;
     const firstName = body.firstName || body.first_name || (body.name ? body.name.split(' ')[0] : '');
     const lastName = body.lastName || body.last_name || (body.name ? body.name.split(' ').slice(1).join(' ') : '');
-    const phone = body.phone || body.mobile || '';
+    let phone = body.phone || body.mobile || '';
     const address = body.address || '';
     const nicImage = body.nicImage || body.nic_image;
     const signatureImage = body.signatureImage || body.signature_image;
@@ -123,10 +123,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required fields (nic, firstName)" }, { status: 400 });
     }
 
-    const phoneDigits = String(phone || '').replace(/\D/g, '');
-    if (!phoneDigits || phoneDigits.length < 10) {
-      return NextResponse.json({ error: "invalid mobile number" }, { status: 400 });
+    let formattedPhone = String(phone || '').trim();
+    let phoneDigits = formattedPhone.replace(/\D/g, '');
+    if (phoneDigits.length === 9 && phoneDigits.startsWith('7')) {
+      formattedPhone = `0${phoneDigits}`;
+      phoneDigits = formattedPhone.replace(/\D/g, '');
+    } else if (phoneDigits.length === 11 && phoneDigits.startsWith('94')) {
+      formattedPhone = `0${phoneDigits.substring(2)}`;
+      phoneDigits = formattedPhone.replace(/\D/g, '');
     }
+    if (!phoneDigits || phoneDigits.length < 10) {
+      return NextResponse.json({ error: "invalid mobile number. Must be at least 10 digits (e.g. 0771234567)." }, { status: 400 });
+    }
+    phone = formattedPhone;
 
     let hasNicFront = false;
     let hasNicBack = false;

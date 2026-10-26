@@ -220,39 +220,45 @@ export function CustomerSelectionModal({
     : [];
 
   // Real-time duplicate cross-check against database when adding new customer details
+  // In Sri Lanka pawning, NIC is the unique primary citizen identity.
+  // Phone numbers can be legitimately shared (e.g., family members, spouses) and must NOT
+  // hijack the customer identity or block registration of a distinct citizen.
   const normalizedNewNic = newNic.trim().toLowerCase();
   const cleanNewNic = stripBranchPrefix(normalizedNewNic).toLowerCase();
   const normalizedNewPhone = newPhone.replace(/\D/g, '');
 
-  const existingCustomerMatch = (normalizedNewNic.length >= 3 || normalizedNewPhone.length >= 9)
+  const existingCustomerMatch = normalizedNewNic.length >= 3
     ? activeClients.find(c => {
         const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
         const cleanCNic = stripBranchPrefix(cNic).toLowerCase();
-        const cPhone = String(c.phone || c.mobile || '').replace(/\D/g, '');
 
-        const nicExactMatch = normalizedNewNic.length >= 3 && (
+        return (
           cNic === normalizedNewNic || 
           cleanCNic === cleanNewNic ||
           cNic.replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '') ||
           cleanCNic.replace(/[^a-z0-9]/g, '') === cleanNewNic.replace(/[^a-z0-9]/g, '')
         );
-        const phoneExactMatch = normalizedNewPhone.length >= 9 && cPhone.length >= 9 && cPhone === normalizedNewPhone;
-
-        return nicExactMatch || phoneExactMatch;
       })
     : null;
 
-  const isDuplicateNic = Boolean(
-    existingCustomerMatch && 
-    normalizedNewNic.length >= 3 && 
-    String(existingCustomerMatch.national_id || existingCustomerMatch.nationalId || existingCustomerMatch.nic || existingCustomerMatch.id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '')
-  );
+  const isDuplicateNic = Boolean(existingCustomerMatch);
 
-  const isDuplicatePhone = Boolean(
-    existingCustomerMatch && 
-    normalizedNewPhone.length >= 9 && 
-    String(existingCustomerMatch.phone || existingCustomerMatch.mobile || '').replace(/\D/g, '') === normalizedNewPhone
-  );
+  // Informational only: check if another customer with a different NIC shares this phone number
+  const sharedPhoneCustomer = (normalizedNewPhone.length >= 9)
+    ? activeClients.find(c => {
+        const cPhone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+        const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
+        const cleanCNic = stripBranchPrefix(cNic).toLowerCase();
+        const isSameNic = normalizedNewNic.length >= 3 && (
+          cNic === normalizedNewNic || 
+          cleanCNic === cleanNewNic ||
+          cNic.replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '')
+        );
+        return !isSameNic && cPhone.length >= 9 && cPhone === normalizedNewPhone;
+      })
+    : null;
+
+  const isDuplicatePhone = Boolean(sharedPhoneCustomer);
 
   const handleSelectClient = (client: any) => {
     setSelectedExistingClient(client);
@@ -322,10 +328,18 @@ export function CustomerSelectionModal({
       toast.error('Full name is required');
       return;
     }
-    const phoneDigits = newPhone.replace(/\D/g, '');
+    // Format / normalize phone number for robust Sri Lankan telecommunication standards
+    let formattedPhone = newPhone.trim();
+    const rawPhoneDigits = formattedPhone.replace(/\D/g, '');
+    if (rawPhoneDigits.length === 9 && rawPhoneDigits.startsWith('7')) {
+      formattedPhone = `0${rawPhoneDigits}`;
+    } else if (rawPhoneDigits.length === 11 && rawPhoneDigits.startsWith('94')) {
+      formattedPhone = `0${rawPhoneDigits.substring(2)}`;
+    }
+    const phoneDigits = formattedPhone.replace(/\D/g, '');
     if (!phoneDigits || phoneDigits.length < 10) {
       toast.error('Invalid mobile number', {
-        description: 'Mobile number must be at least 10 digits.'
+        description: 'Mobile number must be at least 10 digits (e.g. 0771234567).'
       });
       return;
     }
@@ -381,7 +395,7 @@ export function CustomerSelectionModal({
         first_name: firstName,
         lastName,
         last_name: lastName,
-        phone: newPhone.trim(),
+        phone: formattedPhone,
         address: newAddress.trim(),
         branchId: safeBranch,
         branch_id: safeBranch,
@@ -853,17 +867,20 @@ export function CustomerSelectionModal({
                   <div className="flex items-center justify-between">
                     <Label 
                       htmlFor="reg-phone" 
-                      className={`font-black text-[10px] uppercase tracking-widest ${isDuplicatePhone ? 'text-red-600' : 'text-slate-500'}`}
+                      className="font-black text-[10px] uppercase tracking-widest text-slate-500"
                     >
                       TP (Phone Number)
                     </Label>
                     <div className="flex items-center gap-2">
-                      {isDuplicatePhone && (
-                        <span className="text-[10px] font-black text-red-600 flex items-center gap-1 uppercase tracking-wider animate-pulse">
-                          <AlertTriangle className="w-3 h-3 stroke-[2.5]" /> TP Matches Existing
+                      {sharedPhoneCustomer && (
+                        <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1 uppercase tracking-wider">
+                          <AlertTriangle className="w-3 h-3 stroke-[2]" /> Shared with {sharedPhoneCustomer.first_name || sharedPhoneCustomer.firstName || 'Customer'}
                         </span>
                       )}
-                      <span className="text-[10px] font-mono text-slate-400 font-bold">
+                      <span className={`text-[10px] font-mono font-bold ${
+                        newPhone.replace(/\D/g, '').length >= 10 ? 'text-emerald-600' : 'text-slate-400'
+                      }`}>
+                        {newPhone.replace(/\D/g, '').length >= 10 ? '✓ ' : ''}
                         {newPhone.replace(/\D/g, '').length}/10 digits
                       </span>
                     </div>
@@ -873,11 +890,7 @@ export function CustomerSelectionModal({
                     value={newPhone}
                     onChange={(e) => setNewPhone(e.target.value)}
                     placeholder="e.g. 077 123 4567"
-                    className={`h-11 rounded-xl font-mono font-bold text-sm transition-all ${
-                      isDuplicatePhone 
-                        ? 'border-2 border-red-500 bg-red-50/70 text-red-700 focus:border-red-600 focus:ring-red-400/20' 
-                        : 'bg-white border-slate-200 text-slate-800'
-                    }`}
+                    className="h-11 rounded-xl font-mono font-bold text-sm bg-white border-slate-200 text-slate-800 focus:border-amber-500 focus:ring-amber-400/20"
                   />
                 </div>
 

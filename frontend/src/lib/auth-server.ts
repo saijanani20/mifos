@@ -17,6 +17,7 @@ export interface AuthSession {
   profile: any;
   role: UserRole;
   branchId: string;
+  trustedBranchId: string;
   branchName?: string;
   isAuthorized: boolean;
 }
@@ -67,7 +68,8 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       // Legacy auditor account revoked
       return null;
     }
-    let branchId = normalizeBranchId(profile?.branch_id || 'HQ');
+    const trustedBranchId = normalizeBranchId(profile?.branch_id || 'HQ');
+    let branchId = trustedBranchId;
     const branchName = profile?.branch_name || '';
 
     // Branch identification: Only ADMIN or HQ users can switch target branch via header
@@ -87,7 +89,8 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
 
     // Tellers are strictly prohibited from operating as Head Office (HQ)
     if (role === 'TELLER' && (branchId === 'HQ' || branchId === 'HEAD OFFICE')) {
-      branchId = normalizeBranchId(profile?.branch_id || '');
+      const assigned = normalizeBranchId(profile?.branch_id || '');
+      branchId = (assigned !== 'HQ' && assigned !== 'HEAD OFFICE') ? assigned : '';
     }
 
     return {
@@ -95,6 +98,7 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       profile,
       role,
       branchId,
+      trustedBranchId,
       branchName,
       isAuthorized: true
     };
@@ -102,6 +106,44 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
     console.error('getAuthenticatedUser error:', err);
     return null;
   }
+}
+
+/**
+ * Validates financial mutation authorization strictly.
+ * Unlike general read views, financial actions (cash dispatch, cash receipt, till count, approval)
+ * strictly forbid branch spoofing via x-branch-id headers for non-admin accounts.
+ */
+export function validateFinancialActionAuth(
+  session: AuthSession | null,
+  requiredBranchId?: string | null,
+  allowedRoles?: UserRole[]
+): { authorized: boolean; error?: string } {
+  if (!session || !session.user) {
+    return { authorized: false, error: 'Unauthorized. Valid authentication session required.' };
+  }
+
+  if (allowedRoles && !allowedRoles.includes(session.role)) {
+    return { authorized: false, error: `Forbidden. Action requires role: ${allowedRoles.join(', ')}.` };
+  }
+
+  // ADMIN has full system access across all branches
+  if (session.role === 'ADMIN') {
+    return { authorized: true };
+  }
+
+  if (requiredBranchId) {
+    const targetNorm = normalizeBranchId(requiredBranchId);
+    const profileNorm = normalizeBranchId(session.trustedBranchId);
+
+    if (profileNorm !== targetNorm) {
+      return { 
+        authorized: false, 
+        error: `Forbidden. Your assigned branch (${profileNorm}) is not authorized to perform operations for branch (${targetNorm}).` 
+      };
+    }
+  }
+
+  return { authorized: true };
 }
 
 /**

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from "next/link"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -181,51 +182,70 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      {/* Transfer Dialog */}
+      {/* Compliance & Security Banner */}
+      <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+            <ArrowRightLeft className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-amber-950">Cash Transfers & Vault Balancing</h4>
+            <p className="text-xs text-amber-800">Inter-branch cash movements must follow the three-record attributable workflow: Requisition &rarr; Manager Approval &rarr; Physical Dispatch &rarr; Recipient Count.</p>
+          </div>
+        </div>
+        <Link 
+          href="/finance/cash/transfers"
+          className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition-colors shrink-0"
+        >
+          Go to Cash Transfers <Send className="w-3.5 h-3.5" />
+        </Link>
+      </div>
+
+      {/* Transfer Guidance Dialog */}
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="sm:max-w-[425px] glass border-white/40 p-0 overflow-hidden rounded-[2rem]">
-          <div className="h-2 bg-primary" />
+        <DialogContent className="sm:max-w-[480px] glass border-white/40 p-0 overflow-hidden rounded-[2rem]">
+          <div className="h-2 bg-[#ffd100]" />
           <div className="p-8 space-y-6">
             <DialogHeader>
               <DialogTitle className="text-2xl font-black tracking-tighter flex items-center gap-3 text-slate-900">
-                <div className="h-10 w-10 bg-primary/10 rounded-xl flex items-center justify-center border border-primary/20">
-                  <Send className="h-5 w-5 text-primary"/>
+                <div className="h-10 w-10 bg-[#ffd100]/20 rounded-xl flex items-center justify-center border border-[#ffd100]/40">
+                  <Send className="h-5 w-5 text-slate-900"/>
                 </div>
-                Branch Capital Transfer
+                Branch Cash Transfer
               </DialogTitle>
-              <DialogDescription className="font-medium text-slate-500">
-                Move working capital between operational branches for vault balancing.
+              <DialogDescription className="font-medium text-slate-600 text-sm">
+                To maintain physical cash security and financial integrity, transfers require:
               </DialogDescription>
             </DialogHeader>
 
-            <div className="grid gap-5">
-              <div className="grid gap-2">
-                <Label className="font-black text-[10px] uppercase tracking-widest text-slate-400">Destination Branch</Label>
-                <Select onValueChange={(val) => val && setTargetBranchId(val)} value={targetBranchId}>
-                  <SelectTrigger className="h-12 bg-white/50 rounded-xl font-bold text-sm">
-                    <SelectValue placeholder="Select receiver branch..." />
-                  </SelectTrigger>
-                  <SelectContent className="glass border-white/40 rounded-2xl shadow-2xl">
-                    {branches.map(b => (
-                      <SelectItem key={b.id} value={b.id} className="font-bold">
-                        {b.name} ({b.id})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-700">
+              <div className="flex items-start gap-2.5">
+                <span className="font-bold text-amber-600">1.</span>
+                <span><strong>Cash Requisition:</strong> Requester drafts cash need with operational justification.</span>
               </div>
-              <div className="grid gap-2">
-                <Label className="font-medium text-slate-700">Amount (Rs.)</Label>
-                <Input value={amount} onChange={e=>setAmount(e.target.value)} type="number" placeholder="500000" className="border-slate-300" />
+              <div className="flex items-start gap-2.5">
+                <span className="font-bold text-amber-600">2.</span>
+                <span><strong>Manager Approval:</strong> Dual-control review and funding source allocation.</span>
               </div>
-              <div className="grid gap-2">
-                <Label className="font-medium text-slate-700">Audit Reference</Label>
-                <Input value={description} onChange={e=>setDescription(e.target.value)} placeholder="E.g. Daily Vault Balancing" />
+              <div className="flex items-start gap-2.5">
+                <span className="font-bold text-amber-600">3.</span>
+                <span><strong>Physical Dispatch & Receipt:</strong> Independent denomination counts, tamper bag seal tracking, and automated GL posting.</span>
               </div>
             </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
-              <Button onClick={handleTransfer} className="bg-slate-900 hover:bg-slate-800 font-semibold text-white">Execute Transfer</Button>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
+              <Button variant="outline" onClick={() => setIsOpen(false)} className="rounded-xl">
+                View Historical Ledger
+              </Button>
+              <Button 
+                onClick={() => {
+                  setIsOpen(false);
+                  window.location.href = '/finance/cash/transfers';
+                }}
+                className="bg-slate-900 hover:bg-slate-800 font-bold text-white rounded-xl gap-2"
+              >
+                Open Transfer Hub <Send className="w-3.5 h-3.5" />
+              </Button>
             </div>
           </div>
         </DialogContent>

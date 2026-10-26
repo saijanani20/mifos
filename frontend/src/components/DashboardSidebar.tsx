@@ -26,7 +26,8 @@ import {
   Video,
   PlaySquare,
   Eye,
-  Package
+  Package,
+  Landmark
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -37,6 +38,16 @@ const navGroups = [
     items: [
       { name: 'Dashboard', href: '/', icon: LayoutDashboard },
       { name: 'Growth', href: '/dashboard/executive', icon: TrendingUp },
+    ]
+  },
+  {
+    label: "Cash & Banking",
+    items: [
+      { name: 'Cash Dashboard', href: '/finance/cash', icon: Landmark },
+      { name: 'Cash Requests', href: '/finance/cash/requests', icon: FileSpreadsheet },
+      { name: 'Transfers & Transit', href: '/finance/cash/transfers', icon: ArrowRightLeft },
+      { name: 'Cash Tills', href: '/finance/cash/tills', icon: Wallet },
+      { name: 'Bank Accounts', href: '/finance/cash/banks', icon: PiggyBank },
     ]
   },
   {
@@ -88,6 +99,8 @@ const navGroups = [
 const tellerNavItems = [
   { name: 'Customer', href: '/clients', icon: Users },
   { name: 'Pawning', href: '/loans', icon: Wallet },
+  { name: 'Cash Tills', href: '/finance/cash/tills', icon: Wallet },
+  { name: 'Cash Transfers', href: '/finance/cash/transfers', icon: ArrowRightLeft },
   { name: 'Stock Management', href: '/operations/eod?tab=stock', icon: Package },
   { name: 'Daily ledger', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: UserCircle },
@@ -95,6 +108,8 @@ const tellerNavItems = [
 
 const auditorNavItems = [
   { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
+  { name: 'Cash & Vault', href: '/finance/cash', icon: Landmark },
+  { name: 'Cash Transfers', href: '/finance/cash/transfers', icon: ArrowRightLeft },
   { name: 'Vault Stock', href: '/operations/eod?tab=stock', icon: Layers },
   { name: 'System Logs', href: '/operations/audit-logs', icon: FileText },
   { name: 'CCTV Logs', href: '/cctv/audit-logs', icon: Video },
@@ -104,6 +119,10 @@ const auditorNavItems = [
 
 const managerNavItems = [
   { name: 'Approvals', href: '/operations/approvals', icon: CheckSquare },
+  { name: 'Cash Dashboard', href: '/finance/cash', icon: Landmark },
+  { name: 'Cash Requests', href: '/finance/cash/requests', icon: FileSpreadsheet },
+  { name: 'Cash Transfers', href: '/finance/cash/transfers', icon: ArrowRightLeft },
+  { name: 'Bank Accounts', href: '/finance/cash/banks', icon: PiggyBank },
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Pawn Review', href: '/loans', icon: Wallet },
   { name: 'Transactions', href: '/transactions', icon: ArrowRightLeft },
@@ -129,6 +148,7 @@ export default function DashboardSidebar({
 
   const groupIcons: { [key: string]: React.ElementType } = {
     "Overview": LayoutDashboard,
+    "Cash & Banking": Landmark,
     "Finance": Wallet,
     "Stock Management": Package,
     "Transactions": ArrowRightLeft,
