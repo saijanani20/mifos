@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-10-26T10:41:41.432Z",
+  "previouslyRegistered": 172,
+  "stockCustomersProcessed": 1526,
+  "skippedAlreadyRegistered": 593,
+  "newlyRegisteredCount": 933,
+  "totalClientsNow": 1105,
+  "branchDistribution": {
+    "HMG": 170,
+    "PND": 167,
+    "KDW": 88,
+    "W4": 50,
+    "KIR": 71,
+    "KTW": 91,
+    "BRL": 32,
+    "DMT": 94,
+    "W3": 168,
+    "HQ": 2
+  }
+}
