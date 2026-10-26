@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeBranchId, CANONICAL_BRANCHES } from '@/lib/branch-mapping';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ielkaetihagxgnrrasch.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMDE1NTksImV4cCI6MjA5OTY3NzU1OX0.YKLOHhXhUCgG1eMZiksR4H7UwySjhWzc0e_pomh_0oI';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDEwMTU1OSwiZXhwIjoyMDk5Njc3NTU5fQ.F0KSjnVMl9Nz4fuXV3Z_fHBkQfCU8ieyPT0qJ2xLEMg';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,12 +17,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
 
+    // Admin Supabase client to fetch profile safely
+    const adminSupabase = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
     let loginEmail = String(email).trim();
     if (!loginEmail.includes('@')) {
       if (loginEmail.toLowerCase() === 'admin') {
         loginEmail = 'admin@gmail.com';
       } else {
-        loginEmail = `${loginEmail.toLowerCase()}@gmail.com`;
+        try {
+          const cleanUser = loginEmail.toLowerCase();
+          // 1. Search profiles by email prefix or name
+          const { data: matchedProf } = await adminSupabase
+            .from('profiles')
+            .select('email')
+            .or(`email.ilike.%${cleanUser}%,first_name.ilike.%${cleanUser}%,last_name.ilike.%${cleanUser}%`)
+            .limit(1)
+            .maybeSingle();
+
+          if (matchedProf && matchedProf.email) {
+            loginEmail = matchedProf.email;
+          } else {
+            // 2. Check if there is an auth user matching username directly
+            const { data: authList } = await adminSupabase.auth.admin.listUsers({ perPage: 100 });
+            const foundUser = authList?.users?.find(u => 
+              (u.email && u.email.toLowerCase().startsWith(cleanUser)) ||
+              (u.user_metadata?.username && u.user_metadata.username.toLowerCase() === cleanUser) ||
+              (u.user_metadata?.full_name && u.user_metadata.full_name.toLowerCase().includes(cleanUser))
+            );
+            if (foundUser && foundUser.email) {
+              loginEmail = foundUser.email;
+            } else {
+              loginEmail = `${cleanUser}@gmail.com`;
+            }
+          }
+        } catch {
+          loginEmail = `${loginEmail.toLowerCase()}@gmail.com`;
+        }
       }
     }
 
@@ -50,11 +83,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Admin Supabase client to fetch profile safely
-    const adminSupabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
-
     const { data: profile } = await adminSupabase
       .from('profiles')
       .select('*')
@@ -65,19 +93,46 @@ export async function POST(request: Request) {
     const role = (profile?.role || authData.user.user_metadata?.role || 'TELLER').toUpperCase();
     
     // Determine effective operating branch:
-    // Only verified ADMIN users are permitted to switch operating branch at login;
-    // All other staff are strictly locked to their database profile branch.
-    const selectedBranch = (role === 'ADMIN' && branch) ? normalizeBranchId(branch) : null;
+    // ADMIN can select any operating branch;
+    // TELLERs with HQ or unassigned profile can select their operating branch at login;
+    // Other staff operate in their assigned database branch.
+    const selectedBranch = branch ? normalizeBranchId(branch) : null;
     let effectiveBranch = normalizeBranchId(profile?.branch_id || 'HQ');
-    if (selectedBranch && selectedBranch !== 'HQ') {
+    if (role === 'ADMIN' && selectedBranch && selectedBranch !== 'HQ') {
       effectiveBranch = selectedBranch;
+    } else if (role === 'TELLER') {
+      if ((effectiveBranch === 'HQ' || !effectiveBranch) && selectedBranch && selectedBranch !== 'HQ') {
+        effectiveBranch = selectedBranch;
+      }
     }
 
     const branchObj = CANONICAL_BRANCHES.find(b => b.id === effectiveBranch);
     const effectiveBranchName = branchObj ? branchObj.name : (effectiveBranch === 'HQ' ? 'Head Office' : (profile?.branch_name || effectiveBranch));
 
+    // Auto-heal missing profile in public.profiles if user authenticated successfully
+    let userProfile = profile;
+    if (!userProfile) {
+      const emailPrefix = (authData.user.email || '').split('@')[0];
+      const newProf = {
+        id: authData.user.id,
+        email: authData.user.email,
+        branch_id: effectiveBranch,
+        branch_name: effectiveBranchName,
+        role: role,
+        first_name: authData.user.user_metadata?.first_name || authData.user.user_metadata?.full_name || emailPrefix,
+        created_at: new Date().toISOString()
+      };
+      try {
+        await adminSupabase.from('profiles').insert(newProf);
+        userProfile = newProf;
+      } catch (insertErr) {
+        console.warn('Auto-create profile note:', insertErr);
+        userProfile = newProf;
+      }
+    }
+
     // Keep database profile in sync with selected operating branch for ADMIN
-    if (role === 'ADMIN' && profile && effectiveBranch && effectiveBranch !== normalizeBranchId(profile.branch_id)) {
+    if (role === 'ADMIN' && userProfile && effectiveBranch && effectiveBranch !== normalizeBranchId(userProfile.branch_id)) {
       try {
         await adminSupabase
           .from('profiles')
@@ -103,41 +158,41 @@ export async function POST(request: Request) {
         branchId: effectiveBranch,
         branchName: effectiveBranchName
       },
-      profile: profile ? { ...profile, branch_id: effectiveBranch, branch_name: effectiveBranchName } : { role, branch_id: effectiveBranch, branch_name: effectiveBranchName },
+      profile: userProfile ? { ...userProfile, branch_id: effectiveBranch, branch_name: effectiveBranchName } : { role, branch_id: effectiveBranch, branch_name: effectiveBranchName },
       token: token,
       refreshToken: refreshToken
     });
 
     if (token) {
-      const isProduction = process.env.NODE_ENV === 'production';
+      const isHttps = request.url.startsWith('https:');
       response.cookies.set('sb-access-token', token, {
         path: '/',
         maxAge: 28800,
         sameSite: 'lax',
-        httpOnly: true,
-        secure: isProduction
+        httpOnly: false,
+        secure: isHttps
       });
       response.cookies.set('auth_token', token, {
         path: '/',
         maxAge: 28800,
         sameSite: 'lax',
-        httpOnly: true,
-        secure: isProduction
+        httpOnly: false,
+        secure: isHttps
       });
       if (refreshToken) {
         response.cookies.set('sb-refresh-token', refreshToken, {
           path: '/',
           maxAge: 7 * 24 * 3600, // 7 days
           sameSite: 'lax',
-          httpOnly: true,
-          secure: isProduction
+          httpOnly: false,
+          secure: isHttps
         });
         response.cookies.set('refresh_token', refreshToken, {
           path: '/',
           maxAge: 7 * 24 * 3600,
           sameSite: 'lax',
-          httpOnly: true,
-          secure: isProduction
+          httpOnly: false,
+          secure: isHttps
         });
       }
     }

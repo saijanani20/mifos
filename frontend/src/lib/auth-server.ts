@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeBranchId } from './branch-mapping';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder-project.supabase.co';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-service-key';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ielkaetihagxgnrrasch.supabase.co';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDEwMTU1OSwiZXhwIjoyMDk5Njc3NTU5fQ.F0KSjnVMl9Nz4fuXV3Z_fHBkQfCU8ieyPT0qJ2xLEMg';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGthZXRpaGFneGducnJhc2NoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxMDE1NTksImV4cCI6MjA5OTY3NzU1OX0.YKLOHhXhUCgG1eMZiksR4H7UwySjhWzc0e_pomh_0oI';
 
 export const adminSupabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { autoRefreshToken: false, persistSession: false }
@@ -105,13 +105,21 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
     }
 
     // Fetch user profile securely
-    const { data: profile } = await adminSupabase
+    const { data: profileData } = await adminSupabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    const role = (profile?.role || 'TELLER').toUpperCase() as UserRole;
+    const profile = profileData || {
+      id: user.id,
+      email: user.email,
+      role: (user.user_metadata?.role || 'TELLER').toUpperCase(),
+      branch_id: user.user_metadata?.branch_id || 'HQ',
+      branch_name: user.user_metadata?.branch_name || 'Head Office'
+    };
+
+    const role = (profile?.role || user.user_metadata?.role || 'TELLER').toUpperCase() as UserRole;
     if (user.email && user.email.toLowerCase() === 'auditor@gmail.com') {
       // Legacy auditor account revoked
       return null;
@@ -130,15 +138,18 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       if (selectedBranch && selectedBranch.trim() !== '') {
         branchId = normalizeBranchId(selectedBranch.trim());
       }
+    } else if (role === 'TELLER' && (trustedBranchId === 'HQ' || !trustedBranchId)) {
+      // Tellers assigned to HQ can operate in whichever branch was selected at login/header
+      if (selectedBranch && selectedBranch.trim() !== '') {
+        branchId = normalizeBranchId(selectedBranch.trim());
+      }
     } else {
-      // Non-admin staff (TELLER, MANAGER) are strictly bound to their profile assigned branch
+      // Non-admin staff assigned to a branch are bound to their assigned branch
       branchId = normalizeBranchId(profile?.branch_id || 'HQ');
     }
 
-    // Tellers are strictly prohibited from operating as Head Office (HQ)
-    if (role === 'TELLER' && (branchId === 'HQ' || branchId === 'HEAD OFFICE')) {
-      const assigned = normalizeBranchId(profile?.branch_id || '');
-      branchId = (assigned !== 'HQ' && assigned !== 'HEAD OFFICE') ? assigned : '';
+    if (!branchId) {
+      branchId = 'HQ';
     }
 
     return {

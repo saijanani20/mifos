@@ -147,30 +147,18 @@ export default function LoginPage() {
     const effectiveBranchInput = branch || 'HQ';
 
     try {
-      let loginEmail = email.trim();
-      if (!loginEmail.includes('@')) {
-        if (loginEmail.toLowerCase() === 'admin') {
-          loginEmail = 'admin@gmail.com';
-        } else {
-          loginEmail = `${loginEmail.toLowerCase()}@gmail.com`;
-        }
-      }
-
-      if (loginEmail.toLowerCase() === 'auditor@gmail.com') {
-        throw new Error('Access Denied: The legacy auditor account has been decommissioned.');
-      }
-
+      const rawInput = email.trim();
       let authUser: any = null;
       let tok = '';
       let refTok = '';
       let userRole = 'TELLER';
 
-      // 1. Primary: Server-side API login (immune to browser adblockers and cross-origin fetch failures)
+      // 1. Primary: Server-side API login (immune to browser adblockers, handles username/name lookup and http-safe cookies)
       try {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: loginEmail, password, branch: effectiveBranchInput })
+          body: JSON.stringify({ email: rawInput, password, branch: effectiveBranchInput })
         });
         const resData = await res.json();
         if (res.ok && resData.success) {
@@ -191,12 +179,16 @@ export default function LoginPage() {
         console.warn('Server login fallback to client auth:', srvErr);
       }
 
-      // 2. Fallback: Client-side Supabase if server-side route was not used
+      // 2. Fallback: Client-side Supabase if server-side route was unreachable
       if (!authUser) {
-        const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+        let fallbackEmail = rawInput;
+        if (!fallbackEmail.includes('@')) {
+          fallbackEmail = fallbackEmail.toLowerCase() === 'admin' ? 'admin@gmail.com' : `${fallbackEmail.toLowerCase()}@gmail.com`;
+        }
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: fallbackEmail, password });
         if (signInError || !data.user) throw new Error(signInError?.message || 'Invalid credentials');
 
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
         authUser = data.user;
         tok = data.session?.access_token || '';
         refTok = data.session?.refresh_token || '';
