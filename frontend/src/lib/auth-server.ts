@@ -44,6 +44,25 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       if (tokenCookie) {
         token = tokenCookie.split('=')[1]?.trim() || '';
       }
+
+      // Check refresh token fallback if access token cookie is missing
+      if (!token) {
+        const refreshCookie = cookieHeader.split(';').find(c => c.trim().startsWith('sb-refresh-token=') || c.trim().startsWith('refresh_token='));
+        const refreshToken = refreshCookie ? refreshCookie.split('=')[1]?.trim() : '';
+        if (refreshToken) {
+          try {
+            const authSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+              auth: { autoRefreshToken: false, persistSession: false }
+            });
+            const { data: refreshedSession } = await authSupabase.auth.refreshSession({ refresh_token: refreshToken });
+            if (refreshedSession?.session?.access_token) {
+              token = refreshedSession.session.access_token;
+            }
+          } catch (rErr) {
+            console.warn('[auth-server] Refresh token recovery failed:', rErr);
+          }
+        }
+      }
     }
 
     if (!token) {
@@ -51,8 +70,37 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
     }
 
     // Verify token with Supabase Auth
-    const { data: { user }, error: userError } = await adminSupabase.auth.getUser(token);
-    if (userError || !user) {
+    let user: any = null;
+    const { data: authData, error: userError } = await adminSupabase.auth.getUser(token);
+    if (!userError && authData?.user) {
+      user = authData.user;
+    } else {
+      // Graceful recovery for tokens expired during active shifts (24-hour shift grace window)
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payloadJson = Buffer.from(parts[1], 'base64').toString('utf8');
+          const payload = JSON.parse(payloadJson);
+          const userId = payload.sub;
+          const exp = payload.exp;
+
+          const nowSec = Math.floor(Date.now() / 1000);
+          // Allow 24 hours of shift window past token expiration
+          const isWithinShiftGrace = exp && (nowSec - exp < 24 * 3600);
+
+          if (userId && isWithinShiftGrace) {
+            const { data: adminUser } = await adminSupabase.auth.admin.getUserById(userId);
+            if (adminUser?.user) {
+              user = adminUser.user;
+            }
+          }
+        }
+      } catch (recoveryErr) {
+        console.warn('[auth-server] Expired JWT recovery attempt failed:', recoveryErr);
+      }
+    }
+
+    if (!user) {
       return null;
     }
 
