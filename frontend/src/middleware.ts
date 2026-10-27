@@ -67,11 +67,6 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // If authenticated user with valid token visits /login, redirect to dashboard /
-  if (hasValidToken && isLoginPage) {
-    return NextResponse.redirect(new URL('/', request.url));
-  }
-
   return NextResponse.next();
 }
 
