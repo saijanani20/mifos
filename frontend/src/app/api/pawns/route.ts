@@ -301,7 +301,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { clientId, clientName, customerName, phone: clientPhone, address: clientAddress, description, appraisedValue, disbursedAmount, branchId, createdByUserId, billNo, weight, weightGrams, weightMg, interestRate, periodMonths, itemType, items, airWeightPhoto, waterWeightPhoto, waterWeight, specificGravity, estimatedKarat } = body;
+    const { clientId, clientName, customerName, phone: clientPhone, address: clientAddress, description, appraisedValue, disbursedAmount, branchId, createdByUserId, billNo, weight, weightGrams, weightMg, interestRate, periodMonths, itemType, items, date, airWeightPhoto, waterWeightPhoto, waterWeight, specificGravity, estimatedKarat } = body;
 
     if (!clientId || !disbursedAmount || !billNo || String(billNo).trim() === '') {
       return NextResponse.json({ error: 'Missing required fields: Customer, Disbursed Amount, and Bill Number (billNo)' }, { status: 400 });
@@ -422,10 +422,23 @@ export async function POST(request: Request) {
     const pawnId = crypto.randomUUID();
     const finalDisbursed = parseFloat(disbursedAmount) || 0;
     const finalAppraised = parseFloat(appraisedValue) || finalDisbursed;
-    const finalWeightGrams = parseFloat(weightGrams) || parseFloat(weight) || 0;
-    const finalWeightMg = parseFloat(weightMg) || 0;
+    let finalWeightGrams = parseFloat(weightGrams) || parseFloat(weight) || 0;
+    let finalWeightMg = parseFloat(weightMg) || 0;
+
+    // Weight Normalization: If mg < 50 and mg > 0, user typed grams into mg field (e.g. 4.02)
+    if (finalWeightMg > 0 && finalWeightMg < 50) {
+      finalWeightGrams = finalWeightMg;
+      finalWeightMg = Math.round(finalWeightGrams * 1000);
+    } else if (finalWeightMg >= 50 && (!finalWeightGrams || finalWeightGrams <= 0)) {
+      finalWeightGrams = parseFloat((finalWeightMg / 1000).toFixed(4));
+    } else if (finalWeightGrams > 0 && (!finalWeightMg || finalWeightMg <= 0)) {
+      finalWeightMg = Math.round(finalWeightGrams * 1000);
+    }
+
     const finalInterestRate = parseFloat(interestRate) || 3.50;
     const finalPeriodMonths = parseInt(periodMonths, 10) || 3;
+    const pawnDate = (date && String(date).trim()) ? String(date).trim() : getSriLankaDate();
+    const pawnCreatedAt = date ? `${pawnDate}T12:00:00.000Z` : new Date().toISOString();
 
     // Determine initial pawn status (High-ValuePawns > Rs. 100,000 require Manager Approval)
     const initialStatus = finalDisbursed > HIGH_VALUE_APPROVAL_THRESHOLD ? 'PENDING_APPROVAL' : 'ACTIVE';
@@ -447,7 +460,7 @@ export async function POST(request: Request) {
       branch_id: targetBranchId,
       created_by_user_id: targetUserId,
       status: initialStatus,
-      created_at: new Date().toISOString(),
+      created_at: pawnCreatedAt,
       bill_no: scopedBillNo || null,
       weight_grams: finalWeightGrams,
       weight_mg: finalWeightMg,
@@ -489,7 +502,16 @@ export async function POST(request: Request) {
 
     if (Array.isArray(items) && items.length > 0) {
       const pawnItemsPayload = items.map((item: any) => {
-        const itemMg = parseFloat(item.weightMg || item.weight_mg) || 0;
+        let itemMg = parseFloat(item.weightMg || item.weight_mg) || 0;
+        let itemGrams = parseFloat(item.weightGrams || item.weight_grams) || 0;
+        if (itemMg > 0 && itemMg < 50) {
+          itemGrams = itemMg;
+          itemMg = Math.round(itemGrams * 1000);
+        } else if (itemMg >= 50) {
+          itemGrams = parseFloat((itemMg / 1000).toFixed(4));
+        } else if (itemGrams > 0) {
+          itemMg = Math.round(itemGrams * 1000);
+        }
         const itemAppraised = parseFloat(item.appraisedValue || item.appraised_value) || (finalAppraised / items.length);
         const rawType = item.itemType || item.item_type || itemType || 'Gold';
         const customText = item.customType || item.description || '';
@@ -501,7 +523,7 @@ export async function POST(request: Request) {
           pawn_id: pawnId,
           item_type: itemTypeLabel,
           purity: item.purity || '22K',
-          weight_grams: itemMg / 1000,
+          weight_grams: itemGrams,
           weight_mg: itemMg,
           appraised_value: itemAppraised,
           description: `${itemDescText} (${baseBill})`
@@ -522,8 +544,7 @@ export async function POST(request: Request) {
       }
 
       // Create a SINGLE consolidated vault stock item for the entire pawn ticket (Option 1)
-      const totalWeightMg = items.reduce((sum: number, it: any) => sum + (parseFloat(it.weightMg || it.weight_mg) || 0), 0);
-      const totalWeightGrams = totalWeightMg > 0 ? (totalWeightMg / 1000) : (finalWeightGrams || (finalWeightMg > 0 ? finalWeightMg / 1000 : 0));
+      const totalWeightGrams = pawnItemsPayload.reduce((sum: number, it: any) => sum + (it.weight_grams || 0), 0) || finalWeightGrams;
       
       const itemCodes = items.map((item: any) => {
         const rawType = item.itemType || item.item_type || itemType || 'CH';
@@ -542,8 +563,8 @@ export async function POST(request: Request) {
         weight: totalWeightGrams,
         price: finalAppraised,
         status: 'Active',
-        date: getSriLankaDate(),
-        created_at: new Date().toISOString()
+        date: pawnDate,
+        created_at: pawnCreatedAt
       };
 
       const { error: stockErr } = await adminSupabase
@@ -560,8 +581,8 @@ export async function POST(request: Request) {
         pawn_id: pawnId,
         item_type: (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || 'Gold'),
         purity: '22K',
-        weight_grams: finalWeightGrams || (finalWeightMg > 0 ? finalWeightMg / 1000 : 0),
-        weight_mg: finalWeightMg || (finalWeightGrams * 1000),
+        weight_grams: finalWeightGrams,
+        weight_mg: finalWeightMg,
         appraised_value: finalAppraised,
         description: description || `${itemType || 'Gold'} Collateral (${baseBill})`
       };
@@ -585,11 +606,11 @@ export async function POST(request: Request) {
         bill_no: baseBill,
         branch_id: targetBranchId,
         item_type: defaultCode,
-        weight: finalWeightMg > 0 ? finalWeightMg / 1000 : finalWeightGrams,
+        weight: finalWeightGrams,
         price: finalAppraised,
         status: 'Active',
-        date: getSriLankaDate(),
-        created_at: new Date().toISOString()
+        date: pawnDate,
+        created_at: pawnCreatedAt
       }], { onConflict: 'branch_id, bill_no' });
       if (singleStockErr) {
         console.warn("Could not insert matching vault stock item:", singleStockErr.message);

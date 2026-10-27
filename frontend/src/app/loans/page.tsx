@@ -243,6 +243,7 @@ export default function PawnesPage() {
   const [weightGrams, setWeightGrams]   = useState('');
   const [weightMg, setWeightMg]         = useState('');
   const [periodMonths, setPeriodMonths] = useState('1');
+  const [pawnDate, setPawnDate]         = useState<string>(() => new Date().toISOString().split('T')[0]);
 
   // Multi-Item Pawn State (Milligrams mg standard)
   const [itemsList, setItemsList] = useState<any[]>([
@@ -653,6 +654,7 @@ export default function PawnesPage() {
     setClientId(''); setDescription(''); setAppraisal(''); setAmount('');
     setBillPrefix('1R'); setBillNo(''); setItemType('CH'); setGoldWeight('');
     setWeightGrams(''); setWeightMg('');
+    setPawnDate(new Date().toISOString().split('T')[0]);
     setClientPhone(''); setClientAddress('');
     setItemsList([{ itemType: 'CH', description: '', weightGrams: '', weightMg: '', appraisedValue: '' }]);
     setEditingPawn(null); setResolvedName(''); setShowSuggestions(false);
@@ -838,10 +840,19 @@ export default function PawnesPage() {
     }
   };
 
-  const openAdd = () => { resetForm(); loadClients(); setIsOpen(true); };
+  const openAdd = () => { 
+    resetForm(); 
+    if (userRole === 'ADMIN' && filterBranch && filterBranch !== 'ALL') {
+      setBranchId(filterBranch);
+    }
+    loadClients(); 
+    setIsOpen(true); 
+  };
 
   const openEdit = (pawn: any) => {
     setEditingPawn(pawn);
+    setPawnDate(pawn.date || (pawn.created_at ? pawn.created_at.split('T')[0] : new Date().toISOString().split('T')[0]));
+    if (pawn.branch_id) setBranchId(pawn.branch_id);
     const cid = pawn.client_id || '';
     setClientId(cid);
     
@@ -969,6 +980,7 @@ export default function PawnesPage() {
           periodMonths,
           itemType,
           items: itemsList,
+          date: pawnDate,
           airWeightPhoto: evaluationData?.airWeightPhoto || null,
           waterWeightPhoto: evaluationData?.waterWeightPhoto || null,
           waterWeight: evaluationData?.waterWeight || null,
@@ -1397,12 +1409,20 @@ export default function PawnesPage() {
         onAccept={(data) => {
           setEvaluationData(data);
           resetForm();
+          if (userRole === 'ADMIN' && filterBranch && filterBranch !== 'ALL') {
+            setBranchId(filterBranch);
+          }
           loadClients();
           // Set initial form values based on evaluation
           const appraisedStr = (data.trueValue || '').toString();
           const amountStr = (data.askingAmount || '').toString();
-          const weightMgStr = (data.airWeight || '').toString();
-          const gVal = data.airWeight >= 100 ? (data.airWeight / 1000).toFixed(3) : data.airWeight.toString();
+          
+          const rawAw = Number(data.airWeight) || 0;
+          // Scale often outputs Grams (e.g. 4.02g). If rawAw < 50, it is grams! Convert to mg.
+          // If rawAw >= 50, it was already entered as milligrams (e.g. 4020 mg).
+          const weightMgNum = rawAw > 0 && rawAw < 50 ? Math.round(rawAw * 1000) : (rawAw >= 50 ? Math.round(rawAw) : 0);
+          const weightMgStr = weightMgNum > 0 ? weightMgNum.toString() : '';
+          const gVal = rawAw > 0 && rawAw < 50 ? rawAw.toString() : (rawAw >= 50 ? (rawAw / 1000).toFixed(3) : '0');
           
           setAppraisal(appraisedStr);
           setAmount(amountStr);
@@ -1876,6 +1896,46 @@ export default function PawnesPage() {
                       onChange={e => setClientAddress(e.target.value)}
                       placeholder="Customer Address"
                       className="h-10 bg-white/80 rounded-xl text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Target Branch and Pawning Date Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-amber-50/70 border border-amber-200/90 rounded-2xl">
+                  <div className="grid gap-1.5">
+                    <Label className="font-black text-[10px] uppercase tracking-widest text-amber-900 flex items-center justify-between">
+                      <span>Target Branch</span>
+                      {userRole === 'ADMIN' && <span className="text-[9px] text-amber-600 font-bold">(Admin Select)</span>}
+                    </Label>
+                    {userRole === 'ADMIN' ? (
+                      <select
+                        value={branchId}
+                        onChange={e => setBranchId(e.target.value)}
+                        className="h-10 px-3 bg-white rounded-xl border border-amber-300 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      >
+                        <option value="">-- Select Branch --</option>
+                        {branches.filter(b => b.id !== 'ALL').map(b => (
+                          <option key={b.id || b.code} value={b.id || b.code}>
+                            {b.name || b.code} ({b.id || b.code})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="h-10 px-3 flex items-center bg-white/80 rounded-xl border border-amber-200 text-xs font-bold text-slate-700">
+                        {branches.find(b => (b.id || b.code) === branchId)?.name || branchId || 'Current Branch'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-1.5">
+                    <Label className="font-black text-[10px] uppercase tracking-widest text-amber-900">
+                      Pawning Date
+                    </Label>
+                    <Input
+                      type="date"
+                      value={pawnDate}
+                      onChange={e => setPawnDate(e.target.value)}
+                      className="h-10 bg-white rounded-xl text-xs font-bold border-amber-300"
                     />
                   </div>
                 </div>

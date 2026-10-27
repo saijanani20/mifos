@@ -79,6 +79,15 @@ export async function GET(request: Request) {
   }
 }
 
+function normalizeWeightToGrams(rawWeight: any): number {
+  const w = parseFloat(rawWeight) || 0;
+  if (w <= 0) return 0;
+  // If weight >= 100, user entered Milligrams (e.g. 5170mg -> 5.17g)
+  if (w >= 100) return parseFloat((w / 1000).toFixed(4));
+  // If weight < 100, it is already in Grams (e.g. 5.17g)
+  return parseFloat(w.toFixed(4));
+}
+
 export async function POST(request: Request) {
   try {
     const session = await getAuthenticatedUser(request);
@@ -103,7 +112,7 @@ export async function POST(request: Request) {
     const payload: any = {
       bill_no: stripBranchPrefix(String(bill_no)).trim(),
       price: parseFloat(price) || 0,
-      weight: parseFloat(weight) || 0,
+      weight: normalizeWeightToGrams(weight),
       date: date || new Date().toISOString().split('T')[0],
       item_type: item_type || 'Gold Item',
       status: status || 'Active',
@@ -167,7 +176,7 @@ export async function PUT(request: Request) {
     const updatePayload: any = {};
     if (bill_no !== undefined) updatePayload.bill_no = bill_no ? stripBranchPrefix(String(bill_no)).trim() : bill_no;
     if (price !== undefined) updatePayload.price = parseFloat(price) || 0;
-    if (weight !== undefined) updatePayload.weight = parseFloat(weight) || 0;
+    if (weight !== undefined) updatePayload.weight = normalizeWeightToGrams(weight);
     if (date !== undefined) updatePayload.date = date;
     if (item_type !== undefined) updatePayload.item_type = item_type;
     if (branch_id !== undefined) updatePayload.branch_id = normalizeBranchId(branch_id);
