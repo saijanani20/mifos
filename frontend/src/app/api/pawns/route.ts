@@ -27,8 +27,15 @@ export async function GET(request: Request) {
       ? rawBranch.split(',').map(b => b.trim()).filter(Boolean)
       : [];
 
-    // Default to user's assigned branch if no explicit branch is requested
-    if (branchTokens.length === 0) {
+    // Enforce branch isolation for tellers and non-global branch staff:
+    // A user logged into a branch (e.g. Panadura PND) can ONLY see that branch's pawns.
+    // Admin, Auditor, or HQ staff can view all branches or specific selected branches.
+    const userRole = (session.role || 'TELLER').toUpperCase();
+    const isGlobalManager = ['ADMIN', 'AUDITOR'].includes(userRole) && (!session.branchId || session.branchId === 'HQ' || session.branchId === 'DHW' || session.branchId === 'ALL');
+
+    if (!isGlobalManager && session.branchId && session.branchId !== 'HQ' && session.branchId !== 'DHW' && session.branchId !== 'ALL') {
+      branchTokens = [session.branchId];
+    } else if (branchTokens.length === 0) {
       if (session.branchId && session.branchId !== 'HQ' && session.branchId !== 'DHW' && session.branchId !== 'ALL') {
         branchTokens = [session.branchId];
       } else {

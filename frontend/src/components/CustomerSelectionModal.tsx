@@ -86,10 +86,10 @@ export function CustomerSelectionModal({
     }
   }, [clientsList]);
 
-  // Ensure freshest client directory from backend when modal opens
+  // Ensure freshest client directory across all branches when modal opens
   useEffect(() => {
     if (isOpen) {
-      fetch('/api/clients', { headers: getAuthHeaders() })
+      fetch('/api/clients?branchId=ALL', { headers: getAuthHeaders() })
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) {

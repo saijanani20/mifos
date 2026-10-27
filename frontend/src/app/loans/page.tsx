@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
   Plus, Search, FileText, Package, TrendingUp, AlertTriangle,
-  Pencil, Trash2, RefreshCcw, Printer, Filter, UserCheck, Calculator, Coins, Scale, Download, Send, Smartphone, Bluetooth, Camera, MapPin, MoreVertical, ShieldCheck, Check
+  Pencil, Trash2, RefreshCcw, Printer, Filter, UserCheck, Calculator, Coins, Scale, Download, Send, Smartphone, Bluetooth, Camera, MapPin, MoreVertical, ShieldCheck, Check, Lock
 } from "lucide-react"
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { EscPosAdapter } from "@/lib/bluetooth/EscPosAdapter";
@@ -84,6 +84,12 @@ export default function PawnesPage() {
   const [branchId, setBranchId]       = useState('');
   const [userId, setUserId]           = useState('');
   const [userRole, setUserRole]       = useState('TELLER');
+
+  // Branch locked for tellers and non-global branch staff: strictly locked to home branch pawns only
+  const isBranchLocked = userRole === 'TELLER' || (
+    userRole !== 'ADMIN' && userRole !== 'AUDITOR' &&
+    Boolean(branchId) && branchId !== 'HQ' && branchId !== 'DHW' && branchId !== 'ALL'
+  );
 
   // Multi-option filters
   const [filterBranch, setFilterBranch]           = useState('ALL');
@@ -414,27 +420,11 @@ export default function PawnesPage() {
     } catch (e) { console.error('Failed to load branches', e); }
   };
 
-  // Build a map of { nationalId -> "First Last", id -> "First Last" } for fast lookups
-  const loadClients = async (u?: any, overrideBranches?: string[] | string) => {
+  // Load clients across all branches for fast lookups & cross-branch customer pawn creation
+  const loadClients = async () => {
     try {
-      const user = u || JSON.parse(localStorage.getItem('user') || '{}');
       const headers = getAuthHeaders();
-
-      let activeBranches: string[] = [];
-      if (overrideBranches !== undefined) {
-        activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
-      } else if (selectedBranches.length > 0) {
-        activeBranches = selectedBranches;
-      } else if (user?.branchId && user.branchId !== 'DHW' && user.branchId !== 'HQ' && user.branchId !== 'ALL') {
-        activeBranches = [normalizeBranchId(user.branchId).toUpperCase()];
-      } else {
-        activeBranches = ['ALL'];
-      }
-
-      const isAll = activeBranches.includes('ALL');
-      const queryParam = isAll ? '' : `?branchId=${encodeURIComponent(activeBranches.join(','))}`;
-
-      const res = await fetch(`/api/clients${queryParam}`, { headers });
+      const res = await fetch('/api/clients?branchId=ALL', { headers });
       if (res.ok) {
         const data: any[] = await res.json();
         setClientsList(data);
@@ -475,14 +465,24 @@ export default function PawnesPage() {
       setLoading(true);
       const user = u || loadUser();
       const headers = getAuthHeaders();
+      const rawRole = (localStorage.getItem('user_role') || user?.role || userRole || 'TELLER').toUpperCase().trim();
+      const effectiveRole = ['ADMIN', 'MANAGER', 'AUDITOR'].includes(rawRole) ? rawRole : 'TELLER';
+      const uBranch = user?.branchId || branchId;
+      const locked = effectiveRole === 'TELLER' || (
+        effectiveRole !== 'ADMIN' && effectiveRole !== 'AUDITOR' &&
+        Boolean(uBranch) && uBranch !== 'HQ' && uBranch !== 'DHW' && uBranch !== 'ALL'
+      );
 
       let activeBranches: string[] = [];
-      if (overrideBranches !== undefined) {
+      if (locked && uBranch) {
+        // Tellers and branch staff are strictly locked to their home branch
+        activeBranches = [normalizeBranchId(uBranch).toUpperCase()];
+      } else if (overrideBranches !== undefined) {
         activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
       } else if (selectedBranches.length > 0) {
         activeBranches = selectedBranches;
-      } else if (user?.branchId && user.branchId !== 'DHW' && user.branchId !== 'HQ' && user.branchId !== 'ALL') {
-        activeBranches = [normalizeBranchId(user.branchId).toUpperCase()];
+      } else if (uBranch && uBranch !== 'DHW' && uBranch !== 'HQ' && uBranch !== 'ALL') {
+        activeBranches = [normalizeBranchId(uBranch).toUpperCase()];
       } else {
         activeBranches = ['ALL'];
       }
@@ -492,7 +492,7 @@ export default function PawnesPage() {
 
       const params = new URLSearchParams({
         branchId: branchParam,
-        role: user?.role || userRole,
+        role: effectiveRole,
         filterBranch: branchParam,
       });
       const res = await fetch(`/api/pawns?${params}`, { headers });
@@ -511,6 +511,7 @@ export default function PawnesPage() {
   };
 
   const toggleBranch = (bId: string) => {
+    if (isBranchLocked) return;
     const cleanId = bId.trim().toUpperCase();
     let next: string[];
 
@@ -541,25 +542,30 @@ export default function PawnesPage() {
     setSelectedBranches(next);
     setFilterBranch(next.includes('ALL') ? 'ALL' : next.join(','));
     loadPawns(undefined, next);
-    loadClients(undefined, next);
   };
 
   const selectHomeBranchOnly = () => {
+    if (isBranchLocked) return;
     const home = branchId ? branchId.toUpperCase() : 'HQ';
     setSelectedBranches([home]);
     setFilterBranch(home);
     loadPawns(undefined, [home]);
-    loadClients(undefined, [home]);
   };
 
   const selectAllBranches = () => {
+    if (isBranchLocked) return;
     setSelectedBranches(['ALL']);
     setFilterBranch('ALL');
     loadPawns(undefined, ['ALL']);
-    loadClients(undefined, ['ALL']);
   };
 
   const getBranchButtonLabel = () => {
+    if (isBranchLocked) {
+      const code = branchId ? branchId.toUpperCase() : 'HOME';
+      const bObj = branches.find(b => b.id.toUpperCase() === code.toUpperCase());
+      const name = bObj?.name || code;
+      return `${name.toUpperCase()} (HOME) (${pawns.length})`;
+    }
     if (selectedBranches.includes('ALL')) {
       return `ALL BRANCHES (${pawns.length})`;
     }
@@ -581,14 +587,24 @@ export default function PawnesPage() {
 
   useEffect(() => {
     const u = loadUser();
+    const rawRole = (localStorage.getItem('user_role') || u?.role || 'TELLER').toUpperCase().trim();
+    const effectiveRole = ['ADMIN', 'MANAGER', 'AUDITOR'].includes(rawRole) ? rawRole : 'TELLER';
+    const locked = effectiveRole === 'TELLER' || (
+      effectiveRole !== 'ADMIN' && effectiveRole !== 'AUDITOR' &&
+      Boolean(u?.branchId) && u.branchId !== 'HQ' && u.branchId !== 'DHW' && u.branchId !== 'ALL'
+    );
+
     let initialBranches = ['ALL'];
-    if (u?.branchId && u.branchId !== 'DHW' && u.branchId !== 'HQ' && u.branchId !== 'ALL') {
+    if (locked && u?.branchId) {
+      initialBranches = [normalizeBranchId(u.branchId).toUpperCase()];
+    } else if (u?.branchId && u.branchId !== 'DHW' && u.branchId !== 'HQ' && u.branchId !== 'ALL') {
       initialBranches = [normalizeBranchId(u.branchId).toUpperCase()];
     }
+
     setSelectedBranches(initialBranches);
     setFilterBranch(initialBranches.includes('ALL') ? 'ALL' : initialBranches.join(','));
     loadPawns(u, initialBranches);
-    loadClients(u, initialBranches);
+    loadClients();
     loadBranches();
   }, []);
 
@@ -1255,7 +1271,13 @@ export default function PawnesPage() {
   const searchLower = (search || '').toLowerCase().trim();
   const filtered = pawns.filter(p => {
     // 1. Branch Filter (Client-side immediate filtering + safety)
-    if (selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
+    if (isBranchLocked && branchId) {
+      const homeBranch = normalizeBranchId(branchId).toUpperCase();
+      const pBranch = String(p.branch_id || p.branchId || '').toUpperCase().trim();
+      const terms = getBranchSearchTerms(homeBranch);
+      const isHomeMatch = terms.some(t => pBranch === t.toUpperCase() || pBranch.includes(t.toUpperCase())) || pBranch === homeBranch;
+      if (!isHomeMatch) return false;
+    } else if (selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
       const pBranch = String(p.branch_id || p.branchId || '').toUpperCase().trim();
       const branchMatches = selectedBranches.some(sBranch => {
         const terms = getBranchSearchTerms(sBranch);
@@ -2160,29 +2182,47 @@ export default function PawnesPage() {
 
         {/* Filters Group */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 shrink-0">
-          {/* Branch Filter with Multi-Select Popover Card */}
+          {/* Branch Filter with Multi-Select Popover Card (Locked for Tellers, interactive for Admins) */}
           <div className="relative min-w-[180px] sm:min-w-[210px]" ref={branchDropdownRef}>
             <button
               type="button"
               id="loans-branch-filter-btn"
-              onClick={() => setIsBranchFilterOpen(!isBranchFilterOpen)}
+              disabled={isBranchLocked}
+              onClick={() => {
+                if (!isBranchLocked) {
+                  setIsBranchFilterOpen(!isBranchFilterOpen);
+                }
+              }}
+              title={isBranchLocked ? `Pawning strictly restricted to ${getBranchButtonLabel()}` : 'Filter pawns by branch'}
               className={`h-11 w-full px-3.5 pr-8 bg-white/90 border ${
                 isBranchFilterOpen ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200'
-              } glass font-black text-[11px] uppercase tracking-wider text-slate-800 rounded-xl shadow-xs hover:border-primary/60 transition-all flex items-center justify-between cursor-pointer select-none`}
+              } glass font-black text-[11px] uppercase tracking-wider text-slate-800 rounded-xl shadow-xs ${
+                isBranchLocked
+                  ? 'cursor-default opacity-90'
+                  : 'hover:border-primary/60 cursor-pointer'
+              } transition-all flex items-center justify-between select-none`}
             >
               <div className="flex items-center gap-1.5 truncate">
                 <span className="truncate">{getBranchButtonLabel()}</span>
-                {!selectedBranches.includes('ALL') && selectedBranches.length > 0 && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                {isBranchLocked ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="Locked to your assigned branch" />
+                ) : (
+                  !selectedBranches.includes('ALL') && selectedBranches.length > 0 && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  )
                 )}
               </div>
               <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-primary">
-                <Filter className="w-3.5 h-3.5" />
+                {isBranchLocked ? (
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                ) : (
+                  <Filter className="w-3.5 h-3.5" />
+                )}
               </div>
             </button>
 
-            {/* Interactive Multi-Select Popover Card */}
-            {isBranchFilterOpen && (
+            {/* Interactive Multi-Select Popover Card (Only rendered when not locked) */}
+            {!isBranchLocked && isBranchFilterOpen && (
               <div className="absolute right-0 top-13 z-50 w-72 bg-white/95 backdrop-blur-xl border border-slate-200/90 shadow-2xl rounded-2xl p-3 space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
                 {/* Header & Quick Actions */}
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
