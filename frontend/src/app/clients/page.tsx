@@ -93,18 +93,22 @@ export default function ClientsPage() {
   // Customer KYC Photo Viewer Dialog State
   const [photoViewerClient, setPhotoViewerClient] = useState<{
     isOpen: boolean;
+    clientId?: string;
     name: string;
     nic: string;
     front?: string | null;
     back?: string | null;
     signature?: string | null;
+    isLoading?: boolean;
   }>({
     isOpen: false,
+    clientId: '',
     name: '',
     nic: '',
     front: null,
     back: null,
     signature: null,
+    isLoading: false,
   });
 
   // Real-time duplicate cross-check against database when registering customer
@@ -1502,86 +1506,120 @@ export default function ClientsPage() {
                   </TableCell>
                   <TableCell className="px-8 py-6 max-w-[200px] truncate text-slate-500 font-bold text-xs">{client.address || 'No Address'}</TableCell>
                   <TableCell className="px-8 py-6">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       {(() => {
-                        let nicFront = null;
-                        let nicBack = null;
+                        let nicFront: string | null = null;
+                        let nicBack: string | null = null;
                         if (client.nic_image) {
                           try {
                             const parsed = JSON.parse(client.nic_image);
                             nicFront = parsed.front || null;
                             nicBack = parsed.back || null;
                           } catch (e) {
-                            nicFront = client.nic_image; // Fallback legacy format support
+                            nicFront = client.nic_image;
                           }
                         }
-                        const openViewer = () => {
+
+                        const isRealImage = (src?: string | null) => 
+                          Boolean(src && (src.startsWith('data:') || src.startsWith('http:') || src.startsWith('https:') || src.startsWith('/')));
+
+                        const hasFront = Boolean(isRealImage(nicFront) || nicFront === 'captured' || client.has_nic_image);
+                        const hasBack = Boolean(isRealImage(nicBack) || nicBack === 'captured');
+                        const hasSig = Boolean(isRealImage(client.signature_image) || client.signature_image === 'captured' || client.has_signature);
+
+                        const handleOpenViewer = async () => {
+                          const needsFetch = (!isRealImage(nicFront) && hasFront) || (!isRealImage(client.signature_image) && hasSig);
+
                           setPhotoViewerClient({
                             isOpen: true,
+                            clientId: client.id,
                             name: `${client.first_name || client.firstName || ''} ${client.last_name || client.lastName || ''}`.trim() || 'Customer',
                             nic: client.national_id || client.nationalId || 'N/A',
-                            front: nicFront,
-                            back: nicBack,
-                            signature: client.signature_image || null,
+                            front: isRealImage(nicFront) ? nicFront : null,
+                            back: isRealImage(nicBack) ? nicBack : null,
+                            signature: isRealImage(client.signature_image) ? client.signature_image : null,
+                            isLoading: needsFetch,
                           });
+
+                          if (needsFetch && client.id) {
+                            try {
+                              const res = await fetch(`/api/clients/${client.id}`);
+                              if (res.ok) {
+                                const full = await res.json();
+                                let fFront: string | null = null;
+                                let fBack: string | null = null;
+                                if (full.nic_image) {
+                                  try {
+                                    const p = JSON.parse(full.nic_image);
+                                    fFront = p.front || null;
+                                    fBack = p.back || null;
+                                  } catch {
+                                    fFront = full.nic_image;
+                                  }
+                                }
+                                setPhotoViewerClient(prev => ({
+                                  ...prev,
+                                  front: fFront,
+                                  back: fBack,
+                                  signature: full.signature_image || null,
+                                  isLoading: false,
+                                }));
+                              } else {
+                                setPhotoViewerClient(prev => ({ ...prev, isLoading: false }));
+                              }
+                            } catch {
+                              setPhotoViewerClient(prev => ({ ...prev, isLoading: false }));
+                            }
+                          }
                         };
 
                         return (
                           <>
-                            {nicFront ? (
-                              <div 
-                                onClick={openViewer}
-                                className="relative group/thumb cursor-pointer"
-                                title="Click to view full photo"
-                              >
-                                <img 
-                                  src={nicFront} 
-                                  alt="NIC Front" 
-                                  className="w-10 h-8 rounded-lg object-cover border border-slate-200 shadow-sm transition-transform group-hover/thumb:scale-125 group-hover/thumb:z-50"
-                                />
-                                <span className="bg-slate-900/90 text-white text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded absolute -bottom-1.5 -right-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity">FRONT</span>
+                            {/* Front Scan */}
+                            {isRealImage(nicFront) ? (
+                              <div onClick={handleOpenViewer} className="relative group/thumb cursor-pointer" title="Click to view full photo">
+                                <img src={nicFront!} alt="NIC Front" className="w-9 h-7 rounded-lg object-cover border border-slate-200 shadow-xs transition-transform group-hover/thumb:scale-125" />
                               </div>
+                            ) : hasFront ? (
+                              <button type="button" onClick={handleOpenViewer} className="h-7 px-2 rounded-md bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 text-emerald-700 flex items-center gap-1 cursor-pointer transition-all shadow-xs" title="Webcam NIC Front captured. Click to view">
+                                <Camera className="w-3 h-3 text-emerald-600" />
+                                <span className="text-[9px] font-black uppercase tracking-wider">Front</span>
+                              </button>
                             ) : (
-                              <div className="w-10 h-8 bg-slate-100 rounded-lg flex items-center justify-center border border-dashed border-slate-200" title="No NIC Front Scan">
-                                <CameraOff className="w-3.5 h-3.5 text-slate-300" />
+                              <div className="w-7 h-7 bg-slate-100 rounded-md flex items-center justify-center border border-dashed border-slate-200" title="No NIC Front Scan">
+                                <CameraOff className="w-3 h-3 text-slate-300" />
                               </div>
                             )}
 
-                            {nicBack ? (
-                              <div 
-                                onClick={openViewer}
-                                className="relative group/thumb cursor-pointer"
-                                title="Click to view full photo"
-                              >
-                                <img 
-                                  src={nicBack} 
-                                  alt="NIC Back" 
-                                  className="w-10 h-8 rounded-lg object-cover border border-slate-200 shadow-sm transition-transform group-hover/thumb:scale-125 group-hover/thumb:z-50"
-                                />
-                                <span className="bg-slate-900/90 text-white text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded absolute -bottom-1.5 -right-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity">BACK</span>
+                            {/* Back Scan */}
+                            {isRealImage(nicBack) ? (
+                              <div onClick={handleOpenViewer} className="relative group/thumb cursor-pointer" title="Click to view full photo">
+                                <img src={nicBack!} alt="NIC Back" className="w-9 h-7 rounded-lg object-cover border border-slate-200 shadow-xs transition-transform group-hover/thumb:scale-125" />
                               </div>
+                            ) : hasBack ? (
+                              <button type="button" onClick={handleOpenViewer} className="h-7 px-2 rounded-md bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 text-emerald-700 flex items-center gap-1 cursor-pointer transition-all shadow-xs" title="Webcam NIC Back captured. Click to view">
+                                <Camera className="w-3 h-3 text-emerald-600" />
+                                <span className="text-[9px] font-black uppercase tracking-wider">Back</span>
+                              </button>
                             ) : (
-                              <div className="w-10 h-8 bg-slate-100 rounded-lg flex items-center justify-center border border-dashed border-slate-200" title="No NIC Back Scan">
-                                <CameraOff className="w-3.5 h-3.5 text-slate-300" />
+                              <div className="w-7 h-7 bg-slate-100 rounded-md flex items-center justify-center border border-dashed border-slate-200" title="No NIC Back Scan">
+                                <CameraOff className="w-3 h-3 text-slate-300" />
                               </div>
                             )}
 
-                            {client.signature_image ? (
-                              <div 
-                                onClick={openViewer}
-                                className="relative group/thumb cursor-pointer"
-                                title="Click to view signature"
-                              >
-                                <img 
-                                  src={client.signature_image} 
-                                  alt="Signature Preview" 
-                                  className="w-10 h-8 rounded-lg object-cover border border-slate-200 shadow-sm transition-transform group-hover/thumb:scale-125 group-hover/thumb:z-50"
-                                />
-                                <span className="bg-slate-900/90 text-white text-[8px] font-black uppercase tracking-widest px-1 py-0.5 rounded absolute -bottom-1.5 -right-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity">SIG</span>
+                            {/* Signature Scan */}
+                            {isRealImage(client.signature_image) ? (
+                              <div onClick={handleOpenViewer} className="relative group/thumb cursor-pointer" title="Click to view signature">
+                                <img src={client.signature_image} alt="Signature" className="w-9 h-7 rounded-lg object-cover border border-slate-200 shadow-xs transition-transform group-hover/thumb:scale-125" />
                               </div>
+                            ) : hasSig ? (
+                              <button type="button" onClick={handleOpenViewer} className="h-7 px-2 rounded-md bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-700 flex items-center gap-1 cursor-pointer transition-all shadow-xs" title="Webcam Signature captured. Click to view">
+                                <CheckCircle2 className="w-3 h-3 text-indigo-600" />
+                                <span className="text-[9px] font-black uppercase tracking-wider">Sig</span>
+                              </button>
                             ) : (
-                              <div className="w-10 h-8 bg-slate-100 rounded-lg flex items-center justify-center border border-dashed border-slate-200" title="No Signature Webcam Scan">
-                                <CameraOff className="w-3.5 h-3.5 text-slate-300" />
+                              <div className="w-7 h-7 bg-slate-100 rounded-md flex items-center justify-center border border-dashed border-slate-200" title="No Signature Scan">
+                                <CameraOff className="w-3 h-3 text-slate-300" />
                               </div>
                             )}
                           </>
@@ -2070,7 +2108,13 @@ export default function ClientsPage() {
           </div>
 
           <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
-            {(!photoViewerClient.front && !photoViewerClient.back && !photoViewerClient.signature) ? (
+            {photoViewerClient.isLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50 rounded-2xl border border-slate-200">
+                <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3" />
+                <p className="text-sm font-black text-slate-800">Loading High-Resolution KYC Scans...</p>
+                <p className="text-xs text-slate-400 mt-1 font-bold">Securely retrieving biometric and signature data</p>
+              </div>
+            ) : (!photoViewerClient.front && !photoViewerClient.back && !photoViewerClient.signature) ? (
               <div className="flex flex-col items-center justify-center p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                 <CameraOff className="w-12 h-12 text-slate-300 mb-2" />
                 <p className="text-sm font-bold text-slate-600">No Webcam KYC Photos Recorded</p>
@@ -2082,7 +2126,7 @@ export default function ClientsPage() {
                 <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200 flex flex-col items-center">
                   <span className="text-xs font-black uppercase tracking-wider text-slate-700 block mb-2">NIC Front</span>
                   <div className="w-full aspect-[4/3] bg-black/95 rounded-xl overflow-hidden shadow-inner flex items-center justify-center border border-slate-300">
-                    {photoViewerClient.front ? (
+                    {photoViewerClient.front && (photoViewerClient.front.startsWith('data:') || photoViewerClient.front.startsWith('http:') || photoViewerClient.front.startsWith('/')) ? (
                       <img 
                         src={photoViewerClient.front} 
                         alt="NIC Front" 
@@ -2102,7 +2146,7 @@ export default function ClientsPage() {
                 <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200 flex flex-col items-center">
                   <span className="text-xs font-black uppercase tracking-wider text-slate-700 block mb-2">NIC Back</span>
                   <div className="w-full aspect-[4/3] bg-black/95 rounded-xl overflow-hidden shadow-inner flex items-center justify-center border border-slate-300">
-                    {photoViewerClient.back ? (
+                    {photoViewerClient.back && (photoViewerClient.back.startsWith('data:') || photoViewerClient.back.startsWith('http:') || photoViewerClient.back.startsWith('/')) ? (
                       <img 
                         src={photoViewerClient.back} 
                         alt="NIC Back" 
@@ -2122,7 +2166,7 @@ export default function ClientsPage() {
                 <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200 flex flex-col items-center">
                   <span className="text-xs font-black uppercase tracking-wider text-slate-700 block mb-2">Customer Signature</span>
                   <div className="w-full aspect-[4/3] bg-white rounded-xl overflow-hidden shadow-inner flex items-center justify-center border border-slate-300">
-                    {photoViewerClient.signature ? (
+                    {photoViewerClient.signature && (photoViewerClient.signature.startsWith('data:') || photoViewerClient.signature.startsWith('http:') || photoViewerClient.signature.startsWith('/')) ? (
                       <img 
                         src={photoViewerClient.signature} 
                         alt="Signature" 

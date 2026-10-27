@@ -15,7 +15,7 @@ export default function LoginPage() {
   /* ── login ── */
   const [email, setEmail]         = useState('');
   const [password, setPassword]   = useState('');
-  const [branch, setBranch]       = useState('');
+  const [branch, setBranch]       = useState('HQ');
   const [branchList, setBranchList] = useState<Array<{ id: string; name: string }>>([...CANONICAL_BRANCHES]);
   const [showPw, setShowPw]       = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);

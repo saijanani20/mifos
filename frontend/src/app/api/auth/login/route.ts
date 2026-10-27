@@ -98,8 +98,9 @@ export async function POST(request: Request) {
     // Other staff operate in their assigned database branch.
     const selectedBranch = branch ? normalizeBranchId(branch) : null;
     let effectiveBranch = normalizeBranchId(profile?.branch_id || 'HQ');
-    if (role === 'ADMIN' && selectedBranch && selectedBranch !== 'HQ') {
-      effectiveBranch = selectedBranch;
+    if (role === 'ADMIN') {
+      // Admin can operate in HQ (Main Branch) or select any specific branch
+      effectiveBranch = selectedBranch || effectiveBranch || 'HQ';
     } else if (role === 'TELLER') {
       if ((effectiveBranch === 'HQ' || !effectiveBranch) && selectedBranch && selectedBranch !== 'HQ') {
         effectiveBranch = selectedBranch;
@@ -115,7 +116,7 @@ export async function POST(request: Request) {
     }
 
     const branchObj = CANONICAL_BRANCHES.find(b => b.id === effectiveBranch);
-    const effectiveBranchName = branchObj ? branchObj.name : (effectiveBranch === 'HQ' ? 'Head Office' : (effectiveBranch === 'DHW' ? 'Main Branch' : (profile?.branch_name || effectiveBranch)));
+    const effectiveBranchName = branchObj ? branchObj.name : ((effectiveBranch === 'HQ' || effectiveBranch === 'DHW') ? 'Main Branch' : (profile?.branch_name || effectiveBranch));
 
     // Auto-heal missing profile in public.profiles if user authenticated successfully
     let userProfile = profile;
