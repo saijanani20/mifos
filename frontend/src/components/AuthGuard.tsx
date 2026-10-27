@@ -73,16 +73,16 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     if (isAuth && pathname === '/login') {
       if (effectiveRole === 'TELLER') {
-        router.push('/loans');
+        window.location.replace('/loans');
       } else if (effectiveRole === 'AUDITOR') {
-        router.push('/dashboard/auditor');
+        window.location.replace('/dashboard/auditor');
       } else if (effectiveRole === 'MANAGER') {
-        router.push('/operations/approvals');
+        window.location.replace('/operations/approvals');
       } else {
-        router.push('/');
+        window.location.replace('/');
       }
     } else if (!isAuth && pathname !== '/login') {
-      router.push('/login');
+      window.location.replace('/login');
     } else if (isAuth && effectiveRole === 'TELLER') {
       // Route protection: strictly prevent tellers from navigating to Admin options
       const tellerForbidden = [
@@ -101,7 +101,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(prefix + '/')
       );
       if (isForbidden) {
-        router.replace('/loans');
+        window.location.replace('/loans');
       }
     }
   }, [pathname, router]);
@@ -188,7 +188,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated && pathname !== '/login') {
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-amber-500 rounded-2xl animate-spin shadow-xl shadow-amber-500/20" />
+          <p className="text-sm font-bold text-slate-300 animate-pulse tracking-wider">Redirecting to login...</p>
+        </div>
+      </div>
+    );
   }
 
   return <>{children}</>;
