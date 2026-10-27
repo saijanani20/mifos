@@ -41,21 +41,46 @@ export async function GET(request: Request) {
     let queryError: any = null;
 
     try {
-      let query = adminSupabase
-        .from('clients')
-        .select('*')
-        .order('created_at', { ascending: false });
+      let allClients: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
-      if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
-        const terms = getBranchSearchTerms(requestedBranch);
-        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-        query = query.or(orClause);
+      while (hasMore) {
+        let query = adminSupabase
+          .from('clients')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
+        if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
+          const terms = getBranchSearchTerms(requestedBranch);
+          const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
+          query = query.or(orClause);
+        }
+
+        const res = await query;
+        if (res.error) {
+          queryError = res.error;
+          break;
+        }
+
+        if (res.data && res.data.length > 0) {
+          allClients = allClients.concat(res.data);
+          if (res.data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
       }
 
-      const res = await query;
-      data = res.data;
-      queryError = res.error;
+      if (!queryError) {
+        data = allClients;
+      }
     } catch (e: any) {
       queryError = e;
     }
