@@ -1414,7 +1414,9 @@ function EndOfDayContent() {
     setBillNo(cleanBillNo);
     setBillPrefix(foundPrefix);
     setPrice(item.price ? item.price.toString() : '');
-    setWeight(item.weight ? item.weight.toString() : '');
+    const rawW = parseFloat(item.weight) || 0;
+    const displayMg = rawW < 100 ? Math.round(rawW * 1000) : rawW;
+    setWeight(displayMg > 0 ? displayMg.toString() : '');
     setDate(item.date);
     setSelectedAddBranch(item.branch_id || "");
     
@@ -1488,10 +1490,13 @@ function EndOfDayContent() {
       return;
     }
 
+    const rawWeightInput = parseFloat(weight) || 0;
+    const finalWeightGrams = rawWeightInput >= 100 ? (rawWeightInput / 1000) : rawWeightInput;
+
     const newItem = {
       bill_no: finalBillNo,
       price: parseFloat(price) || 0,
-      weight: parseFloat(weight) || 0,
+      weight: finalWeightGrams,
       date: date,
       item_type: compressItemTypeString(selectedItems.map(item => item.code).join(", ")),
       status: 'Active',
@@ -1552,11 +1557,7 @@ function EndOfDayContent() {
       const rawBills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
       const normBills = c.bill_numbers.split(",").map((b: string) => stripBranchPrefix(b).toLowerCase().replace(/[\s\-_/]+/g, ''));
 
-      return (
-        rawBills.includes(cleanBill) || 
-        normBills.includes(cleanNorm) ||
-        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))))
-      );
+      return rawBills.includes(cleanBill) || normBills.includes(cleanNorm);
     };
 
     if (targetBranch) {
