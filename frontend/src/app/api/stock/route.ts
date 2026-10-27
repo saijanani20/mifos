@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { getBranchSearchTerms, normalizeBranchId } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,7 +101,7 @@ export async function POST(request: Request) {
     const normBranch = normalizeBranchId(branch_id || request.headers.get('x-branch-id') || session?.branchId || 'HQ');
 
     const payload: any = {
-      bill_no: String(bill_no).trim(),
+      bill_no: stripBranchPrefix(String(bill_no)).trim(),
       price: parseFloat(price) || 0,
       weight: parseFloat(weight) || 0,
       date: date || new Date().toISOString().split('T')[0],
@@ -165,7 +165,7 @@ export async function PUT(request: Request) {
     }
 
     const updatePayload: any = {};
-    if (bill_no !== undefined) updatePayload.bill_no = bill_no ? String(bill_no).trim() : bill_no;
+    if (bill_no !== undefined) updatePayload.bill_no = bill_no ? stripBranchPrefix(String(bill_no)).trim() : bill_no;
     if (price !== undefined) updatePayload.price = parseFloat(price) || 0;
     if (weight !== undefined) updatePayload.weight = parseFloat(weight) || 0;
     if (date !== undefined) updatePayload.date = date;

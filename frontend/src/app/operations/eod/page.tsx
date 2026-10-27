@@ -273,14 +273,14 @@ function EndOfDayContent() {
     const itemKey = item.id || item.bill_no;
     if (printingLabelId) return;
     setPrintingLabelId(itemKey);
-    const toastId = toast.loading(`Connecting to Bluetooth Printer for ${item.bill_no}...`);
+    const toastId = toast.loading(`Connecting to Bluetooth Printer for ${stripBranchPrefix(item.bill_no)}...`);
 
     try {
       const transport = new WebBluetoothTransport();
       const connected = await transport.connect();
       if (!connected) throw new Error('Could not connect to Bluetooth printer.');
 
-      toast.loading(`Printing formatted stock ticket for ${item.bill_no}...`, { id: toastId });
+      toast.loading(`Printing formatted stock ticket for ${stripBranchPrefix(item.bill_no)}...`, { id: toastId });
 
       // Extract item details & generate sequential label print number (e.g. LBL-0001)
       const getNextLabelNo = () => {
@@ -303,7 +303,7 @@ function EndOfDayContent() {
         printedUserEmail = currentUser.email || currentUser.username || printedBy;
       }
 
-      const billNoStr = (item.bill_no || '').toString().trim();
+      const billNoStr = stripBranchPrefix(item.bill_no || '').toString().trim();
       const branchName = (item.branch_id || 'HQ').toString().trim();
       
       const rawTypes = compressItemTypeString(item.item_type || "");
@@ -1396,25 +1396,25 @@ function EndOfDayContent() {
   const openEditActiveModal = (item: any) => {
     setSelectedActiveItem(item);
     
-    // Attempt to extract prefix from bill_no
+    // Always strip any branch prefix first (e.g. W3-, KDW-, KIR-)
+    let cleanBillNo = stripBranchPrefix(item.bill_no || '');
     let foundPrefix = null;
-    let cleanBillNo = item.bill_no;
     for (const pref of BILL_PREFIXES) {
-      if (item.bill_no.startsWith(pref + " ")) {
+      if (cleanBillNo.toUpperCase().startsWith(pref.toUpperCase() + " ")) {
         foundPrefix = pref;
-        cleanBillNo = item.bill_no.substring(pref.length + 1);
+        cleanBillNo = cleanBillNo.substring(pref.length + 1).trim();
         break;
-      } else if (item.bill_no.startsWith(pref)) {
+      } else if (cleanBillNo.toUpperCase().startsWith(pref.toUpperCase())) {
         foundPrefix = pref;
-        cleanBillNo = item.bill_no.substring(pref.length);
+        cleanBillNo = cleanBillNo.substring(pref.length).trim();
         break;
       }
     }
 
     setBillNo(cleanBillNo);
     setBillPrefix(foundPrefix);
-    setPrice(item.price.toString());
-    setWeight(item.weight.toString());
+    setPrice(item.price ? item.price.toString() : '');
+    setWeight(item.weight ? item.weight.toString() : '');
     setDate(item.date);
     setSelectedAddBranch(item.branch_id || "");
     
@@ -1461,7 +1461,7 @@ function EndOfDayContent() {
     }
 
     const formatBillNo = (prefix: string | null, rawNo: string) => {
-      let clean = rawNo.trim();
+      let clean = stripBranchPrefix(rawNo).trim();
       if (prefix) {
         if (clean.toUpperCase().startsWith(prefix.toUpperCase() + " ")) {
           clean = clean.substring(prefix.length + 1).trim();
@@ -1472,8 +1472,8 @@ function EndOfDayContent() {
       return prefix ? `${prefix} ${clean}` : clean;
     };
 
-    const finalBillNo = formatBillNo(billPrefix, billNo);
-    console.log("[DEBUG] generated finalBillNo:", finalBillNo);
+    const finalBillNo = stripBranchPrefix(formatBillNo(billPrefix, billNo)).trim();
+    console.log("[DEBUG] generated finalBillNo (strictly clean):", finalBillNo);
 
     // Duplicate bill number check WITHIN THE SAME BRANCH (case-insensitive & trimmed)
     const isDuplicateInBranch = stockItems.some(item => 
@@ -1880,7 +1880,8 @@ function EndOfDayContent() {
 
   // Handle Delete Stock Item Permanently
   const handleDeleteStock = async (item: any) => {
-    if (!window.confirm(`Are you sure you want to permanently delete Bill Number "${item.bill_no}" from stock inventory? This action cannot be undone.`)) {
+    const cleanDisplayBill = stripBranchPrefix(item.bill_no);
+    if (!window.confirm(`Are you sure you want to permanently delete Bill Number "${cleanDisplayBill}" from stock inventory? This action cannot be undone.`)) {
       return;
     }
 
@@ -1903,12 +1904,12 @@ function EndOfDayContent() {
           throw new Error(result.error || "Failed to delete item from database");
         }
 
-        toast.success(`Bill Number "${item.bill_no}" deleted successfully!`);
+        toast.success(`Bill Number "${cleanDisplayBill}" deleted successfully!`);
       } else {
         const updated = stockItems.filter(i => i.id !== item.id);
         setStockItems(updated);
         localStorage.setItem('local_stock_items', JSON.stringify(updated));
-        toast.success(`Bill Number "${item.bill_no}" deleted successfully (Local Storage)!`);
+        toast.success(`Bill Number "${cleanDisplayBill}" deleted successfully (Local Storage)!`);
       }
 
       // Optimistically update state immediately
@@ -2053,9 +2054,9 @@ function EndOfDayContent() {
           }
           const wReason = item.withdrawal_reason || '';
           const wNotes = (item.withdrawal_notes || '').replace(/"/g, '""');
-          csvLines.push(`"${item.bill_no}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${wDate}","${wReason}","${wNotes}","${compressItemTypeString(item.item_type || '')}"`);
+          csvLines.push(`"${stripBranchPrefix(item.bill_no)}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${wDate}","${wReason}","${wNotes}","${compressItemTypeString(item.item_type || '')}"`);
         } else {
-          csvLines.push(`"${item.bill_no}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${compressItemTypeString(item.item_type || '')}"`);
+          csvLines.push(`"${stripBranchPrefix(item.bill_no)}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${compressItemTypeString(item.item_type || '')}"`);
         }
       });
 
@@ -2161,7 +2162,7 @@ function EndOfDayContent() {
 
         return `
           <tr>
-            <td style="font-weight: bold; text-align: left;">${item.bill_no}</td>
+            <td style="font-weight: bold; text-align: left;">${stripBranchPrefix(item.bill_no)}</td>
             <td style="text-align: center;">${branchCode}</td>
             <td style="text-align: right;">${formattedPrice}</td>
             <td style="text-align: right;">${formattedWeight}</td>
@@ -2961,7 +2962,7 @@ function EndOfDayContent() {
                         <TableCell className="px-6 py-4">
                           <button 
                             onClick={() => {
-                              setSelectedBillForCustomerView(item.bill_no);
+                              setSelectedBillForCustomerView(stripBranchPrefix(item.bill_no));
                               setSelectedStockItemForCustomerView(item);
                               setSelectedBranchForCustomerView(item.branch_id || item.branch || (selectedBranch !== 'ALL' ? selectedBranch : null) || currentUser?.branchId || null);
                               setShowBillCustomerModal(true);
@@ -2969,7 +2970,7 @@ function EndOfDayContent() {
                             className="font-black text-slate-800 text-sm hover:text-blue-600 underline decoration-dotted transition-colors text-left flex items-center gap-1.5 cursor-pointer flex-wrap"
                             title="Click to view details & interest"
                           >
-                            <span>{item.bill_no}</span>
+                            <span>{stripBranchPrefix(item.bill_no)}</span>
                             {getCustomerForBill(item.bill_no, item.branch_id || item.branch) && (
                               <span className="w-1.5 h-1.5 bg-blue-600 rounded-full inline-block" title="Customer Linked" />
                             )}
@@ -3946,7 +3947,7 @@ function EndOfDayContent() {
                 Pawn Bill Details
               </DialogTitle>
               <DialogDescription className="font-semibold text-slate-400 text-xs mt-1 flex items-center gap-2">
-                <span>Customer association for Bill No: <span className="text-slate-700 font-black">{selectedBillForCustomerView}</span></span>
+                <span>Customer association for Bill No: <span className="text-slate-700 font-black">{stripBranchPrefix(selectedBillForCustomerView)}</span></span>
                 {selectedBranchForCustomerView && (
                   <span className="bg-blue-50 text-blue-800 border border-blue-200/50 font-black px-2 py-0.5 rounded-md text-[9px] uppercase tracking-wide">
                     {normalizeBranchId(selectedBranchForCustomerView)}
