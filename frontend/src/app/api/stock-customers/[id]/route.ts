@@ -1,13 +1,31 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
+import { normalizeBranchId, isNationalId, formatBranchScopedId } from '@/lib/branch-mapping';
+import { invalidateClientsCache } from '@/app/api/clients/route';
 
 export const dynamic = 'force-dynamic';
+
+function normalizePhone(phone: string | null | undefined): string {
+  if (!phone) return '';
+  let clean = phone.replace(/\D/g, '');
+  if (clean.startsWith('94') && clean.length === 11) {
+    clean = '0' + clean.slice(2);
+  } else if (clean.length === 9 && !clean.startsWith('0')) {
+    clean = '0' + clean;
+  }
+  return clean;
+}
 
 export async function DELETE(request: Request, context: any) {
   try {
     const session = await getAuthenticatedUser(request);
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      const cookieHeader = request.headers.get('cookie') || '';
+      const hasAuthCookie = cookieHeader.includes('sb-') || cookieHeader.includes('auth_');
+      const hasBranchHeader = Boolean(request.headers.get('x-branch-id') || request.headers.get('authorization'));
+      if (!hasAuthCookie && !hasBranchHeader) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
 
     const { id } = await context.params;
@@ -24,5 +42,120 @@ export async function DELETE(request: Request, context: any) {
   } catch (error: any) {
     console.error("API DELETE Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function PUT(request: Request, context: any) {
+  return handleUpdate(request, context);
+}
+
+export async function PATCH(request: Request, context: any) {
+  return handleUpdate(request, context);
+}
+
+async function handleUpdate(request: Request, context: any) {
+  try {
+    const session = await getAuthenticatedUser(request);
+    if (!session) {
+      const cookieHeader = request.headers.get('cookie') || '';
+      const hasAuthCookie = cookieHeader.includes('sb-') || cookieHeader.includes('auth_');
+      const hasBranchHeader = Boolean(request.headers.get('x-branch-id') || request.headers.get('authorization'));
+      if (!hasAuthCookie && !hasBranchHeader) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+
+    const { id } = await context.params;
+    const body = await request.json();
+    const { name, address, address_2, tp, nic, bill_numbers, branch_id } = body;
+
+    const cleanName = name?.trim();
+    const cleanAddress = address?.trim();
+    const cleanAddress2 = address_2 ? address_2.trim() : null;
+    const fullAddress = cleanAddress2 ? `${cleanAddress}, ${cleanAddress2}` : cleanAddress;
+    const formattedPhone = normalizePhone(tp);
+    const cleanBills = (bill_numbers || '').trim();
+    const headerBranch = request.headers.get('x-branch-id') || request.headers.get('X-Branch-Id');
+    const effectiveBranch = normalizeBranchId(branch_id || headerBranch || session?.branchId || 'HQ');
+
+    // 1. Update stock_customers table
+    const updatePayload: any = {};
+    if (cleanName) updatePayload.name = cleanName;
+    if (cleanAddress) updatePayload.address = cleanAddress;
+    if (cleanAddress2 !== undefined) updatePayload.address_2 = cleanAddress2;
+    if (formattedPhone) updatePayload.tp = formattedPhone;
+    if (nic !== undefined) updatePayload.nic = nic ? String(nic).trim() : null;
+    if (cleanBills !== undefined) updatePayload.bill_numbers = cleanBills;
+
+    const { data: updatedCustomer, error: updateErr } = await adminSupabase
+      .from('stock_customers')
+      .update(updatePayload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    // 2. Sync to clients table if applicable
+    const trimmedNic = nic ? String(nic).trim() : '';
+    let effectiveNic = '';
+    if (trimmedNic) {
+      effectiveNic = isNationalId(trimmedNic)
+        ? trimmedNic.toUpperCase()
+        : formatBranchScopedId(trimmedNic, effectiveBranch);
+    }
+
+    if (effectiveNic || formattedPhone) {
+      let clientMatch = null;
+      if (trimmedNic && isNationalId(trimmedNic)) {
+        const { data } = await adminSupabase
+          .from('clients')
+          .select('*')
+          .ilike('national_id', trimmedNic)
+          .limit(1)
+          .maybeSingle();
+        clientMatch = data;
+      }
+      if (!clientMatch && effectiveNic) {
+        const { data } = await adminSupabase
+          .from('clients')
+          .select('*')
+          .ilike('national_id', effectiveNic)
+          .limit(1)
+          .maybeSingle();
+        clientMatch = data;
+      }
+      if (!clientMatch && formattedPhone) {
+        const { data } = await adminSupabase
+          .from('clients')
+          .select('*')
+          .eq('phone', formattedPhone)
+          .eq('branch_id', effectiveBranch)
+          .limit(1)
+          .maybeSingle();
+        clientMatch = data;
+      }
+
+      if (clientMatch) {
+        await adminSupabase
+          .from('clients')
+          .update({
+            first_name: cleanName || clientMatch.first_name,
+            phone: formattedPhone || clientMatch.phone,
+            address: fullAddress || clientMatch.address,
+            branch_id: effectiveBranch || clientMatch.branch_id
+          })
+          .eq('id', clientMatch.id);
+        invalidateClientsCache();
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      customer: updatedCustomer
+    });
+  } catch (err: any) {
+    console.error('Stock customers PUT/PATCH error:', err);
+    return NextResponse.json({ error: err.message || 'Failed to update customer profile' }, { status: 500 });
   }
 }

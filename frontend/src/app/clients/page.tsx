@@ -213,36 +213,22 @@ export default function ClientsPage() {
   const loadCustomerData = async () => {
     try {
       let allCustomers: any[] = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
-
-      while (hasMore) {
-        const from = page * pageSize;
-        const to = from + pageSize - 1;
-        const { data, error } = await supabase
-          .from('stock_customers')
-          .select('*')
-          .order('name', { ascending: true })
-          .range(from, to);
-
-        if (error) throw error;
-        if (data && data.length > 0) {
-          allCustomers = allCustomers.concat(data);
-          if (data.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
+      const headers = getAuthHeaders(branchId ? { 'x-branch-id': normalizeBranchId(branchId) } : undefined);
+      const res = await fetch('/api/stock-customers', { headers, cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.customers && Array.isArray(json.customers)) {
+          allCustomers = json.customers;
         }
       }
 
       setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
+      try {
+        localStorage.setItem('local_stock_customers', JSON.stringify(allCustomers));
+      } catch {}
     } catch (err) {
-      console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
+      console.warn("Failed to fetch stock customers from API, loading LocalStorage:", err);
       setIsUsingSupabase(false);
       const local = localStorage.getItem('local_stock_customers');
       if (local) {
@@ -549,6 +535,7 @@ export default function ClientsPage() {
       return;
     }
 
+    const effectiveBranch = normalizeBranchId(branchId || 'HQ');
     const payload = {
       name: custName.trim(),
       address: custAddress.trim(),
@@ -556,47 +543,33 @@ export default function ClientsPage() {
       tp: custTp.trim(),
       nic: custNic.trim() || null,
       bill_numbers: custBills.trim(),
-      branch_id: normalizeBranchId(branchId || 'HQ')
+      branch_id: effectiveBranch
     };
 
     try {
-      if (isUsingSupabase) {
-        if (isEditingCustomer && selectedCustomer) {
-          const { error } = await supabase
-            .from('stock_customers')
-            .update(payload)
-            .eq('id', selectedCustomer.id);
-          if (error) throw error;
-          toast.success("Customer profile updated successfully!");
-        } else {
-          const { error } = await supabase
-            .from('stock_customers')
-            .insert([payload]);
-          if (error) throw error;
-          toast.success("Customer profile created successfully!");
-        }
-      } else {
-        const local = localStorage.getItem('local_stock_customers');
-        let list: any[] = [];
-        if (local) {
-          try { list = JSON.parse(local); } catch (e) {}
-        }
-        if (isEditingCustomer && selectedCustomer) {
-          list = list.map(c => c.id === selectedCustomer.id ? { ...c, ...payload } : c);
-          toast.success("Customer profile updated successfully!");
-        } else {
-          const newCust = {
-            id: Math.random().toString(36).substring(2, 9),
-            ...payload,
-            created_at: new Date().toISOString()
-          };
-          list = [newCust, ...list];
-          toast.success("Customer profile created successfully!");
-        }
-        localStorage.setItem('local_stock_customers', JSON.stringify(list));
+      const isEdit = isEditingCustomer && selectedCustomer?.id && !String(selectedCustomer.id).startsWith('pawn-');
+      const url = isEdit ? `/api/stock-customers/${selectedCustomer.id}` : '/api/stock-customers';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const headers = getAuthHeaders({ 'x-branch-id': effectiveBranch });
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errDesc = `Failed to save customer (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
+
+      toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile created successfully!");
       setShowAddCustomerModal(false);
-      loadCustomerData();
+      await loadCustomerData();
     } catch (err: any) {
       toast.error("Error saving customer profile: " + err.message);
     }

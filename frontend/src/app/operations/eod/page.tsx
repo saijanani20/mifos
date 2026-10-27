@@ -1249,8 +1249,9 @@ function EndOfDayContent() {
 
       // 1. Primary: Server-side API endpoint
       try {
-        const headers = getAuthHeaders();
-        const res = await fetch('/api/stock-customers', { headers });
+        const activeBranch = selectedBranch !== 'ALL' ? selectedBranch : (currentUser?.branchId || '');
+        const headers = getAuthHeaders(activeBranch ? { 'x-branch-id': activeBranch } : undefined);
+        const res = await fetch('/api/stock-customers', { headers, cache: 'no-store' });
         if (res.ok) {
           const json = await res.json();
           if (json.customers && Array.isArray(json.customers)) {
@@ -1682,57 +1683,51 @@ function EndOfDayContent() {
       return;
     }
 
+    const targetBranch = normalizeBranchId(
+      selectedStockItemForCustomerView?.branch_id ||
+      selectedBranchForCustomerView ||
+      (selectedBranch !== 'ALL' ? selectedBranch : '') ||
+      currentUser?.branchId ||
+      'HQ'
+    );
+
     const payload = {
       name: custName.trim(),
       address: custAddress.trim(),
       address_2: custAddress2.trim() || null,
       tp: custTp.trim(),
       nic: custNic.trim() || null,
-      bill_numbers: custBills.trim()
+      bill_numbers: custBills.trim(),
+      branch_id: targetBranch
     };
 
     try {
-      if (isUsingSupabase) {
-        if (isEditingCustomer && selectedCustomer) {
-          const { error } = await supabase
-            .from('stock_customers')
-            .update(payload)
-            .eq('id', selectedCustomer.id);
-          if (error) throw error;
-          toast.success("Customer profile updated in Supabase!");
-        } else {
-          const { error } = await supabase
-            .from('stock_customers')
-            .insert([payload]);
-          if (error) throw error;
-          toast.success("Customer profile created in Supabase!");
-        }
-      } else {
-        const local = localStorage.getItem('local_stock_customers');
-        let list: any[] = [];
-        if (local) {
-          try { list = JSON.parse(local); } catch (e) {}
-        }
-        if (isEditingCustomer && selectedCustomer) {
-          list = list.map(c => c.id === selectedCustomer.id ? { ...c, ...payload } : c);
-          toast.success("Customer profile updated (Local Storage)!");
-        } else {
-          const newCust = {
-            id: Math.random().toString(36).substring(2, 9),
-            ...payload,
-            created_at: new Date().toISOString()
-          };
-          list = [newCust, ...list];
-          toast.success("Customer profile created (Local Storage)!");
-        }
-        localStorage.setItem('local_stock_customers', JSON.stringify(list));
+      const isEdit = isEditingCustomer && selectedCustomer?.id && !String(selectedCustomer.id).startsWith('pawn-');
+      const url = isEdit ? `/api/stock-customers/${selectedCustomer.id}` : '/api/stock-customers';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const headers = getAuthHeaders({ 'x-branch-id': targetBranch });
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errDesc = `Failed to save customer (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
+
+      toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile saved successfully!");
       setShowAddCustomerModal(false);
-      loadCustomerData();
-      
-      // Auto close bill info modal to refresh view cleanly
       setShowBillCustomerModal(false);
+      await loadCustomerData();
     } catch (err: any) {
+      console.error("Error saving customer profile:", err);
       toast.error("Error saving customer profile: " + err.message);
     }
   };
