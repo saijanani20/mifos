@@ -1500,87 +1500,42 @@ function EndOfDayContent() {
     console.log("[DEBUG] newItem payload:", newItem);
 
     try {
-      if (isUsingSupabase) {
-        if (isEditingActive && selectedActiveItem) {
-          console.log("[DEBUG] Attempting Supabase update...");
-          const { error } = await supabase
-            .from('stock_items')
-            .update({
-              bill_no: newItem.bill_no,
-              price: newItem.price,
-              weight: newItem.weight,
-              date: newItem.date,
-              item_type: newItem.item_type,
-              branch_id: newItem.branch_id
-            })
-            .eq('id', selectedActiveItem.id);
+      const isEdit = isEditingActive && selectedActiveItem;
+      const headers = getAuthHeaders({ 'x-branch-id': targetBranch });
 
-          if (error) {
-            console.error("[DEBUG] Supabase update error:", error);
-            throw error;
-          }
-          toast.success("Stock item updated in Supabase!");
-        } else {
-          console.log("[DEBUG] Attempting Supabase insert...");
-          const { data, error } = await supabase
-            .from('stock_items')
-            .insert([newItem])
-            .select();
-          
-          if (error) {
-            console.error("[DEBUG] Supabase insert error:", error);
-            throw error;
-          }
-          console.log("[DEBUG] Supabase insert successful. Returned data:", data);
-          toast.success("Stock item added to Supabase!");
-        }
-      } else {
-        console.log("[DEBUG] Supabase offline, using LocalStorage fallback...");
-        if (isEditingActive && selectedActiveItem) {
-          // LocalStorage fallback update
-          const updated = stockItems.map(item => {
-            if (item.id === selectedActiveItem.id) {
-              return {
-                ...item,
-                bill_no: newItem.bill_no,
-                price: newItem.price,
-                weight: newItem.weight,
-                date: newItem.date,
-                item_type: newItem.item_type,
-                branch_id: newItem.branch_id
-              };
-            }
-            return item;
-          });
-          setStockItems(updated);
-          localStorage.setItem('local_stock_items', JSON.stringify(updated));
-          toast.success("Stock item updated (Local Storage)!");
-        } else {
-          // LocalStorage fallback insert
-          const localItem = {
-            ...newItem,
-            id: Math.random().toString(36).substring(2, 9),
-            created_at: new Date().toISOString()
-          };
-          const localData = localStorage.getItem('local_stock_items');
-          let allItems = [];
-          if (localData) {
-            try {
-              allItems = JSON.parse(localData);
-            } catch (e) {}
-          }
-          const updated = [localItem, ...allItems];
-          localStorage.setItem('local_stock_items', JSON.stringify(updated));
-          console.log("[DEBUG] LocalStorage insert successful.");
-          toast.success("Stock item added (Local Storage)!");
-        }
+      const payload = isEdit ? {
+        id: selectedActiveItem.id,
+        bill_no: newItem.bill_no,
+        price: newItem.price,
+        weight: newItem.weight,
+        date: newItem.date,
+        item_type: newItem.item_type,
+        branch_id: newItem.branch_id
+      } : newItem;
+
+      console.log("[DEBUG] Sending stock save request to /api/stock:", { method: isEdit ? 'PUT' : 'POST', payload });
+      const res = await fetch('/api/stock', {
+        method: isEdit ? 'PUT' : 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errDesc = `Failed to save stock item (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
 
+      toast.success(isEdit ? "Stock item updated successfully!" : "Stock item added successfully!");
       closeAddModal();
       
       // Reload
-      loadStockData();
+      await loadStockData();
     } catch (err: any) {
+      console.error("[DEBUG] Error saving stock item:", err);
       toast.error("Error saving stock item: " + err.message);
     }
   };
@@ -1811,38 +1766,29 @@ function EndOfDayContent() {
     }
 
     try {
-      if (isUsingSupabase) {
-        const { error } = await supabase
-          .from('stock_items')
-          .update({
-            status: 'Withdrawn',
-            withdrawal_date: withdrawalDate,
-            withdrawal_reason: withdrawalReason,
-            withdrawal_notes: finalNotes
-          })
-          .eq('id', id);
+      const headers = getAuthHeaders();
+      const res = await fetch('/api/stock', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          id: id,
+          status: 'Withdrawn',
+          withdrawal_date: withdrawalDate,
+          withdrawal_reason: withdrawalReason,
+          withdrawal_notes: finalNotes
+        })
+      });
 
-        if (error) throw error;
-        toast.success(isEditingWithdrawal ? "Withdrawal details updated in Supabase!" : "Item marked as Withdrawn in Supabase!");
-      } else {
-        // LocalStorage fallback
-        const updated = stockItems.map(item => {
-          if (item.id === id) {
-            return {
-              ...item,
-              status: 'Withdrawn',
-              withdrawal_date: withdrawalDate,
-              withdrawal_reason: withdrawalReason,
-              withdrawal_notes: finalNotes
-            };
-          }
-          return item;
-        });
-        setStockItems(updated);
-        localStorage.setItem('local_stock_items', JSON.stringify(updated));
-        toast.success(isEditingWithdrawal ? "Withdrawal details updated (Local Storage)!" : "Item marked as Withdrawn (Local Storage)!");
+      if (!res.ok) {
+        let errDesc = `Failed to withdraw item (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
 
+      toast.success(isEditingWithdrawal ? "Withdrawal details updated successfully!" : "Item marked as Withdrawn successfully!");
       setWithdrawalNotes("");
       setFsInterest("");
       setSelectedItemForWithdrawal(null);
@@ -1850,8 +1796,9 @@ function EndOfDayContent() {
       setIsEditingWithdrawal(false);
       
       // Reload
-      loadStockData();
+      await loadStockData();
     } catch (err: any) {
+      console.error("[DEBUG] Error saving withdrawal:", err);
       toast.error("Error saving withdrawal: " + err.message);
     }
   };
