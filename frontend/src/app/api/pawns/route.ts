@@ -119,12 +119,20 @@ export async function GET(request: Request) {
         ? adminSupabase.from('rejected_evaluations').select('status').in('status', billStatuses).not('water_weight_photo_url', 'is', null)
         : Promise.resolve({ data: [] }),
 
-      // 4. Fetch packet sticker QR logs
-      adminSupabase
-        .from('audit_logs')
-        .select('resource, details, action, branch_id')
-        .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
-        .order('created_at', { ascending: true })
+      // 4. Fetch packet sticker QR logs (scoped to active branches)
+      (() => {
+        let stickerQ = adminSupabase
+          .from('audit_logs')
+          .select('resource, details, action, branch_id')
+          .in('action', ['PACKET_STICKER_ATTACHED', 'PACKET_STICKER_DELETED'])
+          .order('created_at', { ascending: false })
+          .limit(300);
+
+        if (!branchTokens.includes('ALL') && branchTokens.length > 0) {
+          stickerQ = stickerQ.in('branch_id', branchTokens);
+        }
+        return stickerQ;
+      })()
     ]);
 
     // Map clients with lightweight boolean indicators for NIC and Signature

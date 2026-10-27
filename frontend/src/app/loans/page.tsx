@@ -424,7 +424,7 @@ export default function PawnesPage() {
   const loadClients = async () => {
     try {
       const headers = getAuthHeaders();
-      const res = await fetch('/api/clients?branchId=ALL', { headers, cache: 'no-store' });
+      const res = await fetch('/api/clients?branchId=ALL&minimal=true', { headers, cache: 'no-store' });
       if (res.ok) {
         const data: any[] = await res.json();
         setClientsList(data);

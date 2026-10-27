@@ -31,6 +31,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const requestedBranch = searchParams.get('branchId');
     const searchParam = searchParams.get('search');
+    const isMinimal = searchParams.get('minimal') === 'true';
 
     // Parse requested branches (e.g. "PAN" or "PAN,W3" or "ALL")
     let branchTokens = requestedBranch
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
     }
 
     const isAll = branchTokens.includes('ALL');
-    const cacheKey = isAll ? 'ALL' : branchTokens.map(b => b.toUpperCase()).sort().join(',');
+    const cacheKey = `${isAll ? 'ALL' : branchTokens.map(b => b.toUpperCase()).sort().join(',')}${isMinimal ? ':min' : ''}`;
     const cached = clientsMemoryCache.get(cacheKey);
     if (!searchParam && cached && Date.now() < cached.expiresAt) {
       return NextResponse.json(cached.data);
@@ -97,28 +98,40 @@ export async function GET(request: Request) {
         }
       }
 
-      // Egress-safe photo presence: Query IDs with photos directly to avoid URL overflow with 1000+ IDs
-      const [nicCheckRes, sigCheckRes] = await Promise.all([
-        adminSupabase.from('clients').select('id').not('nic_image', 'is', null).range(0, 9999),
-        adminSupabase.from('clients').select('id').not('signature_image', 'is', null).range(0, 9999)
-      ]);
-
-      const hasNicSet = new Set((nicCheckRes.data || []).map((r: any) => r.id));
-      const hasSigSet = new Set((sigCheckRes.data || []).map((r: any) => r.id));
-
-      clientRows = rawClients.map((c: any) => {
-        const hasNic = hasNicSet.has(c.id);
-        const hasSig = hasSigSet.has(c.id);
-        return {
+      if (isMinimal) {
+        // Fast-path: When minimal fields are requested (e.g. loans lookup map), skip 10k photo presence scans
+        clientRows = rawClients.map((c: any) => ({
           ...c,
-          has_nic_image: hasNic,
-          has_signature: hasSig,
-          // Supply lightweight indicator with front and back so frontend stats & icons light up accurately
-          nic_image: hasNic ? '{"front":"captured","back":"captured"}' : null,
-          signature_image: hasSig ? 'captured' : null,
+          has_nic_image: false,
+          has_signature: false,
+          nic_image: null,
+          signature_image: null,
           display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
-        };
-      });
+        }));
+      } else {
+        // Egress-safe photo presence: Query IDs with photos directly to avoid URL overflow with 1000+ IDs
+        const [nicCheckRes, sigCheckRes] = await Promise.all([
+          adminSupabase.from('clients').select('id').not('nic_image', 'is', null).range(0, 9999),
+          adminSupabase.from('clients').select('id').not('signature_image', 'is', null).range(0, 9999)
+        ]);
+
+        const hasNicSet = new Set((nicCheckRes.data || []).map((r: any) => r.id));
+        const hasSigSet = new Set((sigCheckRes.data || []).map((r: any) => r.id));
+
+        clientRows = rawClients.map((c: any) => {
+          const hasNic = hasNicSet.has(c.id);
+          const hasSig = hasSigSet.has(c.id);
+          return {
+            ...c,
+            has_nic_image: hasNic,
+            has_signature: hasSig,
+            // Supply lightweight indicator with front and back so frontend stats & icons light up accurately
+            nic_image: hasNic ? '{"front":"captured","back":"captured"}' : null,
+            signature_image: hasSig ? 'captured' : null,
+            display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
+          };
+        });
+      }
     } catch (e: any) {
       console.error('[Clients API] Query failed:', e?.message || e);
       if (cached && cached.data) {
