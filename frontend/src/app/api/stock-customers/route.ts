@@ -60,7 +60,45 @@ export async function GET(request: Request) {
       }
     }
 
-    // 2. Fetch pawns joined with clients to link bills created in Pawning or registered clients
+    // 2. Fetch clients and stock_items to resolve branch_id for stock_customers
+    const { data: clientsData } = await adminSupabase
+      .from('clients')
+      .select('national_id, phone, branch_id')
+      .limit(10000);
+
+    const clientNicToBranch = new Map<string, string>();
+    const clientPhoneToBranch = new Map<string, string>();
+    if (clientsData && Array.isArray(clientsData)) {
+      for (const cl of clientsData) {
+        const normBr = normalizeBranchId(cl.branch_id);
+        if (cl.national_id) {
+          const cNic = cl.national_id.trim().toUpperCase();
+          clientNicToBranch.set(cNic, normBr);
+        }
+        if (cl.phone) {
+          const cP = normalizePhone(cl.phone);
+          if (cP) clientPhoneToBranch.set(cP, normBr);
+        }
+      }
+    }
+
+    const { data: itemsData } = await adminSupabase
+      .from('stock_items')
+      .select('bill_no, branch_id')
+      .limit(10000);
+
+    const itemBillToBranches = new Map<string, Set<string>>();
+    if (itemsData && Array.isArray(itemsData)) {
+      for (const it of itemsData) {
+        if (!it.bill_no) continue;
+        const normBr = normalizeBranchId(it.branch_id);
+        const cBill = stripBranchPrefix(it.bill_no).toUpperCase().replace(/[\s\-_/]+/g, '');
+        if (!itemBillToBranches.has(cBill)) itemBillToBranches.set(cBill, new Set());
+        if (normBr) itemBillToBranches.get(cBill)!.add(normBr);
+      }
+    }
+
+    // 3. Fetch pawns joined with clients to link bills created in Pawning or registered clients
     const { data: pawnData, error: pawnErr } = await adminSupabase
       .from('pawns')
       .select('bill_no, branch_id, client_id, clients:client_id ( id, national_id, first_name, last_name, phone, address )')
@@ -75,9 +113,45 @@ export async function GET(request: Request) {
     const unifiedList: any[] = [];
     const billMap = new Set<string>();
 
-    // Add existing stock_customers first
+    // Add existing stock_customers first, enriched with accurate branch_id
     for (const sc of allStockCustomers) {
-      unifiedList.push(sc);
+      let resolvedBranch = sc.branch_id ? normalizeBranchId(sc.branch_id) : null;
+
+      // 1. Resolve branch via client NIC
+      if (!resolvedBranch && sc.nic) {
+        const cNic = sc.nic.trim().toUpperCase();
+        if (clientNicToBranch.has(cNic)) {
+          resolvedBranch = clientNicToBranch.get(cNic)!;
+        }
+      }
+
+      // 2. Resolve branch via stock_items bills
+      if (!resolvedBranch && sc.bill_numbers) {
+        const bills = sc.bill_numbers.split(',').map((b: string) => stripBranchPrefix(b).toUpperCase().replace(/[\s\-_/]+/g, '')).filter(Boolean);
+        for (const b of bills) {
+          const brSet = itemBillToBranches.get(b);
+          if (brSet && brSet.size === 1) {
+            resolvedBranch = Array.from(brSet)[0];
+            break;
+          }
+        }
+      }
+
+      // 3. Resolve branch via phone
+      if (!resolvedBranch && sc.tp) {
+        const cP = normalizePhone(sc.tp);
+        if (cP && clientPhoneToBranch.has(cP)) {
+          resolvedBranch = clientPhoneToBranch.get(cP)!;
+        }
+      }
+
+      const enrichedSc = {
+        ...sc,
+        branch_id: resolvedBranch || sc.branch_id || null
+      };
+
+      unifiedList.push(enrichedSc);
+
       if (sc.bill_numbers) {
         sc.bill_numbers.split(',').forEach((b: string) => {
           const raw = b.trim();
@@ -281,13 +355,45 @@ export async function POST(request: Request) {
 
     if (!targetStockCustomer && cleanBills) {
       const firstBill = cleanBills.split(',')[0].trim();
-      const { data } = await adminSupabase
+      const strippedFirstBill = stripBranchPrefix(firstBill);
+      const { data: candidates } = await adminSupabase
         .from('stock_customers')
         .select('*')
-        .ilike('bill_numbers', `%${firstBill}%`)
-        .limit(1)
-        .maybeSingle();
-      targetStockCustomer = data;
+        .ilike('bill_numbers', `%${strippedFirstBill}%`)
+        .limit(10);
+
+      if (candidates && candidates.length > 0) {
+        for (const cand of candidates) {
+          let candBranch = cand.branch_id ? normalizeBranchId(cand.branch_id) : null;
+          if (!candBranch && cand.nic) {
+            const { data: clientMatch } = await adminSupabase
+              .from('clients')
+              .select('branch_id')
+              .ilike('national_id', cand.nic.trim())
+              .limit(1)
+              .maybeSingle();
+            if (clientMatch?.branch_id) candBranch = normalizeBranchId(clientMatch.branch_id);
+          }
+          if (!candBranch && cand.tp) {
+            const cleanPhone = normalizePhone(cand.tp);
+            if (cleanPhone) {
+              const { data: clientMatch } = await adminSupabase
+                .from('clients')
+                .select('branch_id')
+                .eq('phone', cleanPhone)
+                .limit(1)
+                .maybeSingle();
+              if (clientMatch?.branch_id) candBranch = normalizeBranchId(clientMatch.branch_id);
+            }
+          }
+
+          // Strict branch isolation: only adopt this candidate if it belongs to effectiveBranch
+          if (candBranch === effectiveBranch) {
+            targetStockCustomer = cand;
+            break;
+          }
+        }
+      }
     }
 
     let savedStockCustomer: any = null;

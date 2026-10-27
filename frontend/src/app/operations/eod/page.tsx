@@ -1592,27 +1592,53 @@ function EndOfDayContent() {
     const cleanNorm = stripBranchPrefix(billNo).toLowerCase().replace(/[\s\-_/]+/g, '');
     const targetBranch = branchStr ? normalizeBranchId(branchStr) : null;
 
-    const matchFn = (c: any) => {
+    const isBillMatch = (c: any) => {
       if (!c.bill_numbers) return false;
       const rawBills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
       const normBills = c.bill_numbers.split(",").map((b: string) => stripBranchPrefix(b).toLowerCase().replace(/[\s\-_/]+/g, ''));
 
-      const isMatched = 
+      return (
         rawBills.includes(cleanBill) || 
         normBills.includes(cleanNorm) ||
-        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))));
-
-      if (!isMatched) return false;
-      if (targetBranch && (c.branch_id || c.branch)) {
-        return normalizeBranchId(c.branch_id || c.branch) === targetBranch;
-      }
-      return true;
+        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))))
+      );
     };
 
-    const foundInNew = stockCustomers.find(matchFn);
+    if (targetBranch) {
+      // 1. Strict Priority: Exact match on target branch
+      const matchExact = (c: any) => {
+        if (!isBillMatch(c)) return false;
+        const cBranch = normalizeBranchId(c.branch_id || c.branch || '');
+        return cBranch === targetBranch;
+      };
+
+      const foundNew = stockCustomers.find(matchExact);
+      if (foundNew) return foundNew;
+
+      const foundOld = oldStockCustomers.find(matchExact);
+      if (foundOld) return foundOld;
+
+      // 2. Fallback: Only match unassigned customer IF they don't have a conflicting branch
+      const matchUnassigned = (c: any) => {
+        if (!isBillMatch(c)) return false;
+        const cBranch = normalizeBranchId(c.branch_id || c.branch || '');
+        return !cBranch;
+      };
+
+      const unassignedNew = stockCustomers.find(matchUnassigned);
+      if (unassignedNew) return unassignedNew;
+
+      const unassignedOld = oldStockCustomers.find(matchUnassigned);
+      if (unassignedOld) return unassignedOld;
+
+      return null;
+    }
+
+    // When no target branch is specified (e.g. ALL view without item context)
+    const foundInNew = stockCustomers.find(isBillMatch);
     if (foundInNew) return foundInNew;
 
-    return oldStockCustomers.find(matchFn);
+    return oldStockCustomers.find(isBillMatch);
   };
 
   const handleAddBillPrefix = (prefix: string) => {
