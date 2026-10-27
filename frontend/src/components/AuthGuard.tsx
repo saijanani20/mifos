@@ -178,14 +178,27 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       const lastActivity = parseInt(localStorage.getItem('last_activity') || '0', 10);
       if (lastActivity && Date.now() - lastActivity > INACTIVITY_TIMEOUT) {
         // Session expired! Clear local session data & cookies
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('last_activity');
-        document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        [
+          'auth_token',
+          'refresh_token',
+          'user',
+          'user_role',
+          'user_branch',
+          'user_name',
+          'last_activity'
+        ].forEach(k => {
+          try { localStorage.removeItem(k); } catch {}
+        });
+        [
+          'sb-access-token',
+          'auth_token',
+          'sb-refresh-token',
+          'refresh_token'
+        ].forEach(c => {
+          document.cookie = `${c}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; SameSite=Lax`;
+        });
         setIsAuthenticated(false);
-        router.push('/login?expired=true');
+        router.replace('/login?expired=true');
       }
     }, 10000); // Check every 10 seconds
 

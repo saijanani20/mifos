@@ -302,12 +302,46 @@ export default function TopGlassNavbar() {
     };
   }, [mobileMenuOpen]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('last_activity');
-    document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    router.push('/login');
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    try {
+      await supabase.auth.signOut();
+    } catch {}
+
+    // 1. Purge all local identity and authentication keys
+    [
+      'auth_token',
+      'refresh_token',
+      'user',
+      'user_role',
+      'user_branch',
+      'user_name',
+      'last_activity',
+      'local_stock_customers',
+      'local_stock_customers_timestamp'
+    ].forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
+    });
+
+    // 2. Clear all session and authentication cookies
+    [
+      'sb-access-token',
+      'auth_token',
+      'sb-refresh-token',
+      'refresh_token'
+    ].forEach(c => {
+      document.cookie = `${c}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; SameSite=Lax`;
+    });
+
+    // 3. Clear session storage circuit breaker
+    try {
+      sessionStorage.removeItem('__auth_nav_chain');
+    } catch {}
+
+    // 4. Force hard redirect to login so all in-memory React states and query caches are destroyed
+    window.location.replace('/login');
   };
 
   const isActive = (href: string) =>
