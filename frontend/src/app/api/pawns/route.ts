@@ -4,6 +4,7 @@ import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnReceiptSms } from '@/lib/sms';
 import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
+import { invalidateClientsCache } from '@/app/api/clients/route';
 import { getSriLankaDate } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
@@ -404,6 +405,9 @@ export async function POST(request: Request) {
         } else {
           console.error("Auto-client creation failed:", createErr);
         }
+      }
+      if (targetClientId) {
+        invalidateClientsCache();
       }
     }
 

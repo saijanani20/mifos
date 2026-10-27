@@ -268,17 +268,9 @@ export async function POST(request: Request) {
         .maybeSingle();
       existingClient = data;
     }
-
-    if (!existingClient && formattedPhone) {
-      const { data } = await adminSupabase
-        .from('clients')
-        .select('*')
-        .eq('phone', formattedPhone)
-        .eq('branch_id', effectiveBranch)
-        .limit(1)
-        .maybeSingle();
-      existingClient = data;
-    }
+    // Phone number fallback is intentionally disabled to prevent overwriting existing clients
+    // who share a phone number or use dummy numbers (e.g. 0000000000, 0700000000).
+    // Client profile updates are strictly keyed on unique National ID.
 
     let savedClient: any = null;
     if (existingClient) {
@@ -352,49 +344,9 @@ export async function POST(request: Request) {
         .maybeSingle();
       targetStockCustomer = data;
     }
-
-    if (!targetStockCustomer && cleanBills) {
-      const firstBill = cleanBills.split(',')[0].trim();
-      const strippedFirstBill = stripBranchPrefix(firstBill);
-      const { data: candidates } = await adminSupabase
-        .from('stock_customers')
-        .select('*')
-        .ilike('bill_numbers', `%${strippedFirstBill}%`)
-        .limit(10);
-
-      if (candidates && candidates.length > 0) {
-        for (const cand of candidates) {
-          let candBranch = cand.branch_id ? normalizeBranchId(cand.branch_id) : null;
-          if (!candBranch && cand.nic) {
-            const { data: clientMatch } = await adminSupabase
-              .from('clients')
-              .select('branch_id')
-              .ilike('national_id', cand.nic.trim())
-              .limit(1)
-              .maybeSingle();
-            if (clientMatch?.branch_id) candBranch = normalizeBranchId(clientMatch.branch_id);
-          }
-          if (!candBranch && cand.tp) {
-            const cleanPhone = normalizePhone(cand.tp);
-            if (cleanPhone) {
-              const { data: clientMatch } = await adminSupabase
-                .from('clients')
-                .select('branch_id')
-                .eq('phone', cleanPhone)
-                .limit(1)
-                .maybeSingle();
-              if (clientMatch?.branch_id) candBranch = normalizeBranchId(clientMatch.branch_id);
-            }
-          }
-
-          // Strict branch isolation: only adopt this candidate if it belongs to effectiveBranch
-          if (candBranch === effectiveBranch) {
-            targetStockCustomer = cand;
-            break;
-          }
-        }
-      }
-    }
+    // Loose substring bill matching is intentionally removed.
+    // A customer profile must NEVER be adopted or overwritten based on a partial bill number match.
+    // If an explicit ID or NIC match was not found, this customer is treated as new and inserted.
 
     let savedStockCustomer: any = null;
     if (targetStockCustomer) {

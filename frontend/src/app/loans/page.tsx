@@ -424,7 +424,7 @@ export default function PawnesPage() {
   const loadClients = async () => {
     try {
       const headers = getAuthHeaders();
-      const res = await fetch('/api/clients?branchId=ALL', { headers });
+      const res = await fetch('/api/clients?branchId=ALL', { headers, cache: 'no-store' });
       if (res.ok) {
         const data: any[] = await res.json();
         setClientsList(data);
@@ -495,7 +495,7 @@ export default function PawnesPage() {
         role: effectiveRole,
         filterBranch: branchParam,
       });
-      const res = await fetch(`/api/pawns?${params}`, { headers });
+      const res = await fetch(`/api/pawns?${params}`, { headers, cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setPawns(Array.isArray(data) ? data : []);
@@ -987,7 +987,7 @@ export default function PawnesPage() {
       toast.success(editingPawn ? 'Pawn ticket updated!' : 'Pawn ticket created & synced to vault stock!', { id: toastId });
       setIsOpen(false);
       resetForm();
-      loadPawns();
+      await Promise.all([loadPawns(), loadClients()]);
 
       // Automatically open official Printable Pawn Agreement Receipt Modal
       if (!editingPawn && savedData) {

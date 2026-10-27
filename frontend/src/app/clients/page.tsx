@@ -314,7 +314,7 @@ export default function ClientsPage() {
   const loadCustomerData = async (forceRefresh = false) => {
     const CACHE_KEY = 'local_stock_customers';
     const CACHE_TIME_KEY = 'local_stock_customers_timestamp';
-    const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours TTL for static customer lookup
+    const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL (auto-refreshes fresh database records)
 
     // 1. Try reading from LocalStorage cache first (Zero Supabase Egress!)
     if (!forceRefresh) {
@@ -713,7 +713,7 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
 
       toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile created successfully!");
       setShowAddCustomerModal(false);
-      await loadCustomerData();
+      await loadCustomerData(true);
     } catch (err: any) {
       toast.error("Error saving customer profile: " + err.message);
     }
@@ -735,7 +735,7 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
         }
         toast.success("Customer profile deleted (Local Storage)!");
       }
-      loadCustomerData();
+      loadCustomerData(true);
     } catch (err: any) {
       toast.error("Error deleting customer: " + err.message);
     }

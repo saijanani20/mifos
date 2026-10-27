@@ -125,16 +125,8 @@ async function handleUpdate(request: Request, context: any) {
           .maybeSingle();
         clientMatch = data;
       }
-      if (!clientMatch && formattedPhone) {
-        const { data } = await adminSupabase
-          .from('clients')
-          .select('*')
-          .eq('phone', formattedPhone)
-          .eq('branch_id', effectiveBranch)
-          .limit(1)
-          .maybeSingle();
-        clientMatch = data;
-      }
+      // Phone number matching disabled to prevent mutating another customer's profile
+      // when tellers use shared/dummy mobile numbers.
 
       if (clientMatch) {
         await adminSupabase

@@ -1245,7 +1245,7 @@ function EndOfDayContent() {
   const loadCustomerData = async (forceRefresh = false) => {
     const CACHE_KEY = 'local_stock_customers';
     const CACHE_TIME_KEY = 'local_stock_customers_timestamp';
-    const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours TTL for customer lookup
+    const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL for customer lookup (auto-refreshes fresh data)
 
     // 1. Check LocalStorage cache first (Zero Supabase Egress!)
     if (!forceRefresh) {
@@ -1582,8 +1582,7 @@ function EndOfDayContent() {
 
       return (
         rawBills.includes(cleanBill) || 
-        normBills.includes(cleanNorm) ||
-        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))))
+        normBills.includes(cleanNorm)
       );
     };
 
@@ -1734,7 +1733,7 @@ function EndOfDayContent() {
       toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile saved successfully!");
       setShowAddCustomerModal(false);
       setShowBillCustomerModal(false);
-      await loadCustomerData();
+      await loadCustomerData(true);
     } catch (err: any) {
       console.error("Error saving customer profile:", err);
       toast.error("Error saving customer profile: " + err.message);
