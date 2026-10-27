@@ -204,17 +204,12 @@ export function formatBranchScopedId(id: string | null | undefined, branchId: st
 }
 
 /**
- * Formats a Pawn Ticket / Bill Number with canonical branch scoping behind the scenes:
- * (e.g. "3R 14543" at Kadawatha -> "KDW-3R 14543", at Kiribathgoda -> "KIR-3R 14543")
+ * Formats a Pawn Ticket / Bill Number strictly clean without any branch prefix
+ * (e.g. "3R 14543") as required throughout the system.
  */
-export function formatBranchScopedBillNo(billNo: string | null | undefined, branchId: string | null | undefined): string {
+export function formatBranchScopedBillNo(billNo: string | null | undefined, _branchId?: string | null | undefined): string {
   if (!billNo) return '';
-  const clean = billNo.trim();
-  if (!clean) return '';
-
-  const normBranch = normalizeBranchId(branchId);
-  const stripped = stripBranchPrefix(clean);
-  return `${normBranch}-${stripped}`;
+  return stripBranchPrefix(billNo).trim();
 }
 
 /**

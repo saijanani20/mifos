@@ -476,14 +476,13 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Insert pawn collateral items into pawn_items and stock_items with sub-bill numbers (+)
-    const baseBill = scopedBillNo || billNo || pawnId.substring(0, 8).toUpperCase();
+    // 3. Insert pawn collateral items into pawn_items and a single consolidated stock_item (Option 1)
+    const baseBill = stripBranchPrefix(scopedBillNo || billNo || pawnId.substring(0, 8).toUpperCase()).trim();
 
     if (Array.isArray(items) && items.length > 0) {
-      const pawnItemsPayload = items.map((item: any, idx: number) => {
+      const pawnItemsPayload = items.map((item: any) => {
         const itemMg = parseFloat(item.weightMg || item.weight_mg) || 0;
         const itemAppraised = parseFloat(item.appraisedValue || item.appraised_value) || (finalAppraised / items.length);
-        const subBillNo = items.length > 1 ? `${baseBill}-${idx + 1}` : baseBill;
         const rawType = item.itemType || item.item_type || itemType || 'Gold';
         const customText = item.customType || item.description || '';
         const itemTypeLabel = (rawType === 'OTHER' || rawType === 'Other') ? (customText || 'Other Gold Item') : rawType;
@@ -497,7 +496,7 @@ export async function POST(request: Request) {
           weight_grams: itemMg / 1000,
           weight_mg: itemMg,
           appraised_value: itemAppraised,
-          description: `${itemDescText} (${subBillNo})`
+          description: `${itemDescText} (${baseBill})`
         };
       });
 
@@ -514,32 +513,37 @@ export async function POST(request: Request) {
         throw new Error(`Failed to save pawn collateral items: ${itemsErr.message}`);
       }
 
-      // Create individual matching stock items for each collateral sub-item
-      const stockPayloads = items.map((item: any, idx: number) => {
-        const itemMg = parseFloat(item.weightMg || item.weight_mg) || 0;
-        const itemAppraised = parseFloat(item.appraisedValue || item.appraised_value) || (finalAppraised / items.length);
-        const subBillNo = items.length > 1 ? `${baseBill}-${idx + 1}` : baseBill;
+      // Create a SINGLE consolidated vault stock item for the entire pawn ticket (Option 1)
+      const totalWeightMg = items.reduce((sum: number, it: any) => sum + (parseFloat(it.weightMg || it.weight_mg) || 0), 0);
+      const totalWeightGrams = totalWeightMg > 0 ? (totalWeightMg / 1000) : (finalWeightGrams || (finalWeightMg > 0 ? finalWeightMg / 1000 : 0));
+      
+      const itemCodes = items.map((item: any) => {
         const rawType = item.itemType || item.item_type || itemType || 'CH';
         const is18K = item.purity === '18K' || String(item.purity || '').toUpperCase().startsWith('18');
-        const cleanCode = (rawType === 'OTHER' || rawType === 'Other') 
+        return (rawType === 'OTHER' || rawType === 'Other') 
           ? (item.customType || 'OTHER') 
           : (is18K ? `18K-${rawType}` : rawType);
-
-        return {
-          id: crypto.randomUUID(),
-          bill_no: subBillNo,
-          branch_id: targetBranchId,
-          item_type: cleanCode,
-          weight: itemMg / 1000,
-          price: itemAppraised,
-          status: 'Active',
-          date: getSriLankaDate(),
-          created_at: new Date().toISOString()
-        };
       });
-      const { error: stockErr } = await adminSupabase.from('stock_items').insert(stockPayloads);
+      const combinedItemType = itemCodes.join(', ');
+
+      const singleStockPayload = {
+        id: crypto.randomUUID(),
+        bill_no: baseBill,
+        branch_id: targetBranchId,
+        item_type: combinedItemType || 'CH',
+        weight: totalWeightGrams,
+        price: finalAppraised,
+        status: 'Active',
+        date: getSriLankaDate(),
+        created_at: new Date().toISOString()
+      };
+
+      const { error: stockErr } = await adminSupabase
+        .from('stock_items')
+        .upsert([singleStockPayload], { onConflict: 'branch_id, bill_no' });
+
       if (stockErr) {
-        console.warn("Could not insert matching vault stock items:", stockErr.message);
+        console.warn("Could not upsert matching vault stock item:", stockErr.message);
       }
     } else {
       // Single default collateral item when items array is empty (guarantees pawn_items is NEVER missing)
@@ -568,17 +572,17 @@ export async function POST(request: Request) {
 
       // Single default stock item
       const defaultCode = (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || 'CH');
-      const { error: singleStockErr } = await adminSupabase.from('stock_items').insert([{
+      const { error: singleStockErr } = await adminSupabase.from('stock_items').upsert([{
         id: crypto.randomUUID(),
         bill_no: baseBill,
         branch_id: targetBranchId,
         item_type: defaultCode,
-        weight: finalWeightMg / 1000 || finalWeightGrams,
+        weight: finalWeightMg > 0 ? finalWeightMg / 1000 : finalWeightGrams,
         price: finalAppraised,
         status: 'Active',
         date: getSriLankaDate(),
         created_at: new Date().toISOString()
-      }]);
+      }], { onConflict: 'branch_id, bill_no' });
       if (singleStockErr) {
         console.warn("Could not insert matching vault stock item:", singleStockErr.message);
       }
