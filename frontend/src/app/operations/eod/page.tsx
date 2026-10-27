@@ -1163,7 +1163,32 @@ function EndOfDayContent() {
     }
   };
 
-  const loadCustomerData = async () => {
+  const loadCustomerData = async (forceRefresh = false) => {
+    const CACHE_KEY = 'local_stock_customers';
+    const CACHE_TIME_KEY = 'local_stock_customers_timestamp';
+    const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours TTL for customer lookup
+
+    // 1. Check LocalStorage cache first (Zero Supabase Egress!)
+    if (!forceRefresh) {
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
+        if (cached && cachedTime) {
+          const age = Date.now() - Number(cachedTime);
+          if (age < CACHE_TTL_MS) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setStockCustomers(parsed);
+              setIsUsingSupabase(true);
+              return;
+            }
+          }
+        }
+      } catch (cErr) {
+        console.warn("Local cache read failed, fetching from Supabase:", cErr);
+      }
+    }
+
     try {
       let allCustomers: any[] = [];
       let fetchSuccess = false;
@@ -1194,7 +1219,7 @@ function EndOfDayContent() {
           const to = from + pageSize - 1;
           const { data, error } = await supabase
             .from('stock_customers')
-            .select('*')
+            .select('id, name, tp, nic, address, bill_numbers')
             .order('name', { ascending: true })
             .range(from, to);
 
@@ -1215,12 +1240,15 @@ function EndOfDayContent() {
       setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
       try {
-        localStorage.setItem('local_stock_customers', JSON.stringify(allCustomers));
-      } catch {}
+        localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
+        localStorage.setItem(CACHE_TIME_KEY, String(Date.now()));
+      } catch (sErr) {
+        console.warn("Failed to persist stock customers to localStorage:", sErr);
+      }
     } catch (err) {
       console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
       setIsUsingSupabase(false);
-      const local = localStorage.getItem('local_stock_customers');
+      const local = localStorage.getItem(CACHE_KEY);
       if (local) {
         try {
           const allItems = JSON.parse(local);

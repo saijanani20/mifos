@@ -106,8 +106,16 @@ export async function POST(request: Request) {
       }
     }
 
+    // Main Branch (DHW / HQ) is strictly reserved for Admin login
+    if ((effectiveBranch === 'DHW' || effectiveBranch === 'HQ') && role !== 'ADMIN') {
+      return NextResponse.json(
+        { error: 'Access Denied: Main Branch is reserved for Administrator login only. Please select your assigned local branch.' },
+        { status: 403 }
+      );
+    }
+
     const branchObj = CANONICAL_BRANCHES.find(b => b.id === effectiveBranch);
-    const effectiveBranchName = branchObj ? branchObj.name : (effectiveBranch === 'HQ' ? 'Head Office' : (profile?.branch_name || effectiveBranch));
+    const effectiveBranchName = branchObj ? branchObj.name : (effectiveBranch === 'HQ' ? 'Head Office' : (effectiveBranch === 'DHW' ? 'Main Branch' : (profile?.branch_name || effectiveBranch)));
 
     // Auto-heal missing profile in public.profiles if user authenticated successfully
     let userProfile = profile;

@@ -20,13 +20,19 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const filterBranch = searchParams.get('filterBranch');
     const branchIdParam = searchParams.get('branchId');
-    const requestedBranch = (filterBranch && filterBranch !== '') ? filterBranch : branchIdParam;
+    // Strict Branch Isolation & Egress Protection:
+    // TELLER role is strictly locked to their assigned profile branch. They cannot query ALL or other branches.
+    // Only ADMIN, AUDITOR, or HQ staff can view 'ALL' or switch branch filter.
+    let effectiveBranch = (filterBranch && filterBranch !== '') ? filterBranch : branchIdParam;
+    if (session.role === 'TELLER') {
+      effectiveBranch = session.branchId || 'HQ';
+    }
 
     let query = adminSupabase.from('pawns').select('*').order('created_at', { ascending: false });
 
-    // If a specific branch filter is requested (and not 'ALL'), filter by that branch; otherwise allow viewing all branches
-    if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
-      const terms = getBranchSearchTerms(requestedBranch);
+    // Filter by branch if effectiveBranch is specified and not 'ALL'
+    if (effectiveBranch && effectiveBranch !== 'ALL' && effectiveBranch.trim() !== '') {
+      const terms = getBranchSearchTerms(effectiveBranch);
       const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
       query = query.or(orClause);
     }
@@ -56,6 +62,8 @@ export async function GET(request: Request) {
       sigClientsRes,
       allItemsRes,
       evalsRes,
+      evalsAirPhotosRes,
+      evalsWaterPhotosRes,
       packetLogsRes
     ] = await Promise.all([
       // 1a. Fast client basic fields (no heavy base64 strings)
@@ -78,9 +86,19 @@ export async function GET(request: Request) {
         ? adminSupabase.from('pawn_items').select('*').in('pawn_id', pawnIds)
         : Promise.resolve({ data: [] }),
 
-      // 3. Fetch scale photos only for bills in current results (instead of entire DB)
+      // 3a. Egress optimization: Fetch scale evaluation numbers without multi-megabyte base64 photos
       billStatuses.length > 0
-        ? adminSupabase.from('rejected_evaluations').select('status, air_weight, water_weight, air_weight_photo_url, water_weight_photo_url, created_at').in('status', billStatuses)
+        ? adminSupabase.from('rejected_evaluations').select('status, air_weight, water_weight, created_at').in('status', billStatuses)
+        : Promise.resolve({ data: [] }),
+
+      // 3b. Fast presence check for Air Weight photo (returns only status)
+      billStatuses.length > 0
+        ? adminSupabase.from('rejected_evaluations').select('status').in('status', billStatuses).not('air_weight_photo_url', 'is', null)
+        : Promise.resolve({ data: [] }),
+
+      // 3c. Fast presence check for Water Weight photo (returns only status)
+      billStatuses.length > 0
+        ? adminSupabase.from('rejected_evaluations').select('status').in('status', billStatuses).not('water_weight_photo_url', 'is', null)
         : Promise.resolve({ data: [] }),
 
       // 4. Fetch packet sticker QR logs
@@ -118,16 +136,27 @@ export async function GET(request: Request) {
       });
     }
 
-    // Map scale evaluation records
+    // Map scale evaluation records with presence indicators
+    const hasAirPhotoSet = new Set((evalsAirPhotosRes.data || []).map((ev: any) => ev.status));
+    const hasWaterPhotoSet = new Set((evalsWaterPhotosRes.data || []).map((ev: any) => ev.status));
     const evalsByBillMap: Record<string, any> = {};
     if (evalsRes.data) {
       evalsRes.data.forEach((ev: any) => {
         if (ev.status && ev.status.startsWith('BILL:')) {
           const bNo = ev.status.replace('BILL:', '').trim();
-          evalsByBillMap[bNo] = ev;
-          evalsByBillMap[bNo.toUpperCase()] = ev;
-          evalsByBillMap[bNo.replace(/\s+/g, '')] = ev;
-          evalsByBillMap[bNo.replace(/\s+/g, '').toUpperCase()] = ev;
+          const hasAir = hasAirPhotoSet.has(ev.status);
+          const hasWater = hasWaterPhotoSet.has(ev.status);
+          const evObj = {
+            ...ev,
+            air_weight_photo_url: hasAir ? 'present' : null,
+            water_weight_photo_url: hasWater ? 'present' : null,
+            has_air_photo: hasAir,
+            has_water_photo: hasWater
+          };
+          evalsByBillMap[bNo] = evObj;
+          evalsByBillMap[bNo.toUpperCase()] = evObj;
+          evalsByBillMap[bNo.replace(/\s+/g, '')] = evObj;
+          evalsByBillMap[bNo.replace(/\s+/g, '').toUpperCase()] = evObj;
         }
       });
     }

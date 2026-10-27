@@ -33,7 +33,8 @@ import {
   Smartphone,
   Package,
   Percent,
-  Receipt
+  Receipt,
+  Banknote
 } from 'lucide-react';
 
 const navGroups = [
@@ -51,6 +52,7 @@ const navGroups = [
     items: [
       { name: 'Customers', href: '/clients', icon: Users },
       { name: 'Pawnings', href: '/loans', icon: Wallet },
+      { name: 'Cash & Tills', href: '/finance/cash', icon: Banknote },
       { name: 'Interest', href: '/finance/interest', icon: Percent },
       { name: 'Journal Records', href: '/accounting/ledger?tab=journal', icon: FileText },
       { name: 'Ledger Entry', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },

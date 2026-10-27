@@ -15,14 +15,20 @@ export async function GET(request: Request) {
     const status = searchParams.get('status');
     const billNo = searchParams.get('billNo');
 
+    const isSingleBillQuery = Boolean(billNo && billNo.trim() !== '');
+    // Egress optimization: Only include full base64 photos when specifically inspecting a single bill.
+    const columns = isSingleBillQuery
+      ? '*'
+      : 'id, status, air_weight, water_weight, specific_gravity, estimated_karat, asking_amount, true_value, created_at';
+
     let query = adminSupabase
       .from('rejected_evaluations')
-      .select('*')
+      .select(columns)
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (billNo && billNo.trim() !== '') {
-      const cleanBill = billNo.trim();
+    if (isSingleBillQuery) {
+      const cleanBill = billNo!.trim();
       query = query.or(`status.eq.BILL:${cleanBill},status.eq.${cleanBill}`);
     } else if (status) {
       query = query.eq('status', status);

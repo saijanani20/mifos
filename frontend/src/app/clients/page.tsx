@@ -85,7 +85,9 @@ export default function ClientsPage() {
   const [userId, setUserId] = useState('');
   const [userRole, setUserRole] = useState('');
   const [editingClient, setEditingClient] = useState<any>(null);
-  const [selectedBranchFilter, setSelectedBranchFilter] = useState('ALL');
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
+  const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false);
+  const branchDropdownRef = useRef<HTMLDivElement>(null);
   const [branches, setBranches] = useState<any[]>([]);
 
   // Customer KYC Photo Viewer Dialog State
@@ -167,13 +169,29 @@ export default function ClientsPage() {
     }
   };
 
-  const loadClients = async (overrideBranch?: string) => {
+  // Close branch dropdown popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(event.target as Node)) {
+        setIsBranchFilterOpen(false);
+      }
+    };
+    if (isBranchFilterOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isBranchFilterOpen]);
+
+  const loadClients = async (overrideBranches?: string[] | string) => {
     try {
       setLoading(true);
       const rawUserBranch = typeof window !== 'undefined' ? localStorage.getItem('user_branch') : null;
       let effectiveActiveBranch = rawUserBranch ? normalizeBranchId(rawUserBranch) : '';
 
       const storedUser = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+      let currentRole = userRole;
       if (storedUser) {
         try {
           const user = JSON.parse(storedUser);
@@ -181,18 +199,34 @@ export default function ClientsPage() {
             effectiveActiveBranch = normalizeBranchId(user.branchId);
           }
           setUserId(user.id || '');
-          setUserRole(user.role || 'TELLER');
+          currentRole = user.role || 'TELLER';
+          setUserRole(currentRole);
         } catch {}
       }
       if (effectiveActiveBranch) {
         setBranchId(effectiveActiveBranch);
       }
 
+      // Determine active branches to query
+      let activeBranches: string[] = [];
+      if (overrideBranches !== undefined) {
+        activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
+      } else if (selectedBranches.length > 0) {
+        activeBranches = selectedBranches;
+      } else if (currentRole === 'TELLER' && effectiveActiveBranch && effectiveActiveBranch !== 'DHW' && effectiveActiveBranch !== 'HQ') {
+        // Local branch tellers default to their home branch
+        activeBranches = [effectiveActiveBranch];
+      } else {
+        // Admin at Main Branch (Dehiwala / HQ) oversees all branches by default
+        activeBranches = ['ALL'];
+      }
+
+      const isAll = activeBranches.includes('ALL');
+      const branchParamValue = isAll ? 'ALL' : activeBranches.join(',');
+      const queryParam = isAll ? '' : `?branchId=${encodeURIComponent(branchParamValue)}`;
+
       // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
       const headers = getAuthHeaders();
-      const targetBranch = overrideBranch !== undefined ? overrideBranch : selectedBranchFilter;
-      const queryParam = targetBranch && targetBranch !== 'ALL' ? `?branchId=${encodeURIComponent(targetBranch)}` : '';
-
       const res = await fetch(`/api/clients${queryParam}`, { headers, cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
@@ -210,7 +244,92 @@ export default function ClientsPage() {
     }
   };
 
-  const loadCustomerData = async () => {
+  const toggleBranch = (bId: string) => {
+    const cleanId = bId.trim().toUpperCase();
+    let next: string[];
+
+    if (cleanId === 'ALL') {
+      if (selectedBranches.includes('ALL')) {
+        next = branchId ? [branchId.toUpperCase()] : [];
+      } else {
+        next = ['ALL'];
+      }
+    } else {
+      if (selectedBranches.includes('ALL')) {
+        next = branchId && branchId.toUpperCase() !== cleanId
+          ? [branchId.toUpperCase(), cleanId]
+          : [cleanId];
+      } else {
+        const exists = selectedBranches.some(b => b.toUpperCase() === cleanId);
+        if (exists) {
+          next = selectedBranches.filter(b => b.toUpperCase() !== cleanId);
+          if (next.length === 0 && branchId) {
+            next = [branchId.toUpperCase()];
+          }
+        } else {
+          next = [...selectedBranches, cleanId];
+        }
+      }
+    }
+
+    setSelectedBranches(next);
+    loadClients(next);
+  };
+
+  const selectHomeBranchOnly = () => {
+    const home = branchId ? branchId.toUpperCase() : 'HQ';
+    setSelectedBranches([home]);
+    loadClients([home]);
+  };
+
+  const selectAllBranches = () => {
+    setSelectedBranches(['ALL']);
+    loadClients(['ALL']);
+  };
+
+  const getBranchButtonLabel = () => {
+    if (selectedBranches.includes('ALL')) {
+      return `ALL BRANCHES (${clients.length})`;
+    }
+    if (selectedBranches.length === 0) {
+      return `NO BRANCH (${clients.length})`;
+    }
+    if (selectedBranches.length === 1) {
+      const code = selectedBranches[0];
+      const bObj = branches.find(b => b.id.toUpperCase() === code.toUpperCase());
+      const name = bObj?.name || code;
+      const isHome = branchId && code.toUpperCase() === branchId.toUpperCase();
+      return `${name.toUpperCase()}${isHome ? ' (HOME)' : ''} (${clients.length})`;
+    }
+    return `${selectedBranches.length} BRANCHES (${clients.length})`;
+  };
+
+  const loadCustomerData = async (forceRefresh = false) => {
+    const CACHE_KEY = 'local_stock_customers';
+    const CACHE_TIME_KEY = 'local_stock_customers_timestamp';
+    const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours TTL for static customer lookup
+
+    // 1. Try reading from LocalStorage cache first (Zero Supabase Egress!)
+    if (!forceRefresh) {
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
+        if (cached && cachedTime) {
+          const age = Date.now() - Number(cachedTime);
+          if (age < CACHE_TTL_MS) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setStockCustomers(parsed);
+              setIsUsingSupabase(true);
+              return;
+            }
+          }
+        }
+      } catch (cErr) {
+        console.warn("Local cache read failed, fetching from Supabase:", cErr);
+      }
+    }
+
     try {
       let allCustomers: any[] = [];
       let page = 0;
@@ -222,7 +341,7 @@ export default function ClientsPage() {
         const to = from + pageSize - 1;
         const { data, error } = await supabase
           .from('stock_customers')
-          .select('*')
+          .select('id, name, tp, nic, address, bill_numbers')
           .order('name', { ascending: true })
           .range(from, to);
 
@@ -241,10 +360,16 @@ export default function ClientsPage() {
 
       setStockCustomers(allCustomers);
       setIsUsingSupabase(true);
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
+        localStorage.setItem(CACHE_TIME_KEY, String(Date.now()));
+      } catch (sErr) {
+        console.warn("Failed to persist stock customers to localStorage:", sErr);
+      }
     } catch (err) {
       console.warn("Failed to fetch stock customers from Supabase, loading LocalStorage:", err);
       setIsUsingSupabase(false);
-      const local = localStorage.getItem('local_stock_customers');
+      const local = localStorage.getItem(CACHE_KEY);
       if (local) {
         try {
           const allItems = JSON.parse(local);
@@ -259,7 +384,22 @@ export default function ClientsPage() {
   };
 
   useEffect(() => {
-    loadClients('ALL');
+    let initialBranches = ['ALL'];
+    try {
+      const stored = localStorage.getItem('user');
+      const activeBranch = localStorage.getItem('user_branch');
+      if (stored) {
+        const u = JSON.parse(stored);
+        const branchToUse = activeBranch || u.branchId;
+        // Only local branch tellers default to their isolated branch; Admin at Main Branch sees ALL
+        if (u.role === 'TELLER' && branchToUse && branchToUse !== 'DHW' && branchToUse !== 'HQ') {
+          const myBranch = normalizeBranchId(branchToUse).toUpperCase();
+          initialBranches = [myBranch];
+        }
+      }
+    } catch {}
+    setSelectedBranches(initialBranches);
+    loadClients(initialBranches);
     loadCustomerData();
     loadBranches();
   }, []);
@@ -626,12 +766,13 @@ export default function ClientsPage() {
 
   const filteredClients = clients
     .filter(client => {
-      // 1. Branch filter
-      if (selectedBranchFilter && selectedBranchFilter !== 'ALL') {
+      // 1. Multi-Branch filter
+      if (selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
         const cBranch = String(client.branch_id || client.branchId || '').toUpperCase().trim();
-        const sBranch = selectedBranchFilter.toUpperCase().trim();
-        const terms = getBranchSearchTerms(sBranch);
-        const branchMatches = terms.some(t => cBranch === t.toUpperCase() || cBranch.includes(t.toUpperCase())) || cBranch === sBranch;
+        const branchMatches = selectedBranches.some(sBranch => {
+          const terms = getBranchSearchTerms(sBranch);
+          return terms.some(t => cBranch === t.toUpperCase() || cBranch.includes(t.toUpperCase())) || cBranch === sBranch.toUpperCase();
+        });
         if (!branchMatches) return false;
       }
 
@@ -1154,26 +1295,137 @@ export default function ClientsPage() {
             className="pl-12 h-14 bg-white/50 border-white/40 glass focus:ring-primary shadow-lg shadow-slate-200/50 rounded-2xl font-bold" 
           />
         </div>
-        <div className="relative w-full md:w-auto shrink-0 min-w-[220px]">
-          <select
-            value={selectedBranchFilter}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSelectedBranchFilter(val);
-              loadClients(val);
-            }}
-            className="h-14 w-full px-5 pr-10 bg-white/80 border border-slate-200 glass font-black text-xs uppercase tracking-wider text-slate-700 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none"
+        <div className="relative w-full md:w-auto shrink-0 min-w-[240px]" ref={branchDropdownRef}>
+          {/* Maroon/Primary Filter Trigger Button */}
+          <button
+            type="button"
+            id="clients-branch-filter-btn"
+            onClick={() => setIsBranchFilterOpen(!isBranchFilterOpen)}
+            className={`h-14 w-full px-5 pr-11 bg-white/90 border ${
+              isBranchFilterOpen ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200'
+            } glass font-black text-xs uppercase tracking-wider text-slate-800 rounded-2xl shadow-sm hover:border-primary/60 transition-all flex items-center justify-between cursor-pointer select-none`}
           >
-            <option value="ALL">All Branches ({clients.length})</option>
-            {branches.filter(b => b.id !== 'ALL').map((b: any) => (
-              <option key={b.id} value={b.id}>
-                {b.name || b.id} Branch
-              </option>
-            ))}
-          </select>
-          <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
-            <Filter className="w-4 h-4 text-primary" />
-          </div>
+            <div className="flex items-center gap-2 truncate">
+              <span className="truncate">{getBranchButtonLabel()}</span>
+              {!selectedBranches.includes('ALL') && selectedBranches.length > 0 && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              )}
+            </div>
+            <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-primary">
+              <Filter className="w-4 h-4" />
+            </div>
+          </button>
+
+          {/* Interactive Multi-Select Popover Card */}
+          {isBranchFilterOpen && (
+            <div className="absolute right-0 top-16 z-50 w-80 bg-white/95 backdrop-blur-xl border border-slate-200/90 shadow-2xl rounded-2xl p-3.5 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+              {/* Card Header & Quick Actions */}
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-primary" />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-700">Select Branches</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {branchId && (
+                    <button
+                      type="button"
+                      onClick={selectHomeBranchOnly}
+                      className="text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-slate-100 hover:bg-primary hover:text-white text-slate-600 transition-colors cursor-pointer"
+                      title="Reset to only your home branch"
+                    >
+                      My Branch
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={selectAllBranches}
+                    className="text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-slate-100 hover:bg-primary hover:text-white text-slate-600 transition-colors cursor-pointer"
+                    title="Select all branches"
+                  >
+                    All
+                  </button>
+                </div>
+              </div>
+
+              {/* All Branches Option */}
+              <div
+                onClick={() => toggleBranch('ALL')}
+                className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
+                  selectedBranches.includes('ALL')
+                    ? 'bg-primary/10 text-primary font-black'
+                    : 'hover:bg-slate-50 text-slate-700 font-bold'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-colors ${
+                    selectedBranches.includes('ALL')
+                      ? 'bg-primary border-primary text-white'
+                      : 'border-slate-300 bg-white'
+                  }`}>
+                    {selectedBranches.includes('ALL') && <Check className="w-3 h-3 stroke-[3]" />}
+                  </div>
+                  <span className="text-xs">All Branches (Global Directory)</span>
+                </div>
+                <Badge variant="outline" className="text-[9px] font-black uppercase tracking-wider">ALL</Badge>
+              </div>
+
+              <div className="h-px bg-slate-100 my-1" />
+
+              {/* Branch Checklist */}
+              <div className="max-h-56 overflow-y-auto space-y-1 pr-1 overscroll-contain">
+                {branches.filter(b => b.id !== 'ALL').map((b: any) => {
+                  const isTicked = selectedBranches.includes('ALL') || selectedBranches.some(bCode => bCode.toUpperCase() === b.id.toUpperCase());
+                  const isHome = branchId && b.id.toUpperCase() === branchId.toUpperCase();
+                  return (
+                    <div
+                      key={b.id}
+                      onClick={() => toggleBranch(b.id)}
+                      className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
+                        isTicked
+                          ? 'bg-slate-50 text-slate-900 font-black'
+                          : 'hover:bg-slate-50 text-slate-600 font-medium'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-colors ${
+                          isTicked
+                            ? 'bg-primary border-primary text-white'
+                            : 'border-slate-300 bg-white'
+                        }`}>
+                          {isTicked && <Check className="w-3 h-3 stroke-[3]" />}
+                        </div>
+                        <span className="text-xs">{b.name || b.id} Branch</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isHome && (
+                          <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            HOME
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono font-bold text-slate-400 uppercase">
+                          {b.id}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Popover Footer */}
+              <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-400">
+                  {clients.length} customer{clients.length === 1 ? '' : 's'} loaded
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsBranchFilterOpen(false)}
+                  className="px-3 py-1 bg-primary text-white text-[10px] font-black uppercase tracking-wider rounded-lg shadow-sm hover:bg-primary/90 transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <Button 
           onClick={() => setIsOpen(true)} 
@@ -1204,7 +1456,19 @@ export default function ClientsPage() {
             ) : filteredClients.length === 0 ? (
                <TableRow>
                  <TableCell colSpan={8} className="h-64 text-center">
-                    <p className="text-slate-400 font-bold mb-4">No customer fingerprints detected.</p>
+                    <p className="text-slate-400 font-bold mb-4">No customer records found in selected branch(es).</p>
+                    {searchQuery.trim() && !selectedBranches.includes('ALL') && (
+                      <div className="mb-4">
+                        <Button
+                          type="button"
+                          onClick={selectAllBranches}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest h-11 rounded-xl shadow-md gap-2"
+                        >
+                          <Search className="w-4 h-4" />
+                          Search Across All Branches
+                        </Button>
+                      </div>
+                    )}
                     <Button variant="outline" onClick={() => setIsOpen(true)} className="border-primary/20 text-primary font-black text-[10px] uppercase tracking-widest h-12 rounded-xl hover:bg-primary hover:text-white transition-all px-8">Generate First Entry</Button>
                  </TableCell>
                </TableRow>

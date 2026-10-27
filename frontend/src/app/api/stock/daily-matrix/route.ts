@@ -70,12 +70,45 @@ export async function GET(req: Request) {
     }
 
     // 2. Fetch Daily Ledger Transactions for F/S and R
-    const ledgerTxQuery = adminSupabase
-      .from('daily_ledger_transactions')
-      .select('*, daily_ledgers(ledger_date, branch_id)')
-      .order('created_at', { ascending: false });
+    // Egress Optimization: Filter at database level instead of pulling all 2,600+ historical transactions into memory
+    let ledgersQuery = adminSupabase.from('daily_ledgers').select('id, ledger_date, branch_id');
+    if (dateParam) {
+      ledgersQuery = ledgersQuery.eq('ledger_date', dateParam);
+    }
+    if (effectiveBranch && effectiveBranch.toUpperCase() !== 'ALL') {
+      ledgersQuery = ledgersQuery.ilike('branch_id', effectiveBranch);
+    }
+    const { data: matchingLedgers } = await ledgersQuery;
 
-    const { data: rawLedgerTxs, error: ledgerErr } = await ledgerTxQuery;
+    let rawLedgerTxs: any[] = [];
+    if (matchingLedgers && matchingLedgers.length > 0) {
+      const ledgerIds = matchingLedgers.map((l: any) => l.id);
+      const ledgerMap = new Map(matchingLedgers.map((l: any) => [l.id, l]));
+
+      const { data: txs } = await adminSupabase
+        .from('daily_ledger_transactions')
+        .select('*')
+        .in('ledger_id', ledgerIds)
+        .order('created_at', { ascending: false });
+
+      if (txs && Array.isArray(txs)) {
+        rawLedgerTxs = txs.map((tx: any) => ({
+          ...tx,
+          daily_ledgers: ledgerMap.get(tx.ledger_id) || null
+        }));
+      }
+    } else if (dateParam) {
+      // Fallback: check if transactions were created on that date directly
+      const { data: directTxs } = await adminSupabase
+        .from('daily_ledger_transactions')
+        .select('*, daily_ledgers(ledger_date, branch_id)')
+        .gte('created_at', `${dateParam}T00:00:00`)
+        .lte('created_at', `${dateParam}T23:59:59.999Z`)
+        .order('created_at', { ascending: false });
+      if (directTxs && Array.isArray(directTxs)) {
+        rawLedgerTxs = directTxs;
+      }
+    }
 
     const fsItems: any[] = [];
     const receiptItems: any[] = [];
