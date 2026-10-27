@@ -375,7 +375,9 @@ export default function PawnesPage() {
       const u = JSON.parse(stored);
       setBranchId(u.branchId || '');
       setUserId(u.id || '');
-      setUserRole(u.role || 'TELLER');
+      const rawRole = (localStorage.getItem('user_role') || u.role || 'TELLER').toUpperCase().trim();
+      const effectiveRole = ['ADMIN', 'MANAGER', 'AUDITOR'].includes(rawRole) ? rawRole : 'TELLER';
+      setUserRole(effectiveRole);
       return u;
     }
     return null;

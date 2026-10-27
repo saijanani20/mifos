@@ -28,23 +28,65 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       setIsAuthenticated(prev => (prev !== isAuth ? isAuth : prev));
     }, 0);
 
+    const resolveRole = (): 'ADMIN' | 'MANAGER' | 'AUDITOR' | 'TELLER' => {
+      const candidates = [
+        localStorage.getItem('user_role'),
+      ];
+      if (storedUser) {
+        try {
+          const u = JSON.parse(storedUser);
+          candidates.push(u.role, u.user_metadata?.role, u.app_metadata?.role);
+        } catch {}
+      }
+      for (const c of candidates) {
+        if (!c || typeof c !== 'string') continue;
+        const upper = c.toUpperCase().trim();
+        if (upper === 'ADMIN') return 'ADMIN';
+        if (upper === 'MANAGER') return 'MANAGER';
+        if (upper === 'AUDITOR') return 'AUDITOR';
+        if (upper === 'TELLER') return 'TELLER';
+      }
+      return 'TELLER';
+    };
+
+    const effectiveRole = resolveRole();
+
     if (isAuth && pathname === '/login') {
-      const storedRole = (localStorage.getItem('user_role') || '').toUpperCase();
-      if (storedRole === 'TELLER') {
-        router.push('/loans');
-      } else if (storedRole === 'AUDITOR') {
-        router.push('/dashboard/auditor');
-      } else if (storedRole === 'MANAGER') {
-        router.push('/operations/approvals');
+      if (effectiveRole === 'TELLER') {
+        window.location.replace('/loans');
+      } else if (effectiveRole === 'AUDITOR') {
+        window.location.replace('/dashboard/auditor');
+      } else if (effectiveRole === 'MANAGER') {
+        window.location.replace('/operations/approvals');
       } else {
-        router.push('/');
+        window.location.replace('/');
       }
     } else if (!isAuth && pathname !== '/login') {
-      router.push('/login');
+      window.location.replace('/login');
+    } else if (isAuth && effectiveRole === 'TELLER') {
+      // Route protection: strictly prevent tellers from navigating to Admin options
+      const tellerForbidden = [
+        '/',
+        '/dashboard',
+        '/cctv',
+        '/transactions',
+        '/employees',
+        '/reports',
+        '/operations/sms-settings',
+        '/operations/audit-logs',
+        '/operations/approvals',
+        '/accounting/reports'
+      ];
+      const isForbidden = tellerForbidden.some(prefix => 
+        prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(prefix + '/')
+      );
+      if (isForbidden) {
+        window.location.replace('/loans');
+      }
     }
   }, [pathname, router]);
 
-  // Inactivity auto-logout monitor (10 minutes) - Excludes ADMIN
+  // Inactivity auto-logout monitor (45 minutes) - Excludes ADMIN
   useEffect(() => {
     if (!isAuthenticated || pathname === '/login') return;
 
@@ -54,7 +96,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     if (storedUser) {
       try {
         const u = JSON.parse(storedUser);
-        isUserAdmin = u.role === 'ADMIN';
+        const role = (localStorage.getItem('user_role') || u.role || '').toUpperCase().trim();
+        isUserAdmin = role === 'ADMIN';
       } catch (e) {}
     }
 
@@ -125,7 +168,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated && pathname !== '/login') {
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-amber-500 rounded-2xl animate-spin shadow-xl shadow-amber-500/20" />
+          <p className="text-sm font-bold text-slate-300 animate-pulse tracking-wider">Redirecting to login...</p>
+        </div>
+      </div>
+    );
   }
 
   return <>{children}</>;

@@ -27,7 +27,8 @@ import {
   PlaySquare,
   Eye,
   Package,
-  Landmark
+  Landmark,
+  Percent
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -99,8 +100,7 @@ const navGroups = [
 const tellerNavItems = [
   { name: 'Customer', href: '/clients', icon: Users },
   { name: 'Pawning', href: '/loans', icon: Wallet },
-  { name: 'Cash Tills', href: '/finance/cash/tills', icon: Wallet },
-  { name: 'Cash Transfers', href: '/finance/cash/transfers', icon: ArrowRightLeft },
+  { name: 'Interest', href: '/finance/interest', icon: Percent },
   { name: 'Stock Management', href: '/operations/eod?tab=stock', icon: Package },
   { name: 'Daily ledger', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: UserCircle },
@@ -172,11 +172,56 @@ export default function DashboardSidebar({
     setOpenGroup(openGroup === label ? null : label);
   };
 
+  const getEffectiveRole = (u: any): 'ADMIN' | 'MANAGER' | 'AUDITOR' | 'TELLER' => {
+    const candidates = [
+      u?.role,
+      u?.user_metadata?.role,
+      u?.app_metadata?.role,
+      typeof window !== 'undefined' ? localStorage.getItem('user_role') : null
+    ];
+
+    for (const c of candidates) {
+      if (!c || typeof c !== 'string') continue;
+      const upper = c.toUpperCase().trim();
+      if (upper === 'ADMIN') return 'ADMIN';
+      if (upper === 'MANAGER') return 'MANAGER';
+      if (upper === 'AUDITOR') return 'AUDITOR';
+      if (upper === 'TELLER') return 'TELLER';
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const storedRole = (parsed.role || '').toUpperCase().trim();
+          if (storedRole === 'ADMIN') return 'ADMIN';
+          if (storedRole === 'MANAGER') return 'MANAGER';
+          if (storedRole === 'AUDITOR') return 'AUDITOR';
+          if (storedRole === 'TELLER') return 'TELLER';
+        }
+      } catch {}
+    }
+
+    return 'TELLER';
+  };
+
+  const effectiveRole = getEffectiveRole(user);
+
   useEffect(() => {
     const syncUser = () => {
-      const storedUser = localStorage.getItem('user');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
+      let initialUser: any = null;
+      const stored = localStorage.getItem('user');
+      if (stored) {
+        try {
+          initialUser = JSON.parse(stored);
+        } catch { /* ignore */ }
+      }
+      const initialRole = getEffectiveRole(initialUser);
+      if (initialUser) {
+        setUser({ ...initialUser, role: initialRole });
+      } else {
+        setUser({ role: initialRole });
       }
     };
     
@@ -247,133 +292,7 @@ export default function DashboardSidebar({
 
       {/* Navigation Groups */}
       <div className="flex-1 px-4 space-y-2 overflow-y-auto pt-4 scrollbar-hide pb-6">
-        {user?.role === 'TELLER' ? (
-          <div className="space-y-1.5 pt-1">
-            <div className={cn(
-              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#ffd100]/80",
-              isCollapsed && "text-center text-[8.5px] px-0"
-            )}>
-              {!isCollapsed ? "Teller Counter" : "Counter"}
-            </div>
-            {tellerNavItems.map((item) => {
-              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
-              const ItemIcon = item.icon;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  onClick={() => {
-                    if (window.innerWidth < 768 && setIsMobileOpen) {
-                      setIsMobileOpen(false);
-                    }
-                  }}
-                  className={cn(
-                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
-                    isCollapsed ? "justify-center" : "px-3.5",
-                    isActive
-                      ? "bg-[#ffd100] text-[#202020] font-black shadow-md"
-                      : "text-slate-300 hover:bg-[#333533] hover:text-[#ffee32]"
-                  )}
-                >
-                  <ItemIcon className={cn(
-                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
-                    isActive ? "text-[#202020]" : "text-slate-400 group-hover:text-[#ffd100]",
-                    !isCollapsed && "mr-3"
-                  )} />
-                  {!isCollapsed && (
-                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-[#202020]" : "font-semibold")}>
-                      {item.name}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        ) : user?.role === 'AUDITOR' ? (
-          <div className="space-y-1.5 pt-1">
-            <div className={cn(
-              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-amber-400/90",
-              isCollapsed && "text-center text-[8.5px] px-0"
-            )}>
-              {!isCollapsed ? "Auditor Portal" : "Audit"}
-            </div>
-            {auditorNavItems.map((item) => {
-              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
-              const ItemIcon = item.icon;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  onClick={() => {
-                    if (window.innerWidth < 768 && setIsMobileOpen) {
-                      setIsMobileOpen(false);
-                    }
-                  }}
-                  className={cn(
-                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
-                    isCollapsed ? "justify-center" : "px-3.5",
-                    isActive
-                      ? "bg-amber-500 text-slate-950 font-black shadow-md"
-                      : "text-slate-300 hover:bg-[#333533] hover:text-amber-300"
-                  )}
-                >
-                  <ItemIcon className={cn(
-                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
-                    isActive ? "text-slate-950" : "text-amber-400 group-hover:text-amber-300",
-                    !isCollapsed && "mr-3"
-                  )} />
-                  {!isCollapsed && (
-                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-slate-950" : "font-semibold")}>
-                      {item.name}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        ) : user?.role === 'MANAGER' ? (
-          <div className="space-y-1.5 pt-1">
-            <div className={cn(
-              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-purple-400/90",
-              isCollapsed && "text-center text-[8.5px] px-0"
-            )}>
-              {!isCollapsed ? "Manager Portal" : "Manager"}
-            </div>
-            {managerNavItems.map((item) => {
-              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
-              const ItemIcon = item.icon;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  onClick={() => {
-                    if (window.innerWidth < 768 && setIsMobileOpen) {
-                      setIsMobileOpen(false);
-                    }
-                  }}
-                  className={cn(
-                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
-                    isCollapsed ? "justify-center" : "px-3.5",
-                    isActive
-                      ? "bg-purple-600 text-white font-black shadow-md"
-                      : "text-slate-300 hover:bg-[#333533] hover:text-purple-300"
-                  )}
-                >
-                  <ItemIcon className={cn(
-                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
-                    isActive ? "text-white" : "text-purple-400 group-hover:text-purple-300",
-                    !isCollapsed && "mr-3"
-                  )} />
-                  {!isCollapsed && (
-                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-white" : "font-semibold")}>
-                      {item.name}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        ) : (
+        {effectiveRole === 'ADMIN' ? (
           navGroups.map((group) => {
           const GroupIcon = groupIcons[group.label] || LayoutDashboard;
           const isGroupActive = group.items.some(item => pathname === item.href);
@@ -421,7 +340,7 @@ export default function DashboardSidebar({
               )}>
                 <div className="overflow-hidden space-y-1 pl-3 border-l border-white/10 ml-5">
                   {group.items.map((item) => {
-                    if (item.adminOnly && user?.role !== 'ADMIN') return null;
+                    if (item.adminOnly && effectiveRole !== 'ADMIN') return null;
                     const isActive = pathname === item.href;
                     const SubIcon = item.icon;
                     
@@ -460,7 +379,133 @@ export default function DashboardSidebar({
             </div>
           );
         })
-      )}
+        ) : effectiveRole === 'AUDITOR' ? (
+          <div className="space-y-1.5 pt-1">
+            <div className={cn(
+              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-amber-400/90",
+              isCollapsed && "text-center text-[8.5px] px-0"
+            )}>
+              {!isCollapsed ? "Auditor Portal" : "Audit"}
+            </div>
+            {auditorNavItems.map((item) => {
+              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
+              const ItemIcon = item.icon;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  onClick={() => {
+                    if (window.innerWidth < 768 && setIsMobileOpen) {
+                      setIsMobileOpen(false);
+                    }
+                  }}
+                  className={cn(
+                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
+                    isCollapsed ? "justify-center" : "px-3.5",
+                    isActive
+                      ? "bg-amber-500 text-slate-950 font-black shadow-md"
+                      : "text-slate-300 hover:bg-[#333533] hover:text-amber-300"
+                  )}
+                >
+                  <ItemIcon className={cn(
+                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
+                    isActive ? "text-slate-950" : "text-amber-400 group-hover:text-amber-300",
+                    !isCollapsed && "mr-3"
+                  )} />
+                  {!isCollapsed && (
+                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-slate-950" : "font-semibold")}>
+                      {item.name}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        ) : effectiveRole === 'MANAGER' ? (
+          <div className="space-y-1.5 pt-1">
+            <div className={cn(
+              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-purple-400/90",
+              isCollapsed && "text-center text-[8.5px] px-0"
+            )}>
+              {!isCollapsed ? "Manager Portal" : "Manager"}
+            </div>
+            {managerNavItems.map((item) => {
+              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
+              const ItemIcon = item.icon;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  onClick={() => {
+                    if (window.innerWidth < 768 && setIsMobileOpen) {
+                      setIsMobileOpen(false);
+                    }
+                  }}
+                  className={cn(
+                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
+                    isCollapsed ? "justify-center" : "px-3.5",
+                    isActive
+                      ? "bg-purple-600 text-white font-black shadow-md"
+                      : "text-slate-300 hover:bg-[#333533] hover:text-purple-300"
+                  )}
+                >
+                  <ItemIcon className={cn(
+                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
+                    isActive ? "text-white" : "text-purple-400 group-hover:text-purple-300",
+                    !isCollapsed && "mr-3"
+                  )} />
+                  {!isCollapsed && (
+                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-white" : "font-semibold")}>
+                      {item.name}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-1.5 pt-1">
+            <div className={cn(
+              "px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#ffd100]/80",
+              isCollapsed && "text-center text-[8.5px] px-0"
+            )}>
+              {!isCollapsed ? "Teller Counter" : "Counter"}
+            </div>
+            {tellerNavItems.map((item) => {
+              const isActive = pathname === item.href || (item.href.includes('?') && pathname === item.href.split('?')[0]);
+              const ItemIcon = item.icon;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  onClick={() => {
+                    if (window.innerWidth < 768 && setIsMobileOpen) {
+                      setIsMobileOpen(false);
+                    }
+                  }}
+                  className={cn(
+                    "group flex items-center h-10 rounded-xl transition-all duration-300 relative overflow-hidden",
+                    isCollapsed ? "justify-center" : "px-3.5",
+                    isActive
+                      ? "bg-[#ffd100] text-[#202020] font-black shadow-md"
+                      : "text-slate-300 hover:bg-[#333533] hover:text-[#ffee32]"
+                  )}
+                >
+                  <ItemIcon className={cn(
+                    "w-4 h-4 shrink-0 transition-all duration-300 group-hover:scale-105",
+                    isActive ? "text-[#202020]" : "text-slate-400 group-hover:text-[#ffd100]",
+                    !isCollapsed && "mr-3"
+                  )} />
+                  {!isCollapsed && (
+                    <span className={cn("text-[12.5px] tracking-tight", isActive ? "font-black text-[#202020]" : "font-semibold")}>
+                      {item.name}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Profile & Footer */}
@@ -487,7 +532,7 @@ export default function DashboardSidebar({
                 {user.firstName || user.first_name || 'User'}
               </span>
               <span className="text-slate-500 text-[8px] font-black uppercase tracking-widest truncate">
-                {user.role || 'Staff'}
+                {effectiveRole}
               </span>
             </div>
           </Link>

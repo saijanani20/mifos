@@ -195,25 +195,77 @@ export default function TopGlassNavbar() {
     return 'User';
   };
 
+  const getEffectiveRole = useCallback((u: any): 'ADMIN' | 'MANAGER' | 'AUDITOR' | 'TELLER' => {
+    const candidates = [
+      u?.role,
+      u?.user_metadata?.role,
+      u?.app_metadata?.role,
+      typeof window !== 'undefined' ? localStorage.getItem('user_role') : null
+    ];
+
+    for (const c of candidates) {
+      if (!c || typeof c !== 'string') continue;
+      const upper = c.toUpperCase().trim();
+      if (upper === 'ADMIN') return 'ADMIN';
+      if (upper === 'MANAGER') return 'MANAGER';
+      if (upper === 'AUDITOR') return 'AUDITOR';
+      if (upper === 'TELLER') return 'TELLER';
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const storedRole = (parsed.role || '').toUpperCase().trim();
+          if (storedRole === 'ADMIN') return 'ADMIN';
+          if (storedRole === 'MANAGER') return 'MANAGER';
+          if (storedRole === 'AUDITOR') return 'AUDITOR';
+          if (storedRole === 'TELLER') return 'TELLER';
+        }
+      } catch {}
+    }
+
+    return 'TELLER';
+  }, []);
+
+  const effectiveRole = getEffectiveRole(user);
+
   useEffect(() => {
     const syncUser = () => {
+      let initialUser: any = null;
       const stored = localStorage.getItem('user');
       if (stored) {
         try {
-          const parsed = JSON.parse(stored);
-          setUser(parsed);
+          initialUser = JSON.parse(stored);
         } catch { /* ignore */ }
       }
+      const initialRole = getEffectiveRole(initialUser);
+      if (initialUser) {
+        setUser({ ...initialUser, role: initialRole });
+      } else {
+        setUser({ role: initialRole });
+      }
+
       supabase.auth.getUser().then(({ data: { user: authUser } }) => {
         if (authUser) {
-          setUser(prev => ({ ...(prev || {}), ...authUser, email: authUser.email }));
+          setUser(prev => {
+            const preservedRole = getEffectiveRole(prev || authUser);
+            return {
+              ...(prev || {}),
+              ...authUser,
+              role: preservedRole,
+              branchId: prev?.branchId || prev?.branch_id || authUser.user_metadata?.branch_id || 'HQ',
+              email: authUser.email
+            };
+          });
         }
       }).catch(() => {});
     };
     syncUser();
     window.addEventListener('storage', syncUser);
     return () => window.removeEventListener('storage', syncUser);
-  }, []);
+  }, [getEffectiveRole]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -280,64 +332,7 @@ export default function TopGlassNavbar() {
             </Link>
 
             {/* ── Desktop Nav Groups (≥ lg) ── */}
-            {user?.role === 'AUDITOR' ? (
-              <div className="hidden lg:flex items-center gap-1" ref={dropdownRef}>
-                {auditorNavItems.map((item) => {
-                  const active = isActive(item.href);
-                  const ItemIcon = item.icon;
-                  return (
-                    <Link key={item.name} href={item.href}
-                      className={cn(
-                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11px] font-bold transition-all duration-200",
-                        active
-                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
-                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
-                      )}>
-                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-amber-400" : "text-slate-400")} />
-                      <span>{item.name}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            ) : user?.role === 'MANAGER' ? (
-              <div className="hidden lg:flex items-center gap-1.5" ref={dropdownRef}>
-                {managerNavItems.map((item) => {
-                  const active = isActive(item.href);
-                  const ItemIcon = item.icon;
-                  return (
-                    <Link key={item.name} href={item.href}
-                      className={cn(
-                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11.5px] font-bold transition-all duration-200",
-                        active
-                          ? "bg-purple-500/25 text-purple-300 border border-purple-500/50 shadow-md shadow-purple-500/10"
-                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
-                      )}>
-                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-purple-400" : "text-purple-400/70")} />
-                      <span>{item.name}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            ) : user?.role === 'TELLER' ? (
-              <div className="hidden lg:flex items-center gap-1.5" ref={dropdownRef}>
-                {tellerNavItems.map((item) => {
-                  const active = isActive(item.href);
-                  const ItemIcon = item.icon;
-                  return (
-                    <Link key={item.name} href={item.href}
-                      className={cn(
-                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11.5px] font-bold transition-all duration-200",
-                        active
-                          ? "bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-md shadow-amber-500/10"
-                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
-                      )}>
-                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-amber-400" : "text-amber-400/70")} />
-                      <span>{item.name}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            ) : (
+            {effectiveRole === 'ADMIN' ? (
               <div className="hidden lg:flex items-center gap-1" ref={dropdownRef}>
                 {navGroups.map((group) => {
                   const GroupIcon = group.icon;
@@ -370,7 +365,7 @@ export default function TopGlassNavbar() {
                             {group.label}
                           </div>
                           {group.items.map((item) => {
-                            if (item.adminOnly && user?.role !== 'ADMIN') return null;
+                            if (item.adminOnly && effectiveRole !== 'ADMIN') return null;
                             const active = isActive(item.href);
                             const ItemIcon = item.icon;
                             return (
@@ -393,6 +388,64 @@ export default function TopGlassNavbar() {
                   );
                 })}
               </div>
+            ) : effectiveRole === 'AUDITOR' ? (
+              <div className="hidden lg:flex items-center gap-1" ref={dropdownRef}>
+                {auditorNavItems.map((item) => {
+                  const active = isActive(item.href);
+                  const ItemIcon = item.icon;
+                  return (
+                    <Link key={item.name} href={item.href}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11px] font-bold transition-all duration-200",
+                        active
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
+                      )}>
+                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-amber-400" : "text-slate-400")} />
+                      <span>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : effectiveRole === 'MANAGER' ? (
+              <div className="hidden lg:flex items-center gap-1.5" ref={dropdownRef}>
+                {managerNavItems.map((item) => {
+                  const active = isActive(item.href);
+                  const ItemIcon = item.icon;
+                  return (
+                    <Link key={item.name} href={item.href}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11.5px] font-bold transition-all duration-200",
+                        active
+                          ? "bg-purple-500/25 text-purple-300 border border-purple-500/50 shadow-md shadow-purple-500/10"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
+                      )}>
+                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-purple-400" : "text-purple-400/70")} />
+                      <span>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : (
+              /* TELLER IS THE DEFAULT (and fallback for any non-admin) */
+              <div className="hidden lg:flex items-center gap-1.5" ref={dropdownRef}>
+                {tellerNavItems.map((item) => {
+                  const active = isActive(item.href);
+                  const ItemIcon = item.icon;
+                  return (
+                    <Link key={item.name} href={item.href}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11.5px] font-bold transition-all duration-200",
+                        active
+                          ? "bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-md shadow-amber-500/10"
+                          : "text-slate-300 hover:bg-white/10 hover:text-white border border-transparent"
+                      )}>
+                      <ItemIcon className={cn("w-3.5 h-3.5", active ? "text-amber-400" : "text-amber-400/70")} />
+                      <span>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
             )}
 
             {/* ── Right: Branch + Profile + Logout + Hamburger ── */}
@@ -412,7 +465,7 @@ export default function TopGlassNavbar() {
                   {getCleanDisplayName(user)}
                 </span>
                 <span className="text-[9px] font-black bg-slate-800 text-amber-400 px-1.5 py-0.5 rounded-md uppercase tracking-wider">
-                  {user?.role || 'TELLER'}
+                  {effectiveRole}
                 </span>
               </Link>
 
@@ -479,7 +532,7 @@ export default function TopGlassNavbar() {
                 {getCleanDisplayName(user)}
               </span>
               <span className="text-[9px] font-black text-amber-400 uppercase tracking-wider">
-                {user?.role || 'TELLER'} · {user?.branchId || user?.branch_id || 'HQ'}
+                {effectiveRole} · {user?.branchId || user?.branch_id || 'HQ'}
               </span>
             </div>
           </div>
@@ -493,79 +546,7 @@ export default function TopGlassNavbar() {
 
         {/* Nav Content (scrollable) */}
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-          {user?.role === 'AUDITOR' ? (
-            <>
-              <div className="text-[9px] font-black text-amber-400/70 uppercase tracking-widest px-1 pt-2 pb-1">
-                Auditor Navigation
-              </div>
-              {auditorNavItems.map((item) => {
-                const active = isActive(item.href);
-                const ItemIcon = item.icon;
-                return (
-                  <Link key={item.name} href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
-                      active
-                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
-                    )}>
-                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-amber-400" : "text-slate-500")} />
-                    <span>{item.name}</span>
-                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                  </Link>
-                );
-              })}
-            </>
-          ) : user?.role === 'MANAGER' ? (
-            <>
-              <div className="text-[9px] font-black text-purple-400/80 uppercase tracking-widest px-1 pt-2 pb-1">
-                Manager Portal
-              </div>
-              {managerNavItems.map((item) => {
-                const active = isActive(item.href);
-                const ItemIcon = item.icon;
-                return (
-                  <Link key={item.name} href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
-                      active
-                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
-                    )}>
-                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-purple-400" : "text-purple-400/70")} />
-                    <span>{item.name}</span>
-                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />}
-                  </Link>
-                );
-              })}
-            </>
-          ) : user?.role === 'TELLER' ? (
-            <>
-              <div className="text-[9px] font-black text-amber-400/70 uppercase tracking-widest px-1 pt-2 pb-1">
-                Teller Counter Navigation
-              </div>
-              {tellerNavItems.map((item) => {
-                const active = isActive(item.href);
-                const ItemIcon = item.icon;
-                return (
-                  <Link key={item.name} href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
-                      active
-                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
-                    )}>
-                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-amber-400" : "text-amber-400/70")} />
-                    <span>{item.name}</span>
-                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                  </Link>
-                );
-              })}
-            </>
-          ) : (
+          {effectiveRole === 'ADMIN' ? (
             navGroups.map((group) => {
               const GroupIcon = group.icon;
               const groupActive = group.items.some(i => isActive(i.href));
@@ -610,7 +591,7 @@ export default function TopGlassNavbar() {
                   )}>
                     <div className="overflow-hidden space-y-0.5 pl-4 border-l-2 border-amber-500/20 ml-8">
                       {group.items.map((item) => {
-                        if (item.adminOnly && user?.role !== 'ADMIN') return null;
+                        if (item.adminOnly && effectiveRole !== 'ADMIN') return null;
                         const active = isActive(item.href);
                         const ItemIcon = item.icon;
                         return (
@@ -633,6 +614,78 @@ export default function TopGlassNavbar() {
                 </div>
               );
             })
+          ) : effectiveRole === 'AUDITOR' ? (
+            <>
+              <div className="text-[9px] font-black text-amber-400/70 uppercase tracking-widest px-1 pt-2 pb-1">
+                Auditor Navigation
+              </div>
+              {auditorNavItems.map((item) => {
+                const active = isActive(item.href);
+                const ItemIcon = item.icon;
+                return (
+                  <Link key={item.name} href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
+                      active
+                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
+                    )}>
+                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-amber-400" : "text-slate-500")} />
+                    <span>{item.name}</span>
+                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                  </Link>
+                );
+              })}
+            </>
+          ) : effectiveRole === 'MANAGER' ? (
+            <>
+              <div className="text-[9px] font-black text-purple-400/80 uppercase tracking-widest px-1 pt-2 pb-1">
+                Manager Portal
+              </div>
+              {managerNavItems.map((item) => {
+                const active = isActive(item.href);
+                const ItemIcon = item.icon;
+                return (
+                  <Link key={item.name} href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
+                      active
+                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
+                    )}>
+                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-purple-400" : "text-purple-400/70")} />
+                    <span>{item.name}</span>
+                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />}
+                  </Link>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <div className="text-[9px] font-black text-amber-400/70 uppercase tracking-widest px-1 pt-2 pb-1">
+                Teller Counter Navigation
+              </div>
+              {tellerNavItems.map((item) => {
+                const active = isActive(item.href);
+                const ItemIcon = item.icon;
+                return (
+                  <Link key={item.name} href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold transition-all min-h-[52px]",
+                      active
+                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                        : "text-slate-300 hover:bg-white/8 hover:text-white border border-transparent"
+                    )}>
+                    <ItemIcon className={cn("w-5 h-5 shrink-0", active ? "text-amber-400" : "text-amber-400/70")} />
+                    <span>{item.name}</span>
+                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400" />}
+                  </Link>
+                );
+              })}
+            </>
           )}
         </div>
 
