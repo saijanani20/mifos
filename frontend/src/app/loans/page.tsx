@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
   Plus, Search, FileText, Package, TrendingUp, AlertTriangle,
-  Pencil, Trash2, RefreshCcw, Printer, Filter, UserCheck, Calculator, Coins, Scale, Download, Send, Smartphone, Bluetooth, Camera, MapPin, MoreVertical, ShieldCheck
+  Pencil, Trash2, RefreshCcw, Printer, Filter, UserCheck, Calculator, Coins, Scale, Download, Send, Smartphone, Bluetooth, Camera, MapPin, MoreVertical, ShieldCheck, Check
 } from "lucide-react"
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { EscPosAdapter } from "@/lib/bluetooth/EscPosAdapter";
@@ -89,7 +89,25 @@ export default function PawnesPage() {
   const [filterBranch, setFilterBranch]           = useState('ALL');
   const [filterDescription, setFilterDescription] = useState('ALL');
   const [filterStatus, setFilterStatus]           = useState('ALL');
+  const [selectedBranches, setSelectedBranches]   = useState<string[]>([]);
+  const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false);
+  const branchDropdownRef                         = useRef<HTMLDivElement>(null);
   const [redemptionReceiptData, setRedemptionReceiptData] = useState<any>(null);
+
+  // Close branch dropdown popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(event.target as Node)) {
+        setIsBranchFilterOpen(false);
+      }
+    };
+    if (isBranchFilterOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isBranchFilterOpen]);
 
   // Weight & KYC Photos Viewer Modal State
   const [viewPhotoModal, setViewPhotoModal] = useState<{
@@ -397,13 +415,26 @@ export default function PawnesPage() {
   };
 
   // Build a map of { nationalId -> "First Last", id -> "First Last" } for fast lookups
-  const loadClients = async (u?: any) => {
+  const loadClients = async (u?: any, overrideBranches?: string[] | string) => {
     try {
       const user = u || JSON.parse(localStorage.getItem('user') || '{}');
-      // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
       const headers = getAuthHeaders();
 
-      const res = await fetch('/api/clients', { headers });
+      let activeBranches: string[] = [];
+      if (overrideBranches !== undefined) {
+        activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
+      } else if (selectedBranches.length > 0) {
+        activeBranches = selectedBranches;
+      } else if (user?.branchId && user.branchId !== 'DHW' && user.branchId !== 'HQ' && user.branchId !== 'ALL') {
+        activeBranches = [normalizeBranchId(user.branchId).toUpperCase()];
+      } else {
+        activeBranches = ['ALL'];
+      }
+
+      const isAll = activeBranches.includes('ALL');
+      const queryParam = isAll ? '' : `?branchId=${encodeURIComponent(activeBranches.join(','))}`;
+
+      const res = await fetch(`/api/clients${queryParam}`, { headers });
       if (res.ok) {
         const data: any[] = await res.json();
         setClientsList(data);
@@ -439,25 +470,37 @@ export default function PawnesPage() {
     } catch (e) { console.error('Failed to load clients map', e); }
   };
 
-  const loadPawns = async (u?: any, overrideBranch?: string) => {
+  const loadPawns = async (u?: any, overrideBranches?: string[] | string) => {
     try {
       setLoading(true);
       const user = u || loadUser();
-      // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
       const headers = getAuthHeaders();
-      const activeBranch = overrideBranch !== undefined ? overrideBranch : filterBranch;
+
+      let activeBranches: string[] = [];
+      if (overrideBranches !== undefined) {
+        activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
+      } else if (selectedBranches.length > 0) {
+        activeBranches = selectedBranches;
+      } else if (user?.branchId && user.branchId !== 'DHW' && user.branchId !== 'HQ' && user.branchId !== 'ALL') {
+        activeBranches = [normalizeBranchId(user.branchId).toUpperCase()];
+      } else {
+        activeBranches = ['ALL'];
+      }
+
+      const isAll = activeBranches.includes('ALL');
+      const branchParam = isAll ? 'ALL' : activeBranches.join(',');
 
       const params = new URLSearchParams({
-        branchId: activeBranch || 'ALL',
+        branchId: branchParam,
         role: user?.role || userRole,
-        filterBranch: activeBranch || 'ALL',
+        filterBranch: branchParam,
       });
       const res = await fetch(`/api/pawns?${params}`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setPawns(data);
+        setPawns(Array.isArray(data) ? data : []);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         toast.error(err.error || 'Failed to load pawn tickets');
       }
     } catch (err) {
@@ -467,24 +510,87 @@ export default function PawnesPage() {
     }
   };
 
-  const handleBranchChange = (newBranch: string) => {
-    if (userRole === 'TELLER') return; // Strict branch lockdown for tellers
-    setFilterBranch(newBranch);
-    loadPawns(undefined, newBranch);
+  const toggleBranch = (bId: string) => {
+    const cleanId = bId.trim().toUpperCase();
+    let next: string[];
+
+    if (cleanId === 'ALL') {
+      if (selectedBranches.includes('ALL')) {
+        next = branchId ? [branchId.toUpperCase()] : [];
+      } else {
+        next = ['ALL'];
+      }
+    } else {
+      if (selectedBranches.includes('ALL')) {
+        next = branchId && branchId.toUpperCase() !== cleanId
+          ? [branchId.toUpperCase(), cleanId]
+          : [cleanId];
+      } else {
+        const exists = selectedBranches.some(b => b.toUpperCase() === cleanId);
+        if (exists) {
+          next = selectedBranches.filter(b => b.toUpperCase() !== cleanId);
+          if (next.length === 0 && branchId) {
+            next = [branchId.toUpperCase()];
+          }
+        } else {
+          next = [...selectedBranches, cleanId];
+        }
+      }
+    }
+
+    setSelectedBranches(next);
+    setFilterBranch(next.includes('ALL') ? 'ALL' : next.join(','));
+    loadPawns(undefined, next);
+    loadClients(undefined, next);
+  };
+
+  const selectHomeBranchOnly = () => {
+    const home = branchId ? branchId.toUpperCase() : 'HQ';
+    setSelectedBranches([home]);
+    setFilterBranch(home);
+    loadPawns(undefined, [home]);
+    loadClients(undefined, [home]);
+  };
+
+  const selectAllBranches = () => {
+    setSelectedBranches(['ALL']);
+    setFilterBranch('ALL');
+    loadPawns(undefined, ['ALL']);
+    loadClients(undefined, ['ALL']);
+  };
+
+  const getBranchButtonLabel = () => {
+    if (selectedBranches.includes('ALL')) {
+      return `ALL BRANCHES (${pawns.length})`;
+    }
+    if (selectedBranches.length === 0) {
+      return `NO BRANCH (${pawns.length})`;
+    }
+    if (selectedBranches.length === 1) {
+      const code = selectedBranches[0];
+      const bObj = branches.find(b => b.id.toUpperCase() === code.toUpperCase());
+      const name = bObj?.name || code;
+      const isHome = branchId && code.toUpperCase() === branchId.toUpperCase();
+      return `${name.toUpperCase()}${isHome ? ' (HOME)' : ''} (${pawns.length})`;
+    }
+    if (selectedBranches.length === 2) {
+      return `${selectedBranches[0].toUpperCase()} + ${selectedBranches[1].toUpperCase()} (${pawns.length})`;
+    }
+    return `${selectedBranches[0].toUpperCase()} + ${selectedBranches[1].toUpperCase()} +${selectedBranches.length - 2} (${pawns.length})`;
   };
 
   useEffect(() => {
     const u = loadUser();
-    const initialBranch = (u?.role === 'TELLER' && u?.branchId) ? u.branchId : 'ALL';
-    loadPawns(u, initialBranch);
-    loadClients(u);
+    let initialBranches = ['ALL'];
+    if (u?.branchId && u.branchId !== 'DHW' && u.branchId !== 'HQ' && u.branchId !== 'ALL') {
+      initialBranches = [normalizeBranchId(u.branchId).toUpperCase()];
+    }
+    setSelectedBranches(initialBranches);
+    setFilterBranch(initialBranches.includes('ALL') ? 'ALL' : initialBranches.join(','));
+    loadPawns(u, initialBranches);
+    loadClients(u, initialBranches);
     loadBranches();
   }, []);
-
-  // Reload when branch filter changes
-  useEffect(() => {
-    loadPawns(undefined, filterBranch);
-  }, [filterBranch]);
 
   // Resolve customer name, phone, and address when NIC/ID is typed
   const handleClientIdChange = (val: string) => {
@@ -1149,11 +1255,12 @@ export default function PawnesPage() {
   const searchLower = (search || '').toLowerCase().trim();
   const filtered = pawns.filter(p => {
     // 1. Branch Filter (Client-side immediate filtering + safety)
-    if (filterBranch && filterBranch !== 'ALL') {
+    if (selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
       const pBranch = String(p.branch_id || p.branchId || '').toUpperCase().trim();
-      const fBranch = filterBranch.toUpperCase().trim();
-      const terms = getBranchSearchTerms(fBranch);
-      const branchMatches = terms.some(t => pBranch === t.toUpperCase() || pBranch.includes(t.toUpperCase())) || pBranch === fBranch;
+      const branchMatches = selectedBranches.some(sBranch => {
+        const terms = getBranchSearchTerms(sBranch);
+        return terms.some(t => pBranch === t.toUpperCase() || pBranch.includes(t.toUpperCase())) || pBranch === sBranch.toUpperCase();
+      });
       if (!branchMatches) return false;
     }
 
@@ -2053,37 +2160,137 @@ export default function PawnesPage() {
 
         {/* Filters Group */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 shrink-0">
-          {/* Branch Filter */}
-          <div className="relative min-w-[140px]">
-            <select
-              value={filterBranch}
-              onChange={e => handleBranchChange(e.target.value)}
-              disabled={userRole === 'TELLER'}
-              className={`h-11 w-full px-3 pr-8 bg-white/80 border border-slate-200 font-bold text-[11px] uppercase tracking-wider text-slate-700 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none truncate ${userRole === 'TELLER' ? 'opacity-90 cursor-not-allowed bg-slate-50 font-black' : ''}`}
+          {/* Branch Filter with Multi-Select Popover Card */}
+          <div className="relative min-w-[180px] sm:min-w-[210px]" ref={branchDropdownRef}>
+            <button
+              type="button"
+              id="loans-branch-filter-btn"
+              onClick={() => setIsBranchFilterOpen(!isBranchFilterOpen)}
+              className={`h-11 w-full px-3.5 pr-8 bg-white/90 border ${
+                isBranchFilterOpen ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200'
+              } glass font-black text-[11px] uppercase tracking-wider text-slate-800 rounded-xl shadow-xs hover:border-primary/60 transition-all flex items-center justify-between cursor-pointer select-none`}
             >
-              {userRole !== 'TELLER' && (
-                <option value="ALL">All Branches ({pawns.length})</option>
-              )}
-              {branches.filter(b => b.id !== 'ALL').map((b: any) => (
-                (userRole !== 'TELLER' || b.id.toUpperCase() === (branchId || '').toUpperCase()) && (
-                  <option key={b.id} value={b.id}>
-                    {b.name || b.id} Branch
-                  </option>
-                )
-              ))}
-              {userRole === 'TELLER' && branches.every(b => b.id.toUpperCase() !== (branchId || '').toUpperCase()) && (
-                <option value={branchId}>
-                  {branchId} Branch
-                </option>
-              )}
-            </select>
-            <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
-              {userRole === 'TELLER' ? (
-                <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">LOCK</span>
-              ) : (
-                <Filter className="w-3.5 h-3.5 text-primary" />
-              )}
-            </div>
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="truncate">{getBranchButtonLabel()}</span>
+                {!selectedBranches.includes('ALL') && selectedBranches.length > 0 && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                )}
+              </div>
+              <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-primary">
+                <Filter className="w-3.5 h-3.5" />
+              </div>
+            </button>
+
+            {/* Interactive Multi-Select Popover Card */}
+            {isBranchFilterOpen && (
+              <div className="absolute right-0 top-13 z-50 w-72 bg-white/95 backdrop-blur-xl border border-slate-200/90 shadow-2xl rounded-2xl p-3 space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+                {/* Header & Quick Actions */}
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-700">Select Branches</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {branchId && (
+                      <button
+                        type="button"
+                        onClick={selectHomeBranchOnly}
+                        className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-primary hover:text-white text-slate-600 transition-colors cursor-pointer"
+                        title="Reset to only your home branch"
+                      >
+                        My Branch
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={selectAllBranches}
+                      className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-primary hover:text-white text-slate-600 transition-colors cursor-pointer"
+                      title="Select all branches"
+                    >
+                      All
+                    </button>
+                  </div>
+                </div>
+
+                {/* All Branches Option */}
+                <div
+                  onClick={() => toggleBranch('ALL')}
+                  className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl cursor-pointer transition-colors ${
+                    selectedBranches.includes('ALL')
+                      ? 'bg-primary/10 text-primary font-black'
+                      : 'hover:bg-slate-50 text-slate-700 font-bold'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3.5 h-3.5 rounded-md border flex items-center justify-center transition-colors ${
+                      selectedBranches.includes('ALL')
+                        ? 'bg-primary border-primary text-white'
+                        : 'border-slate-300 bg-white'
+                    }`}>
+                      {selectedBranches.includes('ALL') && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                    </div>
+                    <span className="text-[11px]">All Branches</span>
+                  </div>
+                  <Badge variant="outline" className="text-[8px] font-black uppercase px-1 py-0">ALL</Badge>
+                </div>
+
+                <div className="h-px bg-slate-100 my-0.5" />
+
+                {/* Branch Checklist */}
+                <div className="max-h-48 overflow-y-auto space-y-1 pr-1 overscroll-contain">
+                  {branches.filter(b => b.id !== 'ALL').map((b: any) => {
+                    const isTicked = selectedBranches.includes('ALL') || selectedBranches.some(bCode => bCode.toUpperCase() === b.id.toUpperCase());
+                    const isHome = branchId && b.id.toUpperCase() === branchId.toUpperCase();
+                    return (
+                      <div
+                        key={b.id}
+                        onClick={() => toggleBranch(b.id)}
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl cursor-pointer transition-colors ${
+                          isTicked
+                            ? 'bg-slate-50 text-slate-900 font-black'
+                            : 'hover:bg-slate-50 text-slate-600 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <div className={`w-3.5 h-3.5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
+                            isTicked
+                              ? 'bg-primary border-primary text-white'
+                              : 'border-slate-300 bg-white'
+                          }`}>
+                            {isTicked && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                          </div>
+                          <span className="text-[11px] truncate">{b.name || b.id} Branch</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {isHome && (
+                            <span className="text-[7px] font-black uppercase px-1 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              HOME
+                            </span>
+                          )}
+                          <span className="text-[9px] font-mono font-bold text-slate-400 uppercase">
+                            {b.id}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Popover Footer */}
+                <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                  <span className="text-[9px] font-bold text-slate-400">
+                    {pawns.length} ticket{pawns.length === 1 ? '' : 's'} loaded
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsBranchFilterOpen(false)}
+                    className="px-2.5 py-1 bg-primary text-white text-[9px] font-black uppercase tracking-wider rounded-lg shadow-xs hover:bg-primary/90 transition-colors cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Item Description Filter */}
@@ -2128,11 +2335,11 @@ export default function PawnesPage() {
         </div>
 
         {/* Reset Filter Button if active */}
-        {(filterBranch !== 'ALL' || filterDescription !== 'ALL' || filterStatus !== 'ALL' || search) && (
+        {(selectedBranches.length > 0 && !selectedBranches.includes('ALL') || filterDescription !== 'ALL' || filterStatus !== 'ALL' || search) && (
           <Button
             variant="ghost"
             onClick={() => {
-              handleBranchChange('ALL');
+              selectAllBranches();
               setFilterDescription('ALL');
               setFilterStatus('ALL');
               setSearch('');

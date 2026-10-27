@@ -217,11 +217,11 @@ export default function ClientsPage() {
         activeBranches = Array.isArray(overrideBranches) ? overrideBranches : [overrideBranches];
       } else if (selectedBranches.length > 0) {
         activeBranches = selectedBranches;
-      } else if (currentRole === 'TELLER' && effectiveActiveBranch && effectiveActiveBranch !== 'DHW' && effectiveActiveBranch !== 'HQ') {
-        // Local branch tellers default to their home branch
+      } else if (effectiveActiveBranch && effectiveActiveBranch !== 'DHW' && effectiveActiveBranch !== 'HQ' && effectiveActiveBranch !== 'ALL') {
+        // Users at a specific branch default to their branch
         activeBranches = [effectiveActiveBranch];
       } else {
-        // Admin at Main Branch (Dehiwala / HQ) oversees all branches by default
+        // Staff at Main Branch (HQ/DHW) oversee all branches by default
         activeBranches = ['ALL'];
       }
 
@@ -305,7 +305,10 @@ export default function ClientsPage() {
       const isHome = branchId && code.toUpperCase() === branchId.toUpperCase();
       return `${name.toUpperCase()}${isHome ? ' (HOME)' : ''} (${clients.length})`;
     }
-    return `${selectedBranches.length} BRANCHES (${clients.length})`;
+    if (selectedBranches.length === 2) {
+      return `${selectedBranches[0].toUpperCase()} + ${selectedBranches[1].toUpperCase()} (${clients.length})`;
+    }
+    return `${selectedBranches[0].toUpperCase()} + ${selectedBranches[1].toUpperCase()} +${selectedBranches.length - 2} (${clients.length})`;
   };
 
   const loadCustomerData = async (forceRefresh = false) => {
@@ -395,8 +398,8 @@ export default function ClientsPage() {
       if (stored) {
         const u = JSON.parse(stored);
         const branchToUse = activeBranch || u.branchId;
-        // Only local branch tellers default to their isolated branch; Admin at Main Branch sees ALL
-        if (u.role === 'TELLER' && branchToUse && branchToUse !== 'DHW' && branchToUse !== 'HQ') {
+        // Anyone logged into a specific branch defaults to that isolated branch
+        if (branchToUse && branchToUse !== 'DHW' && branchToUse !== 'HQ' && branchToUse !== 'ALL') {
           const myBranch = normalizeBranchId(branchToUse).toUpperCase();
           initialBranches = [myBranch];
         }

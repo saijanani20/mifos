@@ -37,9 +37,9 @@ export async function GET(request: Request) {
       ? requestedBranch.split(',').map(b => b.trim()).filter(Boolean)
       : [];
 
-    // Default to teller's assigned branch if no explicit branch is requested
+    // Default to user's assigned branch if no explicit branch is requested
     if (branchTokens.length === 0) {
-      if (session?.role === 'TELLER' && session.branchId) {
+      if (session?.branchId && session.branchId !== 'HQ' && session.branchId !== 'DHW' && session.branchId !== 'ALL') {
         branchTokens = [session.branchId];
       } else {
         branchTokens = ['ALL'];

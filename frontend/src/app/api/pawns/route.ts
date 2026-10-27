@@ -20,21 +20,31 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const filterBranch = searchParams.get('filterBranch');
     const branchIdParam = searchParams.get('branchId');
-    // Strict Branch Isolation & Egress Protection:
-    // TELLER role is strictly locked to their assigned profile branch. They cannot query ALL or other branches.
-    // Only ADMIN, AUDITOR, or HQ staff can view 'ALL' or switch branch filter.
-    let effectiveBranch = (filterBranch && filterBranch !== '') ? filterBranch : branchIdParam;
-    if (session.role === 'TELLER') {
-      effectiveBranch = session.branchId || 'HQ';
+    const rawBranch = (filterBranch && filterBranch !== '') ? filterBranch : branchIdParam;
+
+    // Parse requested branches (e.g. "BOR" or "BOR,KHT" or "ALL")
+    let branchTokens = rawBranch
+      ? rawBranch.split(',').map(b => b.trim()).filter(Boolean)
+      : [];
+
+    // Default to user's assigned branch if no explicit branch is requested
+    if (branchTokens.length === 0) {
+      if (session.branchId && session.branchId !== 'HQ' && session.branchId !== 'DHW' && session.branchId !== 'ALL') {
+        branchTokens = [session.branchId];
+      } else {
+        branchTokens = ['HQ'];
+      }
     }
 
     let query = adminSupabase.from('pawns').select('*').order('created_at', { ascending: false });
 
-    // Filter by branch if effectiveBranch is specified and not 'ALL'
-    if (effectiveBranch && effectiveBranch !== 'ALL' && effectiveBranch.trim() !== '') {
-      const terms = getBranchSearchTerms(effectiveBranch);
-      const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-      query = query.or(orClause);
+    // Filter by branch if specific branches are selected (not ALL)
+    if (!branchTokens.includes('ALL') && branchTokens.length > 0) {
+      const allTerms = branchTokens.flatMap(b => getBranchSearchTerms(b));
+      if (allTerms.length > 0) {
+        const orClause = allTerms.map(t => `branch_id.ilike.%${t}%`).join(',');
+        query = query.or(orClause);
+      }
     }
 
     const searchFilter = searchParams.get('search');
