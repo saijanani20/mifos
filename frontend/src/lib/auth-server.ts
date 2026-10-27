@@ -118,12 +118,7 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthSessio
       branch_id: user.user_metadata?.branch_id || 'HQ',
       branch_name: user.user_metadata?.branch_name || 'Head Office'
     };
-
     const role = (profile?.role || user.user_metadata?.role || 'TELLER').toUpperCase() as UserRole;
-    if (user.email && user.email.toLowerCase() === 'auditor@gmail.com') {
-      // Legacy auditor account revoked
-      return null;
-    }
     const trustedBranchId = normalizeBranchId(profile?.branch_id || 'HQ');
     let branchId = trustedBranchId;
     const branchName = profile?.branch_name || '';

@@ -59,13 +59,6 @@ export async function POST(request: Request) {
       }
     }
 
-    if (loginEmail.toLowerCase() === 'auditor@gmail.com') {
-      return NextResponse.json(
-        { error: 'Access Denied: The legacy auditor account has been decommissioned.' },
-        { status: 403 }
-      );
-    }
-
     // Direct Supabase client for authentication
     const authSupabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { autoRefreshToken: false, persistSession: false }

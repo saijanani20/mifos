@@ -54,7 +54,8 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
-import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix } from "@/lib/branch-mapping";
+import { EscPosAdapter } from "@/lib/bluetooth/EscPosAdapter";
+import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix, CANONICAL_BRANCHES } from "@/lib/branch-mapping";
 import { getAuthHeaders } from "@/lib/getAuthHeaders";
 
 // Stock item abbreviations
@@ -251,6 +252,21 @@ function EndOfDayContent() {
   const [stockFilter, setStockFilter] = useState<'Active' | 'Withdrawn' | 'OldData'>('Active');
   const [searchQuery, setSearchQuery] = useState("");
   const [printingLabelId, setPrintingLabelId] = useState<string | null>(null);
+  const [printerProtocol, setPrinterProtocol] = useState<'ESCPOS' | 'TSPL'>('ESCPOS');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('mifos_printer_protocol');
+    if (saved === 'TSPL' || saved === 'ESCPOS') {
+      setPrinterProtocol(saved as any);
+    }
+  }, []);
+
+  const togglePrinterProtocol = () => {
+    const next = printerProtocol === 'ESCPOS' ? 'TSPL' : 'ESCPOS';
+    setPrinterProtocol(next);
+    localStorage.setItem('mifos_printer_protocol', next);
+    toast.success(`Printer format switched to: ${next === 'ESCPOS' ? 'Thermal Receipt (ESC/POS)' : 'Sticker Label (TSPL)'}`);
+  };
 
   // Handle Bluetooth Sticker Label Printing
   const handlePrintLabel = async (item: any) => {
@@ -264,9 +280,7 @@ function EndOfDayContent() {
       const connected = await transport.connect();
       if (!connected) throw new Error('Could not connect to Bluetooth printer.');
 
-      toast.loading(`Printing beautiful label for ${item.bill_no}...`, { id: toastId });
-
-      const adapter = new TsplAdapter();
+      toast.loading(`Printing formatted stock ticket for ${item.bill_no}...`, { id: toastId });
 
       // Extract item details & generate sequential label print number (e.g. LBL-0001)
       const getNextLabelNo = () => {
@@ -285,7 +299,7 @@ function EndOfDayContent() {
       let printedBy = 'Branch Teller';
       let printedUserEmail = 'system';
       if (currentUser) {
-        printedBy = currentUser.name || currentUser.email || currentUser.username || 'Teller';
+        printedBy = currentUser.first_name || currentUser.name || currentUser.fullName || currentUser.email?.split('@')[0] || 'Teller';
         printedUserEmail = currentUser.email || currentUser.username || printedBy;
       }
 
@@ -301,7 +315,7 @@ function EndOfDayContent() {
         : '';
       const formattedWeight = `${Math.round(parseFloat(item.weight || 0) * 1000)} mg`;
 
-      // Look up customer info for QR payload
+      // Look up customer info for QR payload & ticket
       const customer = (stockCustomers || []).find((c: any) => {
         if (!c.bill_numbers) return false;
         return c.bill_numbers.split(/[, ]+/).some((b: string) => b.trim().toUpperCase() === billNoStr.toUpperCase());
@@ -328,24 +342,89 @@ function EndOfDayContent() {
 
       const qrPayload = qrDetails.join(' | ');
 
-      const commands: Uint8Array[] = [
-        adapter.init(50, 30, 2),
-        // QR Code on Left (x=15, y=15, cellWidth=3)
-        adapter.qrcode(qrPayload, 15, 15, 3),
-        // Line 1: Header Branch & Bill No (x=145, y=15, font 2)
-        adapter.text(`${branchName} | ${billNoStr}`, 145, 15, "2", 1, 1),
-        // Line 2: Label Number NO: LBL-0001 (x=145, y=48, font 2)
-        adapter.text(`NO: ${labelNo}`, 145, 48, "2", 1, 1),
-        // Line 3: Item Name (x=145, y=81, font 2)
-        adapter.text(displayItem.length > 20 ? displayItem.substring(0, 20) + '..' : displayItem, 145, 81, "2", 1, 1),
-        // Line 4: Weight (x=145, y=114, font 2)
-        adapter.text(`Weight: ${formattedWeight}`, 145, 114, "2", 1, 1),
-        // Line 5: Pawning Date under Weight (x=145, y=147, font 2)
-        adapter.text(`DATE: ${formattedDate}`, 145, 147, "2", 1, 1),
-        adapter.print(1, 1)
-      ];
+      const printerProtocol = (typeof window !== 'undefined' ? (localStorage.getItem('mifos_printer_protocol') || 'ESCPOS') : 'ESCPOS').toUpperCase();
 
-      const payload = adapter.concat(commands);
+      let payload: Uint8Array;
+
+      if (printerProtocol === 'TSPL') {
+        const adapter = new TsplAdapter();
+        const commands: Uint8Array[] = [
+          adapter.init(50, 30, 2),
+          // QR Code on Left (x=15, y=15, cellWidth=3)
+          adapter.qrcode(qrPayload, 15, 15, 3),
+          // Line 1: Header Branch & Bill No (x=145, y=15, font 2)
+          adapter.text(`${branchName} | ${billNoStr}`, 145, 15, "2", 1, 1),
+          // Line 2: Label Number NO: LBL-0001 (x=145, y=48, font 2)
+          adapter.text(`NO: ${labelNo}`, 145, 48, "2", 1, 1),
+          // Line 3: Item Name (x=145, y=81, font 2)
+          adapter.text(displayItem.length > 20 ? displayItem.substring(0, 20) + '..' : displayItem, 145, 81, "2", 1, 1),
+          // Line 4: Weight (x=145, y=114, font 2)
+          adapter.text(`Weight: ${formattedWeight}`, 145, 114, "2", 1, 1),
+          // Line 5: Pawning Date under Weight (x=145, y=147, font 2)
+          adapter.text(`DATE: ${formattedDate}`, 145, 147, "2", 1, 1),
+          adapter.print(1, 1)
+        ];
+        payload = adapter.concat(commands);
+      } else {
+        // Standard ESC/POS Thermal Receipt / Ticket Format
+        const adapter = new EscPosAdapter();
+        const sep = '----------------------------------------';
+        const dsep = '========================================';
+        const bObj = CANONICAL_BRANCHES.find(b => b.id === normalizeBranchId(branchName));
+        const fullBranchName = bObj ? bObj.name : (branchName === 'HQ' ? 'Head Office' : branchName);
+
+        const lines: Uint8Array[] = [
+          adapter.init(),
+          // ── HEADER (centered) ──
+          adapter.align(1),
+          adapter.text('RUPASINGHE TRUST INVESTMENTS\n', true, true, true),
+          adapter.text(`${fullBranchName} Branch · Safe Custody\n`, true),
+          adapter.text(`${dsep}\n`),
+          adapter.text('PAWN STOCK TICKET\n', true, false, true),
+          adapter.text(`${dsep}\n`),
+
+          // ── CORE IDENTIFIERS ──
+          adapter.align(0),
+          adapter.text(`Bill No   : ${billNoStr}\n`, true),
+          adapter.text(`Label Ref : ${labelNo}\n`, true),
+          adapter.text(`Date      : ${formattedDate || new Date().toLocaleDateString('en-GB')}\n`),
+          adapter.text(`${sep}\n`),
+
+          // ── ARTICLE DETAILS ──
+          adapter.text('COLLATERAL ARTICLE:\n', true),
+          adapter.text(`Item      : ${displayItem}\n`, true),
+          adapter.text(`Weight    : ${formattedWeight}\n`, true),
+          ...(item.purity ? [adapter.text(`Purity    : ${item.purity}\n`)] : []),
+          ...(item.appraised_value ? [adapter.text(`Appraised : Rs. ${Number(item.appraised_value).toLocaleString()}\n`)] : []),
+          adapter.text(`${sep}\n`),
+
+          // ── CUSTOMER INFO (if matched) ──
+          ...(customer ? [
+            adapter.text('CUSTOMER INFORMATION:\n', true),
+            ...(customer.name ? [adapter.text(`Name      : ${customer.name}\n`)] : []),
+            ...(customer.nic ? [adapter.text(`NIC       : ${customer.nic}\n`)] : []),
+            ...(customer.tp ? [adapter.text(`Phone     : ${customer.tp}\n`)] : []),
+            adapter.text(`${sep}\n`),
+          ] : []),
+
+          // ── QR CODE (centered) ──
+          adapter.align(1),
+          adapter.qrcode(qrPayload, 5),
+          adapter.text('Scan in Auditor Portal to verify\n'),
+          adapter.text(`${dsep}\n`),
+
+          // ── AUDIT METADATA ──
+          adapter.align(0),
+          adapter.text(`Printed By: ${printedBy}\n`),
+          adapter.text(`Printed On: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}\n`),
+          adapter.text(`${sep}\n`),
+          adapter.feed(4),
+          adapter.cut(),
+        ];
+
+        payload = EscPosAdapter.concat(lines);
+      }
+
       await transport.write(payload);
 
       // Record Print Event in Audit Logs
@@ -2703,6 +2782,16 @@ function EndOfDayContent() {
                   title="Print PDF Report"
                 >
                   <Printer className="w-3.5 h-3.5 text-blue-600" /> Print
+                </Button>
+
+                <Button 
+                  onClick={togglePrinterProtocol}
+                  variant="outline"
+                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 whitespace-nowrap"
+                  title="Toggle between ESC/POS Thermal Receipt and TSPL Barcode Sticker format"
+                >
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  {printerProtocol === 'ESCPOS' ? 'Mode: Thermal Receipt' : 'Mode: Sticker (TSPL)'}
                 </Button>
 
                 {/* Normal Cache-First Reload with Auditor Force Expire check button */}

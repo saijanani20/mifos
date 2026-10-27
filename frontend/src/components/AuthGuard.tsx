@@ -13,26 +13,6 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem('auth_token');
     const refreshToken = localStorage.getItem('refresh_token');
     const storedUser = localStorage.getItem('user');
-    
-    // Purge any legacy auditor@gmail.com session
-    if (storedUser) {
-      try {
-        const u = JSON.parse(storedUser);
-        if (u.email && u.email.toLowerCase() === 'auditor@gmail.com') {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user');
-          localStorage.removeItem('user_role');
-          localStorage.removeItem('user_branch');
-          localStorage.removeItem('user_name');
-          localStorage.removeItem('last_activity');
-          document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-          document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-          setTimeout(() => setIsAuthenticated(false), 0);
-          router.push('/login');
-          return;
-        }
-      } catch (e) {}
-    }
 
     const isAuth = Boolean(token && storedUser);
 
@@ -49,7 +29,16 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     }, 0);
 
     if (isAuth && pathname === '/login') {
-      router.push('/');
+      const storedRole = (localStorage.getItem('user_role') || '').toUpperCase();
+      if (storedRole === 'TELLER') {
+        router.push('/loans');
+      } else if (storedRole === 'AUDITOR') {
+        router.push('/dashboard/auditor');
+      } else if (storedRole === 'MANAGER') {
+        router.push('/operations/approvals');
+      } else {
+        router.push('/');
+      }
     } else if (!isAuth && pathname !== '/login') {
       router.push('/login');
     }

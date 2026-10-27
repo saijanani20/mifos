@@ -99,6 +99,10 @@ export default function Home() {
       'pereralakshi90@gmail.com': 'Lakshika',
       'geethanganipeiri2912@gmail.com': 'Geethangani',
       'dilupathamari9@gmail.com': 'Dilupa',
+      'auditor@gmail.com': 'Auditor',
+      'sanjay.rupasinghe@gmail.com': 'Sanjay',
+      'manager@gmail.com': 'Manager',
+      'admin@gmail.com': 'Admin',
       'admin@rupasinghe.com': 'Admin'
     };
 
@@ -154,6 +158,11 @@ export default function Home() {
 
         if (uRole === 'AUDITOR') {
           window.location.href = '/dashboard/auditor';
+          return;
+        }
+
+        if (uRole === 'TELLER') {
+          window.location.href = '/loans';
           return;
         }
 
