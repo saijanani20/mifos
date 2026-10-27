@@ -1,12 +1,12 @@
 // Canonical Branch IDs matching public.branches table in Supabase
 export const CANONICAL_BRANCHES = [
   { id: 'HQ',   name: 'Head Office' },
+  { id: 'DHW',  name: 'Main Branch' },
   { id: 'KHT',  name: 'Kahathuduwa' },
   { id: 'KTW',  name: 'Kottawa' },
   { id: 'KOT',  name: 'Kotikawatta' },
   { id: 'PND',  name: 'Panadura' },
   { id: 'BRL',  name: 'Borella' },
-  { id: 'DHW',  name: 'Dehiwala' },
   { id: 'DMT',  name: 'Dematagoda' },
   { id: 'HMG',  name: 'Homagama' },
   { id: 'KDW',  name: 'Kadawatha' },
@@ -80,9 +80,12 @@ const BRANCH_ALIAS_MAP: Record<string, string> = {
   'WAT4': 'W4',
   'W4': 'W4',
 
-  // Dehiwala
+  // Dehiwala / Main Branch
   'DHW': 'DHW',
   'DEHIWALA': 'DHW',
+  'MAIN': 'DHW',
+  'MAIN BRANCH': 'DHW',
+  'MAINBRANCH': 'DHW',
 
   // HQ
   'HQ': 'HQ',

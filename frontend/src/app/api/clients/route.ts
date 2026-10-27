@@ -30,77 +30,112 @@ export async function GET(request: Request) {
     }
     const { searchParams } = new URL(request.url);
     const requestedBranch = searchParams.get('branchId');
+    const searchParam = searchParams.get('search');
 
-    const cacheKey = requestedBranch ? requestedBranch.trim().toUpperCase() : 'ALL';
+    // Parse requested branches (e.g. "PAN" or "PAN,W3" or "ALL")
+    let branchTokens = requestedBranch
+      ? requestedBranch.split(',').map(b => b.trim()).filter(Boolean)
+      : [];
+
+    // Default to teller's assigned branch if no explicit branch is requested
+    if (branchTokens.length === 0) {
+      if (session?.role === 'TELLER' && session.branchId) {
+        branchTokens = [session.branchId];
+      } else {
+        branchTokens = ['ALL'];
+      }
+    }
+
+    const isAll = branchTokens.includes('ALL');
+    const cacheKey = isAll ? 'ALL' : branchTokens.map(b => b.toUpperCase()).sort().join(',');
     const cached = clientsMemoryCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
+    if (!searchParam && cached && Date.now() < cached.expiresAt) {
       return NextResponse.json(cached.data);
     }
 
-    let data: any[] | null = null;
-    let queryError: any = null;
-
+    // Egress Optimization: Never select raw base64 images (nic_image, signature_image) in directory queries.
+    // Full base64 images are fetched individually on-demand via /api/clients/[id].
+    let clientRows: any[] = [];
     try {
       let query = adminSupabase
-        .from('clients')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      // If an optional branch filter is specifically selected (not 'ALL', not empty), filter by it.
-      if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
-        const terms = getBranchSearchTerms(requestedBranch);
-        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-        query = query.or(orClause);
-      }
-
-      const res = await query;
-      data = res.data;
-      queryError = res.error;
-    } catch (e: any) {
-      queryError = e;
-    }
-
-    // Fallback: If network socket drop/timeout happens due to massive base64 image strings, query lightweight client metadata
-    if (queryError || !data) {
-      console.warn('[Clients API] Full query failed or timed out, using resilient fallback:', queryError?.message || queryError);
-      
-      if (cached && cached.data) {
-        return NextResponse.json(cached.data);
-      }
-
-      let fallbackQuery = adminSupabase
         .from('clients')
         .select('id, national_id, first_name, last_name, phone, address, branch_id, status, created_at, created_by_user_id')
         .order('created_at', { ascending: false });
 
-      if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch.trim() !== '') {
-        const terms = getBranchSearchTerms(requestedBranch);
-        const orClause = terms.map(t => `branch_id.ilike.%${t}%`).join(',');
-        fallbackQuery = fallbackQuery.or(orClause);
+      // If specific branches are selected (not ALL), filter by them
+      if (!isAll && branchTokens.length > 0) {
+        const allTerms = branchTokens.flatMap(b => getBranchSearchTerms(b));
+        if (allTerms.length > 0) {
+          const orClause = allTerms.map(t => `branch_id.ilike.%${t}%`).join(',');
+          query = query.or(orClause);
+        }
       }
 
-      const { data: lightData, error: lightErr } = await fallbackQuery;
-      if (lightErr) {
-        throw queryError || lightErr;
+      if (searchParam && searchParam.trim()) {
+        const cleanQ = searchParam.trim().replace(/[,()"]/g, ' ');
+        if (cleanQ) {
+          query = query.or(`national_id.ilike.%${cleanQ}%,phone.ilike.%${cleanQ}%,first_name.ilike.%${cleanQ}%,last_name.ilike.%${cleanQ}%`);
+        }
       }
-      data = lightData || [];
+
+      // Fetch full client directory across PostgREST's 1000-row batch boundary
+      let rawClients: any[] = [];
+      let pageIndex = 0;
+      const batchSize = 1000;
+      let hasMoreBatches = true;
+      while (hasMoreBatches) {
+        const from = pageIndex * batchSize;
+        const to = from + batchSize - 1;
+        const res = await query.range(from, to);
+        if (res.error) throw res.error;
+        const batch = res.data || [];
+        rawClients = rawClients.concat(batch);
+        if (batch.length < batchSize) {
+          hasMoreBatches = false;
+        } else {
+          pageIndex++;
+        }
+      }
+
+      // Egress-safe photo presence: Query IDs with photos directly to avoid URL overflow with 1000+ IDs
+      const [nicCheckRes, sigCheckRes] = await Promise.all([
+        adminSupabase.from('clients').select('id').not('nic_image', 'is', null).range(0, 9999),
+        adminSupabase.from('clients').select('id').not('signature_image', 'is', null).range(0, 9999)
+      ]);
+
+      const hasNicSet = new Set((nicCheckRes.data || []).map((r: any) => r.id));
+      const hasSigSet = new Set((sigCheckRes.data || []).map((r: any) => r.id));
+
+      clientRows = rawClients.map((c: any) => {
+        const hasNic = hasNicSet.has(c.id);
+        const hasSig = hasSigSet.has(c.id);
+        return {
+          ...c,
+          has_nic_image: hasNic,
+          has_signature: hasSig,
+          // Supply lightweight indicator with front and back so frontend stats & icons light up accurately
+          nic_image: hasNic ? '{"front":"captured","back":"captured"}' : null,
+          signature_image: hasSig ? 'captured' : null,
+          display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
+        };
+      });
+    } catch (e: any) {
+      console.error('[Clients API] Query failed:', e?.message || e);
+      if (cached && cached.data) {
+        return NextResponse.json(cached.data);
+      }
+      throw e;
     }
 
-    // Add display_national_id stripped of branch prefix for clean UI presentation
-    const mappedClients = (data || []).map((c: any) => ({
-      ...c,
-      display_national_id: stripBranchPrefix(c.national_id || c.nationalId)
-    }));
-
-    // Cache valid data for 15 seconds to prevent burst socket timeouts while keeping data fresh
-    if (mappedClients) {
+    // Cache valid data for 30 seconds to prevent burst egress while keeping lists fresh
+    if (clientRows && clientRows.length > 0) {
       clientsMemoryCache.set(cacheKey, {
-        data: mappedClients,
-        expiresAt: Date.now() + 15_000
+        data: clientRows,
+        expiresAt: Date.now() + 30_000
       });
     }
 
-    return NextResponse.json(mappedClients);
+    return NextResponse.json(clientRows);
   } catch (error: any) {
     console.error("API GET Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

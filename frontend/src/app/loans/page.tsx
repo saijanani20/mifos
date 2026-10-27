@@ -376,6 +376,9 @@ export default function PawnesPage() {
       setBranchId(u.branchId || '');
       setUserId(u.id || '');
       setUserRole(u.role || 'TELLER');
+      if (u.role === 'TELLER' && u.branchId) {
+        setFilterBranch(u.branchId);
+      }
       return u;
     }
     return null;
@@ -463,13 +466,15 @@ export default function PawnesPage() {
   };
 
   const handleBranchChange = (newBranch: string) => {
+    if (userRole === 'TELLER') return; // Strict branch lockdown for tellers
     setFilterBranch(newBranch);
     loadPawns(undefined, newBranch);
   };
 
   useEffect(() => {
     const u = loadUser();
-    loadPawns(u);
+    const initialBranch = (u?.role === 'TELLER' && u?.branchId) ? u.branchId : 'ALL';
+    loadPawns(u, initialBranch);
     loadClients(u);
     loadBranches();
   }, []);
@@ -2051,17 +2056,31 @@ export default function PawnesPage() {
             <select
               value={filterBranch}
               onChange={e => handleBranchChange(e.target.value)}
-              className="h-11 w-full px-3 pr-8 bg-white/80 border border-slate-200 font-bold text-[11px] uppercase tracking-wider text-slate-700 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none truncate"
+              disabled={userRole === 'TELLER'}
+              className={`h-11 w-full px-3 pr-8 bg-white/80 border border-slate-200 font-bold text-[11px] uppercase tracking-wider text-slate-700 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none truncate ${userRole === 'TELLER' ? 'opacity-90 cursor-not-allowed bg-slate-50 font-black' : ''}`}
             >
-              <option value="ALL">All Branches ({pawns.length})</option>
+              {userRole !== 'TELLER' && (
+                <option value="ALL">All Branches ({pawns.length})</option>
+              )}
               {branches.filter(b => b.id !== 'ALL').map((b: any) => (
-                <option key={b.id} value={b.id}>
-                  {b.name || b.id} Branch
-                </option>
+                (userRole !== 'TELLER' || b.id.toUpperCase() === (branchId || '').toUpperCase()) && (
+                  <option key={b.id} value={b.id}>
+                    {b.name || b.id} Branch
+                  </option>
+                )
               ))}
+              {userRole === 'TELLER' && branches.every(b => b.id.toUpperCase() !== (branchId || '').toUpperCase()) && (
+                <option value={branchId}>
+                  {branchId} Branch
+                </option>
+              )}
             </select>
             <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
-              <Filter className="w-3.5 h-3.5 text-primary" />
+              {userRole === 'TELLER' ? (
+                <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">LOCK</span>
+              ) : (
+                <Filter className="w-3.5 h-3.5 text-primary" />
+              )}
             </div>
           </div>
 
