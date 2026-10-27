@@ -311,7 +311,17 @@ export default function AuditorVerificationPage() {
     setLoading(true);
     try {
       const stored = localStorage.getItem('user');
-      if (stored) setUser(JSON.parse(stored));
+      const u = stored ? JSON.parse(stored) : null;
+      if (u) setUser(u);
+
+      if (u && u.role !== 'AUDITOR' && u.role !== 'ADMIN') {
+        if (u.role === 'MANAGER') {
+          window.location.href = '/operations/approvals';
+        } else {
+          window.location.href = '/loans';
+        }
+        return;
+      }
 
       const res = await fetch(`/api/pawns/${id}`, {
         headers: getAuthHeaders()
@@ -593,6 +603,18 @@ export default function AuditorVerificationPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (user && user.role !== 'AUDITOR' && user.role !== 'ADMIN') {
+    return (
+      <div className="p-8 max-w-xl mx-auto mt-16 bg-white border border-amber-200 rounded-3xl shadow-xl text-center space-y-4">
+        <h2 className="text-xl font-black text-slate-900">Access Restricted</h2>
+        <p className="text-sm font-bold text-slate-500">The Auditor Verification Dossier is strictly reserved for authorized internal audit personnel.</p>
+        <Button onClick={() => window.location.href = user.role === 'MANAGER' ? '/operations/approvals' : '/loans'}>
+          Return to Dashboard
+        </Button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -41,6 +41,14 @@ export default function ExecutiveDashboard() {
   }, []);
 
   useEffect(() => {
+    const stored = localStorage.getItem('user');
+    const u = stored ? JSON.parse(stored) : null;
+    if (u && u.role !== 'ADMIN') {
+      if (u.role === 'AUDITOR') window.location.href = '/dashboard/auditor';
+      else if (u.role === 'MANAGER') window.location.href = '/operations/approvals';
+      else window.location.href = '/loans';
+      return;
+    }
     loadData();
   }, []);
 

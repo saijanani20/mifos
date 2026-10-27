@@ -54,7 +54,8 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
-import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix } from "@/lib/branch-mapping";
+import { EscPosAdapter } from "@/lib/bluetooth/EscPosAdapter";
+import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix, CANONICAL_BRANCHES } from "@/lib/branch-mapping";
 import { getAuthHeaders } from "@/lib/getAuthHeaders";
 
 // Stock item abbreviations
@@ -251,22 +252,35 @@ function EndOfDayContent() {
   const [stockFilter, setStockFilter] = useState<'Active' | 'Withdrawn' | 'OldData'>('Active');
   const [searchQuery, setSearchQuery] = useState("");
   const [printingLabelId, setPrintingLabelId] = useState<string | null>(null);
+  const [printerProtocol, setPrinterProtocol] = useState<'ESCPOS' | 'TSPL'>('ESCPOS');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('mifos_printer_protocol');
+    if (saved === 'TSPL' || saved === 'ESCPOS') {
+      setPrinterProtocol(saved as any);
+    }
+  }, []);
+
+  const togglePrinterProtocol = () => {
+    const next = printerProtocol === 'ESCPOS' ? 'TSPL' : 'ESCPOS';
+    setPrinterProtocol(next);
+    localStorage.setItem('mifos_printer_protocol', next);
+    toast.success(`Printer format switched to: ${next === 'ESCPOS' ? 'Thermal Receipt (ESC/POS)' : 'Sticker Label (TSPL)'}`);
+  };
 
   // Handle Bluetooth Sticker Label Printing
   const handlePrintLabel = async (item: any) => {
     const itemKey = item.id || item.bill_no;
     if (printingLabelId) return;
     setPrintingLabelId(itemKey);
-    const toastId = toast.loading(`Connecting to Bluetooth Printer for ${item.bill_no}...`);
+    const toastId = toast.loading(`Connecting to Bluetooth Printer for ${stripBranchPrefix(item.bill_no)}...`);
 
     try {
       const transport = new WebBluetoothTransport();
       const connected = await transport.connect();
       if (!connected) throw new Error('Could not connect to Bluetooth printer.');
 
-      toast.loading(`Printing beautiful label for ${item.bill_no}...`, { id: toastId });
-
-      const adapter = new TsplAdapter();
+      toast.loading(`Printing formatted stock ticket for ${stripBranchPrefix(item.bill_no)}...`, { id: toastId });
 
       // Extract item details & generate sequential label print number (e.g. LBL-0001)
       const getNextLabelNo = () => {
@@ -285,11 +299,11 @@ function EndOfDayContent() {
       let printedBy = 'Branch Teller';
       let printedUserEmail = 'system';
       if (currentUser) {
-        printedBy = currentUser.name || currentUser.email || currentUser.username || 'Teller';
+        printedBy = currentUser.first_name || currentUser.name || currentUser.fullName || currentUser.email?.split('@')[0] || 'Teller';
         printedUserEmail = currentUser.email || currentUser.username || printedBy;
       }
 
-      const billNoStr = (item.bill_no || '').toString().trim();
+      const billNoStr = stripBranchPrefix(item.bill_no || '').toString().trim();
       const branchName = (item.branch_id || 'HQ').toString().trim();
       
       const rawTypes = compressItemTypeString(item.item_type || "");
@@ -301,7 +315,7 @@ function EndOfDayContent() {
         : '';
       const formattedWeight = `${Math.round(parseFloat(item.weight || 0) * 1000)} mg`;
 
-      // Look up customer info for QR payload
+      // Look up customer info for QR payload & ticket
       const customer = (stockCustomers || []).find((c: any) => {
         if (!c.bill_numbers) return false;
         return c.bill_numbers.split(/[, ]+/).some((b: string) => b.trim().toUpperCase() === billNoStr.toUpperCase());
@@ -328,24 +342,89 @@ function EndOfDayContent() {
 
       const qrPayload = qrDetails.join(' | ');
 
-      const commands: Uint8Array[] = [
-        adapter.init(50, 30, 2),
-        // QR Code on Left (x=15, y=15, cellWidth=3)
-        adapter.qrcode(qrPayload, 15, 15, 3),
-        // Line 1: Header Branch & Bill No (x=145, y=15, font 2)
-        adapter.text(`${branchName} | ${billNoStr}`, 145, 15, "2", 1, 1),
-        // Line 2: Label Number NO: LBL-0001 (x=145, y=48, font 2)
-        adapter.text(`NO: ${labelNo}`, 145, 48, "2", 1, 1),
-        // Line 3: Item Name (x=145, y=81, font 2)
-        adapter.text(displayItem.length > 20 ? displayItem.substring(0, 20) + '..' : displayItem, 145, 81, "2", 1, 1),
-        // Line 4: Weight (x=145, y=114, font 2)
-        adapter.text(`Weight: ${formattedWeight}`, 145, 114, "2", 1, 1),
-        // Line 5: Pawning Date under Weight (x=145, y=147, font 2)
-        adapter.text(`DATE: ${formattedDate}`, 145, 147, "2", 1, 1),
-        adapter.print(1, 1)
-      ];
+      const printerProtocol = (typeof window !== 'undefined' ? (localStorage.getItem('mifos_printer_protocol') || 'ESCPOS') : 'ESCPOS').toUpperCase();
 
-      const payload = adapter.concat(commands);
+      let payload: Uint8Array;
+
+      if (printerProtocol === 'TSPL') {
+        const adapter = new TsplAdapter();
+        const commands: Uint8Array[] = [
+          adapter.init(50, 30, 2),
+          // QR Code on Left (x=15, y=15, cellWidth=3)
+          adapter.qrcode(qrPayload, 15, 15, 3),
+          // Line 1: Header Branch & Bill No (x=145, y=15, font 2)
+          adapter.text(`${branchName} | ${billNoStr}`, 145, 15, "2", 1, 1),
+          // Line 2: Label Number NO: LBL-0001 (x=145, y=48, font 2)
+          adapter.text(`NO: ${labelNo}`, 145, 48, "2", 1, 1),
+          // Line 3: Item Name (x=145, y=81, font 2)
+          adapter.text(displayItem.length > 20 ? displayItem.substring(0, 20) + '..' : displayItem, 145, 81, "2", 1, 1),
+          // Line 4: Weight (x=145, y=114, font 2)
+          adapter.text(`Weight: ${formattedWeight}`, 145, 114, "2", 1, 1),
+          // Line 5: Pawning Date under Weight (x=145, y=147, font 2)
+          adapter.text(`DATE: ${formattedDate}`, 145, 147, "2", 1, 1),
+          adapter.print(1, 1)
+        ];
+        payload = adapter.concat(commands);
+      } else {
+        // Standard ESC/POS Thermal Receipt / Ticket Format
+        const adapter = new EscPosAdapter();
+        const sep = '----------------------------------------';
+        const dsep = '========================================';
+        const bObj = CANONICAL_BRANCHES.find(b => b.id === normalizeBranchId(branchName));
+        const fullBranchName = bObj ? bObj.name : (branchName === 'HQ' ? 'Head Office' : branchName);
+
+        const lines: Uint8Array[] = [
+          adapter.init(),
+          // ── HEADER (centered) ──
+          adapter.align(1),
+          adapter.text('RUPASINGHE TRUST INVESTMENTS\n', true, true, true),
+          adapter.text(`${fullBranchName} Branch · Safe Custody\n`, true),
+          adapter.text(`${dsep}\n`),
+          adapter.text('PAWN STOCK TICKET\n', true, false, true),
+          adapter.text(`${dsep}\n`),
+
+          // ── CORE IDENTIFIERS ──
+          adapter.align(0),
+          adapter.text(`Bill No   : ${billNoStr}\n`, true),
+          adapter.text(`Label Ref : ${labelNo}\n`, true),
+          adapter.text(`Date      : ${formattedDate || new Date().toLocaleDateString('en-GB')}\n`),
+          adapter.text(`${sep}\n`),
+
+          // ── ARTICLE DETAILS ──
+          adapter.text('COLLATERAL ARTICLE:\n', true),
+          adapter.text(`Item      : ${displayItem}\n`, true),
+          adapter.text(`Weight    : ${formattedWeight}\n`, true),
+          ...(item.purity ? [adapter.text(`Purity    : ${item.purity}\n`)] : []),
+          ...(item.appraised_value ? [adapter.text(`Appraised : Rs. ${Number(item.appraised_value).toLocaleString()}\n`)] : []),
+          adapter.text(`${sep}\n`),
+
+          // ── CUSTOMER INFO (if matched) ──
+          ...(customer ? [
+            adapter.text('CUSTOMER INFORMATION:\n', true),
+            ...(customer.name ? [adapter.text(`Name      : ${customer.name}\n`)] : []),
+            ...(customer.nic ? [adapter.text(`NIC       : ${customer.nic}\n`)] : []),
+            ...(customer.tp ? [adapter.text(`Phone     : ${customer.tp}\n`)] : []),
+            adapter.text(`${sep}\n`),
+          ] : []),
+
+          // ── QR CODE (centered) ──
+          adapter.align(1),
+          adapter.qrcode(qrPayload, 5),
+          adapter.text('Scan in Auditor Portal to verify\n'),
+          adapter.text(`${dsep}\n`),
+
+          // ── AUDIT METADATA ──
+          adapter.align(0),
+          adapter.text(`Printed By: ${printedBy}\n`),
+          adapter.text(`Printed On: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB')}\n`),
+          adapter.text(`${sep}\n`),
+          adapter.feed(4),
+          adapter.cut(),
+        ];
+
+        payload = EscPosAdapter.concat(lines);
+      }
+
       await transport.write(payload);
 
       // Record Print Event in Audit Logs
@@ -1195,8 +1274,9 @@ function EndOfDayContent() {
 
       // 1. Primary: Server-side API endpoint
       try {
-        const headers = getAuthHeaders();
-        const res = await fetch('/api/stock-customers', { headers });
+        const activeBranch = selectedBranch !== 'ALL' ? selectedBranch : (currentUser?.branchId || '');
+        const headers = getAuthHeaders(activeBranch ? { 'x-branch-id': activeBranch } : undefined);
+        const res = await fetch('/api/stock-customers', { headers, cache: 'no-store' });
         if (res.ok) {
           const json = await res.json();
           if (json.customers && Array.isArray(json.customers)) {
@@ -1344,25 +1424,25 @@ function EndOfDayContent() {
   const openEditActiveModal = (item: any) => {
     setSelectedActiveItem(item);
     
-    // Attempt to extract prefix from bill_no
+    // Always strip any branch prefix first (e.g. W3-, KDW-, KIR-)
+    let cleanBillNo = stripBranchPrefix(item.bill_no || '');
     let foundPrefix = null;
-    let cleanBillNo = item.bill_no;
     for (const pref of BILL_PREFIXES) {
-      if (item.bill_no.startsWith(pref + " ")) {
+      if (cleanBillNo.toUpperCase().startsWith(pref.toUpperCase() + " ")) {
         foundPrefix = pref;
-        cleanBillNo = item.bill_no.substring(pref.length + 1);
+        cleanBillNo = cleanBillNo.substring(pref.length + 1).trim();
         break;
-      } else if (item.bill_no.startsWith(pref)) {
+      } else if (cleanBillNo.toUpperCase().startsWith(pref.toUpperCase())) {
         foundPrefix = pref;
-        cleanBillNo = item.bill_no.substring(pref.length);
+        cleanBillNo = cleanBillNo.substring(pref.length).trim();
         break;
       }
     }
 
     setBillNo(cleanBillNo);
     setBillPrefix(foundPrefix);
-    setPrice(item.price.toString());
-    setWeight(item.weight.toString());
+    setPrice(item.price ? item.price.toString() : '');
+    setWeight(item.weight ? item.weight.toString() : '');
     setDate(item.date);
     setSelectedAddBranch(item.branch_id || "");
     
@@ -1409,7 +1489,7 @@ function EndOfDayContent() {
     }
 
     const formatBillNo = (prefix: string | null, rawNo: string) => {
-      let clean = rawNo.trim();
+      let clean = stripBranchPrefix(rawNo).trim();
       if (prefix) {
         if (clean.toUpperCase().startsWith(prefix.toUpperCase() + " ")) {
           clean = clean.substring(prefix.length + 1).trim();
@@ -1420,8 +1500,8 @@ function EndOfDayContent() {
       return prefix ? `${prefix} ${clean}` : clean;
     };
 
-    const finalBillNo = formatBillNo(billPrefix, billNo);
-    console.log("[DEBUG] generated finalBillNo:", finalBillNo);
+    const finalBillNo = stripBranchPrefix(formatBillNo(billPrefix, billNo)).trim();
+    console.log("[DEBUG] generated finalBillNo (strictly clean):", finalBillNo);
 
     // Duplicate bill number check WITHIN THE SAME BRANCH (case-insensitive & trimmed)
     const isDuplicateInBranch = stockItems.some(item => 
@@ -1448,87 +1528,42 @@ function EndOfDayContent() {
     console.log("[DEBUG] newItem payload:", newItem);
 
     try {
-      if (isUsingSupabase) {
-        if (isEditingActive && selectedActiveItem) {
-          console.log("[DEBUG] Attempting Supabase update...");
-          const { error } = await supabase
-            .from('stock_items')
-            .update({
-              bill_no: newItem.bill_no,
-              price: newItem.price,
-              weight: newItem.weight,
-              date: newItem.date,
-              item_type: newItem.item_type,
-              branch_id: newItem.branch_id
-            })
-            .eq('id', selectedActiveItem.id);
+      const isEdit = isEditingActive && selectedActiveItem;
+      const headers = getAuthHeaders({ 'x-branch-id': targetBranch });
 
-          if (error) {
-            console.error("[DEBUG] Supabase update error:", error);
-            throw error;
-          }
-          toast.success("Stock item updated in Supabase!");
-        } else {
-          console.log("[DEBUG] Attempting Supabase insert...");
-          const { data, error } = await supabase
-            .from('stock_items')
-            .insert([newItem])
-            .select();
-          
-          if (error) {
-            console.error("[DEBUG] Supabase insert error:", error);
-            throw error;
-          }
-          console.log("[DEBUG] Supabase insert successful. Returned data:", data);
-          toast.success("Stock item added to Supabase!");
-        }
-      } else {
-        console.log("[DEBUG] Supabase offline, using LocalStorage fallback...");
-        if (isEditingActive && selectedActiveItem) {
-          // LocalStorage fallback update
-          const updated = stockItems.map(item => {
-            if (item.id === selectedActiveItem.id) {
-              return {
-                ...item,
-                bill_no: newItem.bill_no,
-                price: newItem.price,
-                weight: newItem.weight,
-                date: newItem.date,
-                item_type: newItem.item_type,
-                branch_id: newItem.branch_id
-              };
-            }
-            return item;
-          });
-          setStockItems(updated);
-          localStorage.setItem('local_stock_items', JSON.stringify(updated));
-          toast.success("Stock item updated (Local Storage)!");
-        } else {
-          // LocalStorage fallback insert
-          const localItem = {
-            ...newItem,
-            id: Math.random().toString(36).substring(2, 9),
-            created_at: new Date().toISOString()
-          };
-          const localData = localStorage.getItem('local_stock_items');
-          let allItems = [];
-          if (localData) {
-            try {
-              allItems = JSON.parse(localData);
-            } catch (e) {}
-          }
-          const updated = [localItem, ...allItems];
-          localStorage.setItem('local_stock_items', JSON.stringify(updated));
-          console.log("[DEBUG] LocalStorage insert successful.");
-          toast.success("Stock item added (Local Storage)!");
-        }
+      const payload = isEdit ? {
+        id: selectedActiveItem.id,
+        bill_no: newItem.bill_no,
+        price: newItem.price,
+        weight: newItem.weight,
+        date: newItem.date,
+        item_type: newItem.item_type,
+        branch_id: newItem.branch_id
+      } : newItem;
+
+      console.log("[DEBUG] Sending stock save request to /api/stock:", { method: isEdit ? 'PUT' : 'POST', payload });
+      const res = await fetch('/api/stock', {
+        method: isEdit ? 'PUT' : 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errDesc = `Failed to save stock item (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
 
+      toast.success(isEdit ? "Stock item updated successfully!" : "Stock item added successfully!");
       closeAddModal();
       
       // Reload
-      loadStockData();
+      await loadStockData();
     } catch (err: any) {
+      console.error("[DEBUG] Error saving stock item:", err);
       toast.error("Error saving stock item: " + err.message);
     }
   };
@@ -1540,27 +1575,53 @@ function EndOfDayContent() {
     const cleanNorm = stripBranchPrefix(billNo).toLowerCase().replace(/[\s\-_/]+/g, '');
     const targetBranch = branchStr ? normalizeBranchId(branchStr) : null;
 
-    const matchFn = (c: any) => {
+    const isBillMatch = (c: any) => {
       if (!c.bill_numbers) return false;
       const rawBills = c.bill_numbers.split(",").map((b: string) => b.trim().toLowerCase());
       const normBills = c.bill_numbers.split(",").map((b: string) => stripBranchPrefix(b).toLowerCase().replace(/[\s\-_/]+/g, ''));
 
-      const isMatched = 
+      return (
         rawBills.includes(cleanBill) || 
         normBills.includes(cleanNorm) ||
-        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))));
-
-      if (!isMatched) return false;
-      if (targetBranch && (c.branch_id || c.branch)) {
-        return normalizeBranchId(c.branch_id || c.branch) === targetBranch;
-      }
-      return true;
+        normBills.some((nb: string) => nb === cleanNorm || (nb && cleanNorm && (nb.endsWith(cleanNorm) || cleanNorm.endsWith(nb))))
+      );
     };
 
-    const foundInNew = stockCustomers.find(matchFn);
+    if (targetBranch) {
+      // 1. Strict Priority: Exact match on target branch
+      const matchExact = (c: any) => {
+        if (!isBillMatch(c)) return false;
+        const cBranch = normalizeBranchId(c.branch_id || c.branch || '');
+        return cBranch === targetBranch;
+      };
+
+      const foundNew = stockCustomers.find(matchExact);
+      if (foundNew) return foundNew;
+
+      const foundOld = oldStockCustomers.find(matchExact);
+      if (foundOld) return foundOld;
+
+      // 2. Fallback: Only match unassigned customer IF they don't have a conflicting branch
+      const matchUnassigned = (c: any) => {
+        if (!isBillMatch(c)) return false;
+        const cBranch = normalizeBranchId(c.branch_id || c.branch || '');
+        return !cBranch;
+      };
+
+      const unassignedNew = stockCustomers.find(matchUnassigned);
+      if (unassignedNew) return unassignedNew;
+
+      const unassignedOld = oldStockCustomers.find(matchUnassigned);
+      if (unassignedOld) return unassignedOld;
+
+      return null;
+    }
+
+    // When no target branch is specified (e.g. ALL view without item context)
+    const foundInNew = stockCustomers.find(isBillMatch);
     if (foundInNew) return foundInNew;
 
-    return oldStockCustomers.find(matchFn);
+    return oldStockCustomers.find(isBillMatch);
   };
 
   const handleAddBillPrefix = (prefix: string) => {
@@ -1631,57 +1692,51 @@ function EndOfDayContent() {
       return;
     }
 
+    const targetBranch = normalizeBranchId(
+      selectedStockItemForCustomerView?.branch_id ||
+      selectedBranchForCustomerView ||
+      (selectedBranch !== 'ALL' ? selectedBranch : '') ||
+      currentUser?.branchId ||
+      'HQ'
+    );
+
     const payload = {
       name: custName.trim(),
       address: custAddress.trim(),
       address_2: custAddress2.trim() || null,
       tp: custTp.trim(),
       nic: custNic.trim() || null,
-      bill_numbers: custBills.trim()
+      bill_numbers: custBills.trim(),
+      branch_id: targetBranch
     };
 
     try {
-      if (isUsingSupabase) {
-        if (isEditingCustomer && selectedCustomer) {
-          const { error } = await supabase
-            .from('stock_customers')
-            .update(payload)
-            .eq('id', selectedCustomer.id);
-          if (error) throw error;
-          toast.success("Customer profile updated in Supabase!");
-        } else {
-          const { error } = await supabase
-            .from('stock_customers')
-            .insert([payload]);
-          if (error) throw error;
-          toast.success("Customer profile created in Supabase!");
-        }
-      } else {
-        const local = localStorage.getItem('local_stock_customers');
-        let list: any[] = [];
-        if (local) {
-          try { list = JSON.parse(local); } catch (e) {}
-        }
-        if (isEditingCustomer && selectedCustomer) {
-          list = list.map(c => c.id === selectedCustomer.id ? { ...c, ...payload } : c);
-          toast.success("Customer profile updated (Local Storage)!");
-        } else {
-          const newCust = {
-            id: Math.random().toString(36).substring(2, 9),
-            ...payload,
-            created_at: new Date().toISOString()
-          };
-          list = [newCust, ...list];
-          toast.success("Customer profile created (Local Storage)!");
-        }
-        localStorage.setItem('local_stock_customers', JSON.stringify(list));
+      const isEdit = isEditingCustomer && selectedCustomer?.id && !String(selectedCustomer.id).startsWith('pawn-');
+      const url = isEdit ? `/api/stock-customers/${selectedCustomer.id}` : '/api/stock-customers';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const headers = getAuthHeaders({ 'x-branch-id': targetBranch });
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        let errDesc = `Failed to save customer (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
+
+      toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile saved successfully!");
       setShowAddCustomerModal(false);
-      loadCustomerData();
-      
-      // Auto close bill info modal to refresh view cleanly
       setShowBillCustomerModal(false);
+      await loadCustomerData();
     } catch (err: any) {
+      console.error("Error saving customer profile:", err);
       toast.error("Error saving customer profile: " + err.message);
     }
   };
@@ -1739,38 +1794,29 @@ function EndOfDayContent() {
     }
 
     try {
-      if (isUsingSupabase) {
-        const { error } = await supabase
-          .from('stock_items')
-          .update({
-            status: 'Withdrawn',
-            withdrawal_date: withdrawalDate,
-            withdrawal_reason: withdrawalReason,
-            withdrawal_notes: finalNotes
-          })
-          .eq('id', id);
+      const headers = getAuthHeaders();
+      const res = await fetch('/api/stock', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          id: id,
+          status: 'Withdrawn',
+          withdrawal_date: withdrawalDate,
+          withdrawal_reason: withdrawalReason,
+          withdrawal_notes: finalNotes
+        })
+      });
 
-        if (error) throw error;
-        toast.success(isEditingWithdrawal ? "Withdrawal details updated in Supabase!" : "Item marked as Withdrawn in Supabase!");
-      } else {
-        // LocalStorage fallback
-        const updated = stockItems.map(item => {
-          if (item.id === id) {
-            return {
-              ...item,
-              status: 'Withdrawn',
-              withdrawal_date: withdrawalDate,
-              withdrawal_reason: withdrawalReason,
-              withdrawal_notes: finalNotes
-            };
-          }
-          return item;
-        });
-        setStockItems(updated);
-        localStorage.setItem('local_stock_items', JSON.stringify(updated));
-        toast.success(isEditingWithdrawal ? "Withdrawal details updated (Local Storage)!" : "Item marked as Withdrawn (Local Storage)!");
+      if (!res.ok) {
+        let errDesc = `Failed to withdraw item (${res.status})`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errDesc = errData.error;
+        } catch {}
+        throw new Error(errDesc);
       }
 
+      toast.success(isEditingWithdrawal ? "Withdrawal details updated successfully!" : "Item marked as Withdrawn successfully!");
       setWithdrawalNotes("");
       setFsInterest("");
       setSelectedItemForWithdrawal(null);
@@ -1778,8 +1824,9 @@ function EndOfDayContent() {
       setIsEditingWithdrawal(false);
       
       // Reload
-      loadStockData();
+      await loadStockData();
     } catch (err: any) {
+      console.error("[DEBUG] Error saving withdrawal:", err);
       toast.error("Error saving withdrawal: " + err.message);
     }
   };
@@ -1861,7 +1908,8 @@ function EndOfDayContent() {
 
   // Handle Delete Stock Item Permanently
   const handleDeleteStock = async (item: any) => {
-    if (!window.confirm(`Are you sure you want to permanently delete Bill Number "${item.bill_no}" from stock inventory? This action cannot be undone.`)) {
+    const cleanDisplayBill = stripBranchPrefix(item.bill_no);
+    if (!window.confirm(`Are you sure you want to permanently delete Bill Number "${cleanDisplayBill}" from stock inventory? This action cannot be undone.`)) {
       return;
     }
 
@@ -1884,12 +1932,12 @@ function EndOfDayContent() {
           throw new Error(result.error || "Failed to delete item from database");
         }
 
-        toast.success(`Bill Number "${item.bill_no}" deleted successfully!`);
+        toast.success(`Bill Number "${cleanDisplayBill}" deleted successfully!`);
       } else {
         const updated = stockItems.filter(i => i.id !== item.id);
         setStockItems(updated);
         localStorage.setItem('local_stock_items', JSON.stringify(updated));
-        toast.success(`Bill Number "${item.bill_no}" deleted successfully (Local Storage)!`);
+        toast.success(`Bill Number "${cleanDisplayBill}" deleted successfully (Local Storage)!`);
       }
 
       // Optimistically update state immediately
@@ -2034,9 +2082,9 @@ function EndOfDayContent() {
           }
           const wReason = item.withdrawal_reason || '';
           const wNotes = (item.withdrawal_notes || '').replace(/"/g, '""');
-          csvLines.push(`"${item.bill_no}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${wDate}","${wReason}","${wNotes}","${compressItemTypeString(item.item_type || '')}"`);
+          csvLines.push(`"${stripBranchPrefix(item.bill_no)}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${wDate}","${wReason}","${wNotes}","${compressItemTypeString(item.item_type || '')}"`);
         } else {
-          csvLines.push(`"${item.bill_no}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${compressItemTypeString(item.item_type || '')}"`);
+          csvLines.push(`"${stripBranchPrefix(item.bill_no)}","${branchCode}","${formattedPrice}","${formattedWeight}","${formattedDate}","${compressItemTypeString(item.item_type || '')}"`);
         }
       });
 
@@ -2142,7 +2190,7 @@ function EndOfDayContent() {
 
         return `
           <tr>
-            <td style="font-weight: bold; text-align: left;">${item.bill_no}</td>
+            <td style="font-weight: bold; text-align: left;">${stripBranchPrefix(item.bill_no)}</td>
             <td style="text-align: center;">${branchCode}</td>
             <td style="text-align: right;">${formattedPrice}</td>
             <td style="text-align: right;">${formattedWeight}</td>
@@ -2733,6 +2781,16 @@ function EndOfDayContent() {
                   <Printer className="w-3.5 h-3.5 text-blue-600" /> Print
                 </Button>
 
+                <Button 
+                  onClick={togglePrinterProtocol}
+                  variant="outline"
+                  className="border-slate-200 hover:bg-slate-50 text-slate-700 font-black uppercase tracking-widest text-[9px] h-9 px-3.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 whitespace-nowrap"
+                  title="Toggle between ESC/POS Thermal Receipt and TSPL Barcode Sticker format"
+                >
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  {printerProtocol === 'ESCPOS' ? 'Mode: Thermal Receipt' : 'Mode: Sticker (TSPL)'}
+                </Button>
+
                 {/* Normal Cache-First Reload with Auditor Force Expire check button */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <Button 
@@ -2932,7 +2990,7 @@ function EndOfDayContent() {
                         <TableCell className="px-6 py-4">
                           <button 
                             onClick={() => {
-                              setSelectedBillForCustomerView(item.bill_no);
+                              setSelectedBillForCustomerView(stripBranchPrefix(item.bill_no));
                               setSelectedStockItemForCustomerView(item);
                               setSelectedBranchForCustomerView(item.branch_id || item.branch || (selectedBranch !== 'ALL' ? selectedBranch : null) || currentUser?.branchId || null);
                               setShowBillCustomerModal(true);
@@ -2940,7 +2998,7 @@ function EndOfDayContent() {
                             className="font-black text-slate-800 text-sm hover:text-blue-600 underline decoration-dotted transition-colors text-left flex items-center gap-1.5 cursor-pointer flex-wrap"
                             title="Click to view details & interest"
                           >
-                            <span>{item.bill_no}</span>
+                            <span>{stripBranchPrefix(item.bill_no)}</span>
                             {getCustomerForBill(item.bill_no, item.branch_id || item.branch) && (
                               <span className="w-1.5 h-1.5 bg-blue-600 rounded-full inline-block" title="Customer Linked" />
                             )}
@@ -3917,7 +3975,7 @@ function EndOfDayContent() {
                 Pawn Bill Details
               </DialogTitle>
               <DialogDescription className="font-semibold text-slate-400 text-xs mt-1 flex items-center gap-2">
-                <span>Customer association for Bill No: <span className="text-slate-700 font-black">{selectedBillForCustomerView}</span></span>
+                <span>Customer association for Bill No: <span className="text-slate-700 font-black">{stripBranchPrefix(selectedBillForCustomerView)}</span></span>
                 {selectedBranchForCustomerView && (
                   <span className="bg-blue-50 text-blue-800 border border-blue-200/50 font-black px-2 py-0.5 rounded-md text-[9px] uppercase tracking-wide">
                     {normalizeBranchId(selectedBranchForCustomerView)}
