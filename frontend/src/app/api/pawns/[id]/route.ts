@@ -32,17 +32,8 @@ export async function GET(request: Request, context: any) {
       return NextResponse.json({ error: 'Pawn ticket not found' }, { status: 404 });
     }
 
-    // 2. Branch authorization check: non-head branch users are restricted to their operating branch
-    if (session) {
-      const isHead = !session.branchId || normalizeBranchId(session.branchId) === 'HQ' || session.branchId.toUpperCase() === 'HEAD OFFICE';
-      if (!isHead && session.role !== 'ADMIN') {
-        const sessBranch = normalizeBranchId(session.branchId);
-        const pawnBranch = normalizeBranchId(pawn.branch_id);
-        if (sessBranch !== pawnBranch) {
-          return NextResponse.json({ error: 'Forbidden. You are not authorized to view transactions from another branch.' }, { status: 403 });
-        }
-      }
-    }
+    // 2. Branch authorization check: authenticated users can view tickets for inspection, valuation & cross-branch redemptions
+    // Modification and deletion remain strictly locked to branch staff or admins in PATCH/DELETE below.
 
     // 3. Fetch customer / client info
     let client: any = null;

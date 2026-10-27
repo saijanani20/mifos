@@ -33,10 +33,6 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden. Auditors are not permitted to redeem loans.' }, { status: 403 });
     }
 
-    if (session && (session.role === 'TELLER' || session.role === 'MANAGER') && normalizeBranchId(pawn.branch_id) !== normalizeBranchId(session.branchId)) {
-      return NextResponse.json({ error: 'Forbidden. You cannot redeem pawn tickets belonging to another branch.' }, { status: 403 });
-    }
-
     if (pawn.status === 'REDEEMED') {
       return NextResponse.json({ error: 'Pawn ticket is already redeemed' }, { status: 400 });
     }
@@ -77,13 +73,19 @@ export async function POST(
     const accruedCharges = Math.max(0, settlement - principal);
     const interest = accruedCharges;
 
-    // 3. Mark Pawn Ticket as REDEEMED
+    // 3. Mark Pawn Ticket as REDEEMED (Track servicing branch in redeemed_by if cross-branch)
+    const servicingBranch = session?.branchId ? normalizeBranchId(session.branchId) : pawn.branch_id;
+    const isCrossBranch = servicingBranch && normalizeBranchId(pawn.branch_id) !== servicingBranch;
+    const effectiveRedeemedBy = approvedBy 
+      ? (isCrossBranch ? `${approvedBy} (${servicingBranch} for ${pawn.branch_id})` : approvedBy)
+      : (isCrossBranch ? `Teller (${servicingBranch} for ${pawn.branch_id})` : 'Teller / Cashier');
+
     const { error: updateError } = await adminSupabase
       .from('pawns')
       .update({
         status: 'REDEEMED',
         redeemed_at: new Date().toISOString(),
-        redeemed_by: approvedBy || 'Teller / Cashier',
+        redeemed_by: effectiveRedeemedBy,
         redeem_amount: settlement,
         redeem_interest: interest,
         branch_id: pawn.branch_id
@@ -104,19 +106,22 @@ export async function POST(
 
       // Invalidate branch inventory cache
       await invalidateBranchInventoryCache(pawn.branch_id);
+      if (isCrossBranch) {
+        await invalidateBranchInventoryCache(servicingBranch);
+      }
     } catch (stockErr) {
       console.warn("Could not mark matching vault stock item as Withdrawn:", stockErr);
     }
 
-    // 4. Log Settle/Redemption Transaction in User History (Soft Fallback)
+    // 4. Log Settle/Redemption Transaction in User History (Track at servicing branch where cash was received)
     try {
       await adminSupabase.from('transaction').insert([{
         id: crypto.randomUUID(),
         client_id: pawn.client_id,
         type: 'PAWN_REDEEM',
         amount: settlement,
-        description: `Redeemed Pawn: ${pawn.description} (Principal: Rs. ${principal.toLocaleString()}, Charges: Rs. ${accruedCharges.toLocaleString()}, Insurance: Rs. ${manualInsurance.toLocaleString()})`,
-        branch_id: pawn.branch_id,
+        description: `Redeemed Pawn: ${pawn.description} (Principal: Rs. ${principal.toLocaleString()}, Charges: Rs. ${accruedCharges.toLocaleString()}, Insurance: Rs. ${manualInsurance.toLocaleString()})${isCrossBranch ? ` [Cross-Branch at ${servicingBranch}]` : ''}`,
+        branch_id: servicingBranch || pawn.branch_id,
         timestamp: new Date().toISOString()
       }]);
     } catch (txErr) {
@@ -205,14 +210,16 @@ export async function POST(
     recordAuditLog(session, {
       action: 'REDEEM_PAWN',
       resource: `Pawn Ticket #${id.substring(0, 8)}`,
-      branchId: pawn.branch_id,
+      branchId: servicingBranch || pawn.branch_id,
       details: {
         pawnId: id,
         settlement,
         principal,
         interest,
         insurance: manualInsurance,
-        days
+        days,
+        originatingBranch: pawn.branch_id,
+        servicingBranch: servicingBranch || pawn.branch_id
       }
     });
 
