@@ -164,8 +164,12 @@ export default function LoginPage() {
         if (res.ok && resData.success) {
           authUser = resData.user;
           tok = resData.token || '';
-          refTok = resData.refreshToken || '';
-          userRole = resData.user?.role || 'TELLER';
+          const cleanRole = (r?: string) => {
+            const upper = (r || '').toUpperCase().trim();
+            if (['ADMIN', 'MANAGER', 'AUDITOR'].includes(upper)) return upper;
+            return 'TELLER';
+          };
+          userRole = cleanRole(resData.user?.role);
         } else if (!res.ok) {
           throw new Error(resData.error || 'Invalid credentials');
         }
@@ -192,7 +196,12 @@ export default function LoginPage() {
         authUser = data.user;
         tok = data.session?.access_token || '';
         refTok = data.session?.refresh_token || '';
-        userRole = (profile?.role || data.user.user_metadata?.role || 'TELLER').toUpperCase();
+        const cleanRole = (r?: string) => {
+          const upper = (r || '').toUpperCase().trim();
+          if (['ADMIN', 'MANAGER', 'AUDITOR'].includes(upper)) return upper;
+          return 'TELLER';
+        };
+        userRole = cleanRole(profile?.role || data.user.user_metadata?.role);
       }
 
       const effectiveBranch = normalizeBranchId(authUser?.branchId || effectiveBranchInput);

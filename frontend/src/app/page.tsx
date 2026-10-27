@@ -150,10 +150,17 @@ export default function Home() {
       try {
         const user = JSON.parse(storedUser);
         uBranchId = user.branchId || uBranchId;
-        uRole = user.role || uRole;
-
-        if (uRole === 'AUDITOR') {
+        const upperRole = (uRole || '').toUpperCase().trim();
+        if (upperRole === 'TELLER' || upperRole === 'AUTHENTICATED') {
+          window.location.href = '/loans';
+          return;
+        }
+        if (upperRole === 'AUDITOR') {
           window.location.href = '/dashboard/auditor';
+          return;
+        }
+        if (upperRole === 'MANAGER') {
+          window.location.href = '/operations/approvals';
           return;
         }
 

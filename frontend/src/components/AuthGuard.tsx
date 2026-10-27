@@ -48,14 +48,65 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       setIsAuthenticated(prev => (prev !== isAuth ? isAuth : prev));
     }, 0);
 
+    const resolveRole = (): 'ADMIN' | 'MANAGER' | 'AUDITOR' | 'TELLER' => {
+      const candidates = [
+        localStorage.getItem('user_role'),
+      ];
+      if (storedUser) {
+        try {
+          const u = JSON.parse(storedUser);
+          candidates.push(u.role, u.user_metadata?.role, u.app_metadata?.role);
+        } catch {}
+      }
+      for (const c of candidates) {
+        if (!c || typeof c !== 'string') continue;
+        const upper = c.toUpperCase().trim();
+        if (upper === 'ADMIN') return 'ADMIN';
+        if (upper === 'MANAGER') return 'MANAGER';
+        if (upper === 'AUDITOR') return 'AUDITOR';
+        if (upper === 'TELLER') return 'TELLER';
+      }
+      return 'TELLER';
+    };
+
+    const effectiveRole = resolveRole();
+
     if (isAuth && pathname === '/login') {
-      router.push('/');
+      if (effectiveRole === 'TELLER') {
+        router.push('/loans');
+      } else if (effectiveRole === 'AUDITOR') {
+        router.push('/dashboard/auditor');
+      } else if (effectiveRole === 'MANAGER') {
+        router.push('/operations/approvals');
+      } else {
+        router.push('/');
+      }
     } else if (!isAuth && pathname !== '/login') {
       router.push('/login');
+    } else if (isAuth && effectiveRole === 'TELLER') {
+      // Route protection: strictly prevent tellers from navigating to Admin options
+      const tellerForbidden = [
+        '/',
+        '/dashboard',
+        '/cctv',
+        '/transactions',
+        '/employees',
+        '/reports',
+        '/operations/sms-settings',
+        '/operations/audit-logs',
+        '/operations/approvals',
+        '/accounting/reports'
+      ];
+      const isForbidden = tellerForbidden.some(prefix => 
+        prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(prefix + '/')
+      );
+      if (isForbidden) {
+        router.replace('/loans');
+      }
     }
   }, [pathname, router]);
 
-  // Inactivity auto-logout monitor (10 minutes) - Excludes ADMIN
+  // Inactivity auto-logout monitor (45 minutes) - Excludes ADMIN
   useEffect(() => {
     if (!isAuthenticated || pathname === '/login') return;
 
@@ -65,7 +116,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     if (storedUser) {
       try {
         const u = JSON.parse(storedUser);
-        isUserAdmin = u.role === 'ADMIN';
+        const role = (localStorage.getItem('user_role') || u.role || '').toUpperCase().trim();
+        isUserAdmin = role === 'ADMIN';
       } catch (e) {}
     }
 
