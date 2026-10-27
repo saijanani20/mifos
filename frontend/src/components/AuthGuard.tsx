@@ -71,18 +71,39 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     const effectiveRole = resolveRole();
 
+    // Anti-loop safety circuit breaker: detect fast repeated redirects
+    const now = Date.now();
+    try {
+      const historyStr = sessionStorage.getItem('__auth_nav_chain') || '[]';
+      const history: number[] = JSON.parse(historyStr).filter((t: number) => now - t < 3000);
+      history.push(now);
+      sessionStorage.setItem('__auth_nav_chain', JSON.stringify(history));
+      if (history.length > 5) {
+        console.warn("AuthGuard loop circuit breaker triggered. Resetting session to login.");
+        localStorage.clear();
+        document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+        document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+        sessionStorage.removeItem('__auth_nav_chain');
+        router.replace('/login');
+        return;
+      }
+    } catch {}
+
     if (isAuth && pathname === '/login') {
       if (effectiveRole === 'TELLER') {
-        window.location.replace('/loans');
+        router.replace('/loans');
       } else if (effectiveRole === 'AUDITOR') {
-        window.location.replace('/dashboard/auditor');
+        router.replace('/dashboard/auditor');
       } else if (effectiveRole === 'MANAGER') {
-        window.location.replace('/operations/approvals');
+        router.replace('/operations/approvals');
       } else {
-        window.location.replace('/');
+        router.replace('/');
       }
     } else if (!isAuth && pathname !== '/login') {
-      window.location.replace('/login');
+      // Clear any orphaned cookies to prevent server middleware ping-pong
+      document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+      document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+      router.replace('/login');
     } else if (isAuth && effectiveRole === 'TELLER') {
       // Route protection: strictly prevent tellers from navigating to Admin options
       const tellerForbidden = [
@@ -101,7 +122,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(prefix + '/')
       );
       if (isForbidden) {
-        window.location.replace('/loans');
+        router.replace('/loans');
       }
     }
   }, [pathname, router]);

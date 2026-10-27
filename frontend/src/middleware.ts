@@ -22,9 +22,9 @@ function isTokenValid(token?: string): boolean {
     }
     const payload = JSON.parse(jsonStr);
     if (!payload.sub) return false;
-    // Expired by more than 24 hours (outside active shift window)
+    // Expired tokens are marked invalid
     const nowSec = Math.floor(Date.now() / 1000);
-    if (payload.exp && (nowSec - payload.exp > 24 * 3600)) {
+    if (payload.exp && (nowSec > payload.exp)) {
       return false;
     }
     return true;
@@ -65,11 +65,6 @@ export function middleware(request: NextRequest) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  // If authenticated user with valid token visits /login, redirect to dashboard /
-  if (hasValidToken && isLoginPage) {
-    return NextResponse.redirect(new URL('/', request.url));
   }
 
   return NextResponse.next();

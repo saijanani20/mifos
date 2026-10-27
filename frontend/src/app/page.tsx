@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   TrendingUp,
   TrendingDown,
@@ -64,6 +65,7 @@ const loanDistribution = [
 ];
 
 export default function Home() {
+  const router = useRouter();
   const [stats, setStats] = useState(statsTemplate);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
@@ -143,35 +145,40 @@ export default function Home() {
 
   useEffect(() => {
     let uBranchId = localStorage.getItem('user_branch') || '';
-    let uRole = localStorage.getItem('user_role') || 'TELLER';
     const storedUser = localStorage.getItem('user');
+    let parsedUser: any = null;
 
     if (storedUser) {
       try {
-        const user = JSON.parse(storedUser);
-        uBranchId = user.branchId || uBranchId;
-        const upperRole = (uRole || '').toUpperCase().trim();
-        if (upperRole === 'TELLER' || upperRole === 'AUTHENTICATED') {
-          window.location.href = '/loans';
-          return;
-        }
-        if (upperRole === 'AUDITOR') {
-          window.location.href = '/dashboard/auditor';
-          return;
-        }
-        if (upperRole === 'MANAGER') {
-          window.location.href = '/operations/approvals';
-          return;
-        }
-
-        setBranchId(uBranchId);
-        const bObj = CANONICAL_BRANCHES.find(b => b.id === normalizeBranchId(uBranchId));
-        setBranchName(user.branchName || bObj?.name || 'Head Office');
-        setUserName(getFirstName(user));
-        fetchStatus(uBranchId);
+        parsedUser = JSON.parse(storedUser);
+        uBranchId = parsedUser.branchId || uBranchId;
       } catch (err) {
         console.error(err);
       }
+    }
+
+    const rawRole = localStorage.getItem('user_role') || parsedUser?.role || 'TELLER';
+    const upperRole = rawRole.toUpperCase().trim();
+
+    if (upperRole === 'TELLER' || upperRole === 'AUTHENTICATED') {
+      router.replace('/loans');
+      return;
+    }
+    if (upperRole === 'AUDITOR') {
+      router.replace('/dashboard/auditor');
+      return;
+    }
+    if (upperRole === 'MANAGER') {
+      router.replace('/operations/approvals');
+      return;
+    }
+
+    if (parsedUser) {
+      setBranchId(uBranchId);
+      const bObj = CANONICAL_BRANCHES.find(b => b.id === normalizeBranchId(uBranchId));
+      setBranchName(parsedUser.branchName || bObj?.name || 'Head Office');
+      setUserName(getFirstName(parsedUser));
+      fetchStatus(uBranchId);
     } else {
       const fallbackName = getFirstName({ email: localStorage.getItem('user_name') });
       setUserName(fallbackName);
@@ -187,8 +194,8 @@ export default function Home() {
       }
     }).catch(() => {});
 
-    loadDashboardData(uBranchId, uRole);
-  }, []);
+    loadDashboardData(uBranchId, upperRole);
+  }, [router]);
 
   const fetchStatus = async (bid: string) => {
     try {
@@ -315,7 +322,7 @@ export default function Home() {
           <Button variant="outline" className="h-10 font-black text-xs uppercase tracking-wider px-6 rounded-xl border-slate-200 glass hover:bg-white shadow-xs cursor-pointer">
             History
           </Button>
-          <Button className="h-10 bg-primary hover:bg-primary/90 text-white font-black text-xs uppercase tracking-wider px-6 rounded-xl shadow-md shadow-primary/20 card-hover cursor-pointer" onClick={() => window.location.href='/loans'}>
+          <Button className="h-10 bg-primary hover:bg-primary/90 text-white font-black text-xs uppercase tracking-wider px-6 rounded-xl shadow-md shadow-primary/20 card-hover cursor-pointer" onClick={() => router.push('/loans')}>
             New Pawn <ArrowUpRight className="ml-1 w-3.5 h-3.5" />
           </Button>
         </div>
