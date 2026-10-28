@@ -91,19 +91,22 @@ export async function POST(request: Request) {
     // Other staff operate in their assigned database branch.
     const selectedBranch = branch ? normalizeBranchId(branch) : null;
     let effectiveBranch = normalizeBranchId(profile?.branch_id || 'HQ');
-    if (role === 'ADMIN') {
-      // Admin can operate in HQ (Main Branch) or select any specific branch
+    if (role === 'ADMIN' || role === 'AUDITOR' || role === 'MANAGER') {
+      // Admin, Auditor, and Manager can operate in HQ (Main Branch) or select any specific branch
       effectiveBranch = selectedBranch || effectiveBranch || 'HQ';
-    } else if (role === 'TELLER') {
-      if ((effectiveBranch === 'HQ' || !effectiveBranch) && selectedBranch && selectedBranch !== 'HQ') {
+    } else {
+      // TELLER must operate in their assigned or selected local branch
+      if (selectedBranch && selectedBranch !== 'HQ' && selectedBranch !== 'DHW') {
         effectiveBranch = selectedBranch;
+      } else if (profile?.branch_id && normalizeBranchId(profile.branch_id) !== 'HQ' && normalizeBranchId(profile.branch_id) !== 'DHW') {
+        effectiveBranch = normalizeBranchId(profile.branch_id);
       }
     }
 
-    // Main Branch (DHW / HQ) is strictly reserved for Admin login
-    if ((effectiveBranch === 'DHW' || effectiveBranch === 'HQ') && role !== 'ADMIN') {
+    // Main Branch (DHW / HQ) is reserved for Management, Admin, and Auditor - Tellers must log into their assigned local branch
+    if ((effectiveBranch === 'DHW' || effectiveBranch === 'HQ') && role === 'TELLER') {
       return NextResponse.json(
-        { error: 'Access Denied: Main Branch is reserved for Administrator login only. Please select your assigned local branch.' },
+        { error: 'Access Denied: Main Branch is reserved for Administrator and Management login only. Please select your assigned local branch.' },
         { status: 403 }
       );
     }

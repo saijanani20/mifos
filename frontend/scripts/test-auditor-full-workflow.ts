@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 
 const BASE_URL = 'http://localhost:3000';
