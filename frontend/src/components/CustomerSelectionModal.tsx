@@ -89,7 +89,7 @@ export function CustomerSelectionModal({
   // Ensure freshest client directory across all branches when modal opens
   useEffect(() => {
     if (isOpen) {
-      fetch('/api/clients?branchId=ALL', { headers: getAuthHeaders() })
+      fetch('/api/clients?branchId=ALL&minimal=true&fresh=true', { headers: getAuthHeaders() })
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) {
@@ -99,6 +99,31 @@ export function CustomerSelectionModal({
         .catch(err => console.error('Error refreshing client list for cross-check:', err));
     }
   }, [isOpen]);
+
+  // Live on-demand server search if typed search is not found in local cache
+  useEffect(() => {
+    const q = searchNic.trim();
+    if (!q || q.length < 3) return;
+    const timer = setTimeout(async () => {
+      try {
+        const headers = getAuthHeaders();
+        const res = await fetch(`/api/clients?search=${encodeURIComponent(q)}&minimal=true&fresh=true`, { headers });
+        if (res.ok) {
+          const results = await res.json();
+          if (Array.isArray(results) && results.length > 0) {
+            setActiveClients(prev => {
+              const existingIds = new Set(prev.map(c => c.id));
+              const newMatches = results.filter((r: any) => !existingIds.has(r.id));
+              return newMatches.length > 0 ? [...newMatches, ...prev] : prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Live modal client search notice:', err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchNic]);
 
   // Reset or initialize on open
   useEffect(() => {
@@ -206,16 +231,29 @@ export function CustomerSelectionModal({
 
   const currentCapturedPhoto = activeKycTab === 'front' ? kycFront : activeKycTab === 'back' ? kycBack : kycSign;
 
-  // Filter matching existing clients by typed NIC
+  // Filter matching existing clients by typed NIC, phone, or name
   const matchingClients = searchNic.trim()
     ? activeClients.filter(c => {
         const rawNic = String(c.national_id || c.nationalId || c.nic || c.id || '').toLowerCase();
         const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
         const name = `${c.first_name || c.firstName || ''} ${c.last_name || c.lastName || ''}`.toLowerCase();
+        const altName = String(c.name || '').toLowerCase();
         const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+        const rawPhone = String(c.phone || c.mobile || '').toLowerCase();
         const q = searchNic.toLowerCase().trim();
         const cleanQ = stripBranchPrefix(q).toLowerCase();
-        return rawNic.includes(q) || cleanNic.includes(cleanQ) || name.includes(q) || phone.includes(q);
+        const qDigits = q.replace(/[^a-z0-9]/g, '');
+
+        return (
+          rawNic.includes(q) ||
+          cleanNic.includes(cleanQ) ||
+          (qDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+          (qDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+          name.includes(q) ||
+          altName.includes(q) ||
+          rawPhone.includes(q) ||
+          (phone && qDigits.length >= 3 && phone.includes(qDigits))
+        );
       })
     : [];
 
@@ -459,6 +497,19 @@ export function CustomerSelectionModal({
       toast.success('Customer registered successfully ✓', { id: toastId });
 
       stopCamera();
+
+      const newEntry = {
+        ...createdClient,
+        id: createdClient.id || newNic.trim(),
+        national_id: createdClient.national_id || newNic.trim(),
+        nationalId: createdClient.national_id || newNic.trim(),
+        first_name: firstName,
+        last_name: lastName,
+        phone: formattedPhone,
+        address: newAddress.trim(),
+        display_national_id: stripBranchPrefix(createdClient.national_id || newNic.trim())
+      };
+      setActiveClients(prev => [newEntry, ...prev.filter(c => c.id !== newEntry.id)]);
 
       onCustomerSelected({
         id: createdClient.id || newNic.trim(),

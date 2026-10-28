@@ -48,9 +48,10 @@ export async function GET(request: Request) {
     }
 
     const isAll = branchTokens.includes('ALL');
+    const noCache = searchParams.get('fresh') === 'true' || searchParams.get('nocache') === 'true';
     const cacheKey = `${isAll ? 'ALL' : branchTokens.map(b => b.toUpperCase()).sort().join(',')}${isMinimal ? ':min' : ''}`;
     const cached = clientsMemoryCache.get(cacheKey);
-    if (!searchParam && cached && Date.now() < cached.expiresAt) {
+    if (!noCache && !searchParam && cached && Date.now() < cached.expiresAt) {
       return NextResponse.json(cached.data);
     }
 
@@ -63,19 +64,31 @@ export async function GET(request: Request) {
         .select('id, national_id, first_name, last_name, phone, address, branch_id, status, created_at, created_by_user_id')
         .order('created_at', { ascending: false });
 
-      // If specific branches are selected (not ALL), filter by them
-      if (!isAll && branchTokens.length > 0) {
+      // When searchParam is provided, search globally across all branches
+      // so users can always locate customers across branches by NIC, name, or phone.
+      if (searchParam && searchParam.trim()) {
+        const rawQ = searchParam.trim();
+        const cleanQ = rawQ.replace(/[,()"]/g, ' ');
+        const digitsQ = rawQ.replace(/\D/g, '');
+        const clauses: string[] = [];
+        if (cleanQ) {
+          clauses.push(`national_id.ilike.%${cleanQ}%`);
+          clauses.push(`first_name.ilike.%${cleanQ}%`);
+          clauses.push(`last_name.ilike.%${cleanQ}%`);
+        }
+        if (digitsQ && digitsQ.length >= 3) {
+          clauses.push(`phone.ilike.%${digitsQ}%`);
+          clauses.push(`national_id.ilike.%${digitsQ}%`);
+        }
+        if (clauses.length > 0) {
+          query = query.or(clauses.join(','));
+        }
+      } else if (!isAll && branchTokens.length > 0) {
+        // Only restrict by branch when NOT doing a specific customer search
         const allTerms = branchTokens.flatMap(b => getBranchSearchTerms(b));
         if (allTerms.length > 0) {
           const orClause = allTerms.map(t => `branch_id.ilike.%${t}%`).join(',');
           query = query.or(orClause);
-        }
-      }
-
-      if (searchParam && searchParam.trim()) {
-        const cleanQ = searchParam.trim().replace(/[,()"]/g, ' ');
-        if (cleanQ) {
-          query = query.or(`national_id.ilike.%${cleanQ}%,phone.ilike.%${cleanQ}%,first_name.ilike.%${cleanQ}%,last_name.ilike.%${cleanQ}%`);
         }
       }
 

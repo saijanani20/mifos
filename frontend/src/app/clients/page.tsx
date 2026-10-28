@@ -188,7 +188,7 @@ export default function ClientsPage() {
     };
   }, [isBranchFilterOpen]);
 
-  const loadClients = async (overrideBranches?: string[] | string) => {
+  const loadClients = async (overrideBranches?: string[] | string, forceRefresh = false) => {
     try {
       setLoading(true);
       const rawUserBranch = typeof window !== 'undefined' ? localStorage.getItem('user_branch') : null;
@@ -228,10 +228,11 @@ export default function ClientsPage() {
       const isAll = activeBranches.includes('ALL');
       const branchParamValue = isAll ? 'ALL' : activeBranches.join(',');
       const queryParam = isAll ? '' : `?branchId=${encodeURIComponent(branchParamValue)}`;
+      const freshParam = forceRefresh ? `${queryParam ? '&' : '?'}fresh=${Date.now()}` : '';
 
       // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
       const headers = getAuthHeaders();
-      const res = await fetch(`/api/clients${queryParam}`, { headers, cache: 'no-store' });
+      const res = await fetch(`/api/clients${queryParam}${freshParam}`, { headers, cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setClients(Array.isArray(data) ? data : []);
@@ -247,6 +248,31 @@ export default function ClientsPage() {
       setLoading(false);
     }
   };
+
+  // Live cross-branch customer search whenever user types in the search box
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) return;
+    const timer = setTimeout(async () => {
+      try {
+        const headers = getAuthHeaders();
+        const res = await fetch(`/api/clients?search=${encodeURIComponent(q)}&fresh=true`, { headers });
+        if (res.ok) {
+          const results = await res.json();
+          if (Array.isArray(results) && results.length > 0) {
+            setClients(prev => {
+              const existingIds = new Set(prev.map(c => c.id));
+              const newClients = results.filter((r: any) => !existingIds.has(r.id));
+              return newClients.length > 0 ? [...newClients, ...prev] : prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Live client search notice:', err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const toggleBranch = (bId: string) => {
     const cleanId = bId.trim().toUpperCase();
@@ -550,6 +576,11 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
         throw new Error(errorMsg);
       }
 
+      let savedData: any = null;
+      try {
+        savedData = await res.json();
+      } catch {}
+
       toast.success(editingClient ? "Customer updated successfully!" : "Customer saved successfully!", { id: toastId });
       
       setIsOpen(false);
@@ -557,7 +588,19 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
       setNic(''); setFirstName(''); setPhone(''); setAddress('');
       setNicFrontImage(null); setNicBackImage(null); setSignatureImage(null);
       setActiveKycTab('nic_front');
-      await loadClients();
+
+      // Optimistically insert / update customer in local state for instantaneous search availability
+      if (savedData && savedData.id) {
+        setClients(prev => {
+          const formatted = {
+            ...savedData,
+            display_national_id: stripBranchPrefix(savedData.national_id || savedData.nationalId)
+          };
+          return [formatted, ...prev.filter(c => c.id !== savedData.id)];
+        });
+      }
+
+      await loadClients(undefined, true);
     } catch(err: any) {
       console.error(err);
       toast.error("Error saving customer", {
@@ -714,6 +757,7 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
       toast.success(isEdit ? "Customer profile updated successfully!" : "Customer profile created successfully!");
       setShowAddCustomerModal(false);
       await loadCustomerData(true);
+      await loadClients(undefined, true);
     } catch (err: any) {
       toast.error("Error saving customer profile: " + err.message);
     }
@@ -744,7 +788,9 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
   const filteredClients = clients
     .filter(client => {
       // 1. Multi-Branch filter
-      if (selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
+      // When a user is actively searching by query, search across all branches
+      // so customers are never hidden by branch isolation.
+      if (!searchQuery.trim() && selectedBranches.length > 0 && !selectedBranches.includes('ALL')) {
         const cBranch = String(client.branch_id || client.branchId || '').toUpperCase().trim();
         const branchMatches = selectedBranches.some(sBranch => {
           const terms = getBranchSearchTerms(sBranch);
@@ -756,15 +802,23 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
       // 2. Search query filter
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
+      const qDigits = q.replace(/[^a-z0-9]/g, '');
+      const rawNic = String(client.national_id || client.nationalId || '').toLowerCase();
+      const cleanNic = (client.display_national_id || stripBranchPrefix(rawNic)).toLowerCase();
+      const rawPhone = String(client.phone || '').toLowerCase();
+      const phoneDigits = rawPhone.replace(/\D/g, '');
 
       return (
         (client.first_name || client.firstName)?.toLowerCase().includes(q) ||
         (client.last_name || client.lastName)?.toLowerCase().includes(q) ||
-        (client.national_id || client.nationalId)?.toLowerCase().includes(q) ||
-        (client.display_national_id || stripBranchPrefix(client.national_id || client.nationalId))?.toLowerCase().includes(q) ||
+        rawNic.includes(q) ||
+        cleanNic.includes(q) ||
+        (qDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+        (qDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+        rawPhone.includes(q) ||
+        (qDigits.length >= 3 && phoneDigits.includes(qDigits)) ||
         client.address?.toLowerCase().includes(q) ||
-        (client.branch_id || client.branchId)?.toLowerCase().includes(q) ||
-        client.phone?.toLowerCase().includes(q)
+        (client.branch_id || client.branchId)?.toLowerCase().includes(q)
       );
     })
     .sort((a, b) => {

@@ -422,10 +422,11 @@ export default function PawnesPage() {
   };
 
   // Load clients across all branches for fast lookups & cross-branch customer pawn creation
-  const loadClients = async () => {
+  const loadClients = async (forceRefresh = false) => {
     try {
       const headers = getAuthHeaders();
-      const res = await fetch('/api/clients?branchId=ALL&minimal=true', { headers, cache: 'no-store' });
+      const freshParam = forceRefresh ? `&fresh=${Date.now()}` : '';
+      const res = await fetch(`/api/clients?branchId=ALL&minimal=true${freshParam}`, { headers, cache: 'no-store' });
       if (res.ok) {
         const data: any[] = await res.json();
         setClientsList(data);
@@ -434,25 +435,40 @@ export default function PawnesPage() {
         data.forEach(c => {
           const rawName = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.trim();
           const name = rawName || c.name || c.full_name || c.customer_name || c.client_name || 'Client';
-          const nic = String(c.nationalId || c.national_id || c.nic || c.id || '').trim();
-          if (nic) {
-            map[nic.toLowerCase()] = name;
-            nMap[nic.toLowerCase()] = nic;
+          const rawNic = String(c.nationalId || c.national_id || c.nic || c.id || '').trim();
+          const cleanNic = stripBranchPrefix(rawNic).trim();
+          const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+
+          if (rawNic) {
+            map[rawNic.toLowerCase()] = name;
+            nMap[rawNic.toLowerCase()] = cleanNic || rawNic;
+            const rDig = rawNic.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (rDig) map[rDig] = name;
+          }
+          if (cleanNic) {
+            map[cleanNic.toLowerCase()] = name;
+            nMap[cleanNic.toLowerCase()] = cleanNic;
+            const cDig = cleanNic.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (cDig) map[cDig] = name;
+          }
+          if (phone && phone.length >= 7) {
+            map[phone] = name;
+            if (phone.startsWith('0')) map[phone.slice(1)] = name;
           }
           if (c.id != null) {
             const cidStr = String(c.id).toLowerCase().trim();
             map[cidStr] = name;
-            nMap[cidStr] = nic;
+            nMap[cidStr] = cleanNic || rawNic;
           }
           if (c.clientNumber != null) {
             const cNumStr = String(c.clientNumber).toLowerCase().trim();
             map[cNumStr] = name;
-            nMap[cNumStr] = nic;
+            nMap[cNumStr] = cleanNic || rawNic;
           }
           if (c.client_number != null) {
             const cNumStr = String(c.client_number).toLowerCase().trim();
             map[cNumStr] = name;
-            nMap[cNumStr] = nic;
+            nMap[cNumStr] = cleanNic || rawNic;
           }
         });
         setClientsMap(map);
@@ -609,19 +625,50 @@ export default function PawnesPage() {
     loadBranches();
   }, []);
 
-  // Resolve customer name, phone, and address when NIC/ID is typed
+  // Resolve customer name, phone, and address when NIC/ID/phone/name is typed
   const handleClientIdChange = (val: string) => {
     setClientId(val);
     const cleanVal = val.toLowerCase().trim();
-    let matchedName = clientsMap[cleanVal] || '';
+    const cleanValDigits = cleanVal.replace(/[^a-z0-9]/g, '');
+    let matchedName = clientsMap[cleanVal] || (cleanValDigits ? clientsMap[cleanValDigits] : '') || '';
     let matchedClient: any = null;
 
     if (cleanVal && clientsList.length > 0) {
       matchedClient = clientsList.find(c => {
-        const nic = String(c.nationalId || c.national_id || c.nic || '').toLowerCase().trim();
+        const rawNic = String(c.nationalId || c.national_id || c.nic || '').toLowerCase().trim();
+        const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
         const cid = String(c.id != null ? c.id : '').toLowerCase().trim();
-        return (nic && nic === cleanVal) || (cid && cid === cleanVal);
+        const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+        const rawPhone = String(c.phone || c.mobile || '').toLowerCase().trim();
+        const fullName = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase().trim();
+        const altName = String(c.name || '').toLowerCase().trim();
+
+        // 1. NIC match (raw, stripped of branch prefix, or alphanumeric normalized)
+        const nicMatch = (
+          (rawNic && rawNic === cleanVal) ||
+          (cleanNic && cleanNic === cleanVal) ||
+          (cleanValDigits.length >= 4 && rawNic.replace(/[^a-z0-9]/g, '') === cleanValDigits) ||
+          (cleanValDigits.length >= 4 && cleanNic.replace(/[^a-z0-9]/g, '') === cleanValDigits)
+        );
+
+        // 2. ID match
+        const idMatch = (cid && cid === cleanVal);
+
+        // 3. Phone match
+        const phoneMatch = (
+          (cleanValDigits.length >= 7 && phone.includes(cleanValDigits)) ||
+          (rawPhone && rawPhone.includes(cleanVal))
+        );
+
+        // 4. Name match
+        const nameMatch = (
+          (fullName && (fullName === cleanVal || fullName.startsWith(cleanVal))) ||
+          (altName && (altName === cleanVal || altName.startsWith(cleanVal)))
+        );
+
+        return nicMatch || idMatch || phoneMatch || nameMatch;
       });
+
       if (matchedClient && !matchedName) {
         matchedName = `${matchedClient.firstName || matchedClient.first_name || ''} ${matchedClient.lastName || matchedClient.last_name || ''}`.trim() || matchedClient.name || '';
       }
@@ -639,8 +686,9 @@ export default function PawnesPage() {
   };
 
   const selectClient = (c: any) => {
-    const nic = c.nationalId || c.national_id || c.nic || c.id || '';
-    setClientId(nic);
+    const rawNic = c.nationalId || c.national_id || c.nic || c.id || '';
+    const cleanNic = stripBranchPrefix(rawNic);
+    setClientId(cleanNic || rawNic);
     const name = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.trim() || c.name || c.full_name || '';
     setResolvedName(name);
     const phone = c.phone || c.mobile || c.contact || c.phoneNumber || c.phone_number || '';
@@ -1465,12 +1513,34 @@ export default function PawnesPage() {
           askingAmount: evaluationData?.askingAmount
         }}
         onCustomerSelected={(cust) => {
-          setClientId(cust.nic || cust.id);
+          const rawNic = cust.nic || cust.id || '';
+          const cleanNic = stripBranchPrefix(rawNic);
+          setClientId(cleanNic || rawNic);
           setResolvedName(cust.name);
           setClientPhone(cust.phone);
           setClientAddress(cust.address);
           setIsCustomerStepOpen(false);
           setIsOpen(true);
+
+          // Optimistically register into clientsList and clientsMap for instant search availability
+          const newRecord = {
+            id: cust.id,
+            national_id: rawNic,
+            nationalId: rawNic,
+            display_national_id: cleanNic,
+            first_name: cust.name,
+            lastName: '.',
+            phone: cust.phone,
+            address: cust.address
+          };
+          setClientsList(prev => [newRecord, ...prev.filter(c => c.id !== cust.id && c.national_id !== rawNic)]);
+          setClientsMap(prev => ({
+            ...prev,
+            [rawNic.toLowerCase()]: cust.name,
+            [cleanNic.toLowerCase()]: cust.name,
+            [String(cust.id).toLowerCase()]: cust.name
+          }));
+          loadClients(true);
         }}
       />
 
@@ -1559,11 +1629,26 @@ export default function PawnesPage() {
                     className="h-11 bg-white/80 rounded-xl font-mono font-bold text-xs"
                     onKeyDown={e => {
                       const typed = clientId.toLowerCase().trim();
+                      const typedDigits = typed.replace(/[^a-z0-9]/g, '');
                       const suggestions = clientsList.filter(c => {
                         if (!typed) return false;
-                        const nic = (c.nationalId || c.national_id || c.id || '').toLowerCase();
+                        const rawNic = String(c.nationalId || c.national_id || c.nic || c.id || '').toLowerCase();
+                        const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+                        const cid = String(c.id != null ? c.id : '').toLowerCase();
                         const name = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase();
-                        return nic.includes(typed) || name.includes(typed);
+                        const altName = String(c.name || '').toLowerCase();
+                        const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+
+                        return (
+                          rawNic.includes(typed) ||
+                          cleanNic.includes(typed) ||
+                          (typedDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                          (typedDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                          cid.includes(typed) ||
+                          name.includes(typed) ||
+                          altName.includes(typed) ||
+                          (phone && typedDigits.length >= 3 && phone.includes(typedDigits))
+                        );
                       });
 
                       if (showSuggestions && suggestions.length > 0) {
@@ -1588,11 +1673,26 @@ export default function PawnesPage() {
                   {/* Autocomplete Dropdown list */}
                   {(() => {
                     const typed = clientId.toLowerCase().trim();
+                    const typedDigits = typed.replace(/[^a-z0-9]/g, '');
                     const suggestions = clientsList.filter(c => {
                       if (!typed) return false;
-                      const nic = (c.nationalId || c.national_id || c.id || '').toLowerCase();
+                      const rawNic = String(c.nationalId || c.national_id || c.nic || c.id || '').toLowerCase();
+                      const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+                      const cid = String(c.id != null ? c.id : '').toLowerCase();
                       const name = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase();
-                      return nic.includes(typed) || name.includes(typed);
+                      const altName = String(c.name || '').toLowerCase();
+                      const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
+
+                      return (
+                        rawNic.includes(typed) ||
+                        cleanNic.includes(typed) ||
+                        (typedDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                        (typedDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                        cid.includes(typed) ||
+                        name.includes(typed) ||
+                        altName.includes(typed) ||
+                        (phone && typedDigits.length >= 3 && phone.includes(typedDigits))
+                      );
                     });
 
                     return (
