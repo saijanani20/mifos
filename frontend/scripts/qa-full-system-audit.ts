@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
 import { GET as getPawns, POST as createPawn } from '../src/app/api/pawns/route';
 import { GET as getClients } from '../src/app/api/clients/route';
