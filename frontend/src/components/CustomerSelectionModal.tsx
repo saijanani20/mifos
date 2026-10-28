@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, stripBranchPrefix, normalizeNationalId } from '@/lib/branch-mapping';
 import { SmartNicScanner } from './SmartNicScanner';
 import { compressImage } from '@/lib/image-compression';
 
@@ -236,6 +236,10 @@ export function CustomerSelectionModal({
     ? activeClients.filter(c => {
         const rawNic = String(c.national_id || c.nationalId || c.nic || c.id || '').toLowerCase();
         const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+        const rawNicDigits = rawNic.replace(/[^a-z0-9]/g, '');
+        const cleanNicDigits = cleanNic.replace(/[^a-z0-9]/g, '');
+        const rawNicNumbers = rawNic.replace(/\D/g, '');
+        const cleanNicNumbers = cleanNic.replace(/\D/g, '');
         const name = `${c.first_name || c.firstName || ''} ${c.last_name || c.lastName || ''}`.toLowerCase();
         const altName = String(c.name || '').toLowerCase();
         const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
@@ -243,16 +247,27 @@ export function CustomerSelectionModal({
         const q = searchNic.toLowerCase().trim();
         const cleanQ = stripBranchPrefix(q).toLowerCase();
         const qDigits = q.replace(/[^a-z0-9]/g, '');
+        const qNumbers = q.replace(/\D/g, '');
+        const qWords = q.split(/\s+/).filter(Boolean);
+
+        const wordsMatch = qWords.length > 1 && qWords.every(w =>
+          name.includes(w) ||
+          altName.includes(w) ||
+          rawNic.includes(w) ||
+          cleanNic.includes(w) ||
+          phone.includes(w)
+        );
 
         return (
+          wordsMatch ||
           rawNic.includes(q) ||
           cleanNic.includes(cleanQ) ||
-          (qDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
-          (qDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+          (qDigits.length >= 3 && (rawNicDigits.includes(qDigits) || cleanNicDigits.includes(qDigits) || qDigits.includes(rawNicDigits) || qDigits.includes(cleanNicDigits))) ||
+          (qNumbers.length >= 3 && (rawNicNumbers.includes(qNumbers) || cleanNicNumbers.includes(qNumbers))) ||
           name.includes(q) ||
           altName.includes(q) ||
           rawPhone.includes(q) ||
-          (phone && qDigits.length >= 3 && phone.includes(qDigits))
+          (phone && qNumbers.length >= 3 && phone.includes(qNumbers))
         );
       })
     : [];
@@ -261,20 +276,22 @@ export function CustomerSelectionModal({
   // In Sri Lanka pawning, NIC is the unique primary citizen identity.
   // Phone numbers can be legitimately shared (e.g., family members, spouses) and must NOT
   // hijack the customer identity or block registration of a distinct citizen.
-  const normalizedNewNic = newNic.trim().toLowerCase();
+  const normalizedNewNic = normalizeNationalId(newNic.trim()).toLowerCase();
   const cleanNewNic = stripBranchPrefix(normalizedNewNic).toLowerCase();
+  const newNicDigits = normalizedNewNic.replace(/[^a-z0-9]/g, '');
   const normalizedNewPhone = newPhone.replace(/\D/g, '');
 
   const existingCustomerMatch = normalizedNewNic.length >= 3
     ? activeClients.find(c => {
         const cNic = String(c.national_id || c.nationalId || c.nic || c.id || '').trim().toLowerCase();
         const cleanCNic = stripBranchPrefix(cNic).toLowerCase();
+        const cNicDigits = cNic.replace(/[^a-z0-9]/g, '');
+        const cleanCDigits = cleanCNic.replace(/[^a-z0-9]/g, '');
 
         return (
           cNic === normalizedNewNic || 
           cleanCNic === cleanNewNic ||
-          cNic.replace(/[^a-z0-9]/g, '') === normalizedNewNic.replace(/[^a-z0-9]/g, '') ||
-          cleanCNic.replace(/[^a-z0-9]/g, '') === cleanNewNic.replace(/[^a-z0-9]/g, '')
+          (newNicDigits.length >= 4 && (cNicDigits === newNicDigits || cleanCDigits === newNicDigits))
         );
       })
     : null;
@@ -385,7 +402,7 @@ export function CustomerSelectionModal({
       toast.error('Address is required');
       return;
     }
-    const cleanNicInput = newNic.trim().toUpperCase();
+    const cleanNicInput = normalizeNationalId(newNic.trim());
     const hasAnyKyc = Boolean(kycFront || kycBack || kycSign);
     if (!hasAnyKyc) {
       toast.info('Registering customer profile (KYC photos can be uploaded anytime)');

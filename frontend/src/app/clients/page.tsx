@@ -1,6 +1,6 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { getBranchSearchTerms, normalizeBranchId, isNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, isNationalId, normalizeNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -544,11 +544,14 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
 
       const headers = getAuthHeaders({ 'x-branch-id': branchToSave });
 
+      const normNic = normalizeNationalId(nic);
       const res = await fetch(url, {
         method,
         headers,
         body: JSON.stringify({ 
-          nic, 
+          nic: normNic, 
+          national_id: normNic,
+          nationalId: normNic,
           firstName, // Name with Initials
           lastName: '.',
           phone: formattedPhone,
@@ -803,18 +806,37 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
       const qDigits = q.replace(/[^a-z0-9]/g, '');
+      const qNumbers = q.replace(/\D/g, '');
       const rawNic = String(client.national_id || client.nationalId || '').toLowerCase();
       const cleanNic = (client.display_national_id || stripBranchPrefix(rawNic)).toLowerCase();
+      const rawNicDigits = rawNic.replace(/[^a-z0-9]/g, '');
+      const cleanNicDigits = cleanNic.replace(/[^a-z0-9]/g, '');
+      const rawNicNumbers = rawNic.replace(/\D/g, '');
+      const cleanNicNumbers = cleanNic.replace(/\D/g, '');
       const rawPhone = String(client.phone || '').toLowerCase();
       const phoneDigits = rawPhone.replace(/\D/g, '');
+      const firstName = (client.first_name || client.firstName || '').toLowerCase();
+      const lastName = (client.last_name || client.lastName || '').toLowerCase();
+      const fullName = `${firstName} ${lastName}`.trim();
+      const qWords = q.split(/\s+/).filter(Boolean);
+
+      const wordsMatch = qWords.length > 1 && qWords.every(w =>
+        fullName.includes(w) ||
+        rawNic.includes(w) ||
+        cleanNic.includes(w) ||
+        (client.address || '').toLowerCase().includes(w) ||
+        phoneDigits.includes(w)
+      );
 
       return (
-        (client.first_name || client.firstName)?.toLowerCase().includes(q) ||
-        (client.last_name || client.lastName)?.toLowerCase().includes(q) ||
+        wordsMatch ||
+        fullName.includes(q) ||
+        firstName.includes(q) ||
+        lastName.includes(q) ||
         rawNic.includes(q) ||
         cleanNic.includes(q) ||
-        (qDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
-        (qDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(qDigits)) ||
+        (qDigits.length >= 3 && (rawNicDigits.includes(qDigits) || cleanNicDigits.includes(qDigits) || qDigits.includes(rawNicDigits) || qDigits.includes(cleanNicDigits))) ||
+        (qNumbers.length >= 3 && (rawNicNumbers.includes(qNumbers) || cleanNicNumbers.includes(qNumbers))) ||
         rawPhone.includes(q) ||
         (qDigits.length >= 3 && phoneDigits.includes(qDigits)) ||
         client.address?.toLowerCase().includes(q) ||

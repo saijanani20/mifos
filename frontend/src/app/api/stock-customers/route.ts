@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, isNationalId, formatBranchScopedId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, isNationalId, normalizeNationalId, formatBranchScopedId, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateClientsCache } from '@/app/api/clients/route';
 
 export const dynamic = 'force-dynamic';
@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     let effectiveNic = '';
     if (trimmedNic) {
       effectiveNic = isNationalId(trimmedNic)
-        ? trimmedNic.toUpperCase()
+        ? normalizeNationalId(trimmedNic)
         : formatBranchScopedId(trimmedNic, effectiveBranch);
     } else if (primaryBill) {
       effectiveNic = formatBranchScopedId(primaryBill, effectiveBranch);

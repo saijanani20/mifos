@@ -153,14 +153,44 @@ export function getBranchSearchTerms(branchId: string | null | undefined): strin
 }
 
 /**
+ * Normalizes an NIC to its canonical uppercase, space-stripped format.
+ * - Old format: e.g. "755381128 v" or "755381128-V" -> "755381128V"
+ * - New format: e.g. "1985 1234 5678" -> "198512345678"
+ * - Prefixed format: e.g. "KTW-755381128 v" -> "755381128V"
+ */
+export function normalizeNationalId(id: string | null | undefined): string {
+  if (!id) return '';
+  const stripped = stripBranchPrefix(id).trim();
+  // Remove all internal spaces, dashes, dots, underscores, slashes
+  const clean = stripped.replace(/[\s\-._/]+/g, '');
+  if (/^[0-9]{9}[vVxX]$/.test(clean)) {
+    return clean.toUpperCase();
+  }
+  if (/^[0-9]{12}$/.test(clean)) {
+    return clean;
+  }
+  // 9 numeric digits where user omitted the 'V' letter (e.g. 727501843)
+  if (/^[0-9]{9}$/.test(clean)) {
+    return `${clean}V`;
+  }
+  if (/^[0-9]{8}[vVxX]$/.test(clean)) {
+    return clean.toUpperCase();
+  }
+  return stripped;
+}
+
+/**
  * Checks if an identifier matches official Sri Lankan National Identity Card (NIC) formats:
- * - Old format: 9 digits followed by 'V' or 'X' (e.g. 851234567V)
- * - New format: 12 numeric digits (e.g. 198512345678)
+ * - Old format: 9 digits followed by 'V' or 'X' (e.g. 851234567V, "851234567 v", "851234567-V")
+ * - 9 digits numeric (teller omitted V/X, e.g. 727501843)
+ * - New format: 12 numeric digits (e.g. 198512345678, "1985 1234 5678")
+ * - 8 digits + V/X typo allowance
  */
 export function isNationalId(id: string | null | undefined): boolean {
   if (!id) return false;
-  const clean = id.trim();
-  return /^[0-9]{9}[vVxX]$/.test(clean) || /^[0-9]{12}$/.test(clean);
+  const stripped = stripBranchPrefix(id).trim();
+  const clean = stripped.replace(/[\s\-._/]+/g, '');
+  return /^[0-9]{9}[vVxX]?$/.test(clean) || /^[0-9]{12}$/.test(clean) || /^[0-9]{8}[vVxX]$/.test(clean);
 }
 
 /**
@@ -195,7 +225,7 @@ export function formatBranchScopedId(id: string | null | undefined, branchId: st
   
   // Real National ID cards are globally unique per person
   if (isNationalId(clean)) {
-    return clean.toUpperCase();
+    return normalizeNationalId(clean);
   }
 
   const normBranch = normalizeBranchId(branchId);

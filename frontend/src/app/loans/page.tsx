@@ -1,6 +1,6 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { getBranchSearchTerms, normalizeBranchId, isNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, isNationalId, normalizeNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -626,10 +626,13 @@ export default function PawnesPage() {
   }, []);
 
   // Resolve customer name, phone, and address when NIC/ID/phone/name is typed
+  const clientSearchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const handleClientIdChange = (val: string) => {
     setClientId(val);
     const cleanVal = val.toLowerCase().trim();
     const cleanValDigits = cleanVal.replace(/[^a-z0-9]/g, '');
+    const cleanValNumbers = cleanVal.replace(/\D/g, '');
     let matchedName = clientsMap[cleanVal] || (cleanValDigits ? clientsMap[cleanValDigits] : '') || '';
     let matchedClient: any = null;
 
@@ -637,18 +640,34 @@ export default function PawnesPage() {
       matchedClient = clientsList.find(c => {
         const rawNic = String(c.nationalId || c.national_id || c.nic || '').toLowerCase().trim();
         const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+        const rawNicDigits = rawNic.replace(/[^a-z0-9]/g, '');
+        const cleanNicDigits = cleanNic.replace(/[^a-z0-9]/g, '');
+        const rawNicNumbers = rawNic.replace(/\D/g, '');
+        const cleanNicNumbers = cleanNic.replace(/\D/g, '');
         const cid = String(c.id != null ? c.id : '').toLowerCase().trim();
         const phone = String(c.phone || c.mobile || '').replace(/\D/g, '');
         const rawPhone = String(c.phone || c.mobile || '').toLowerCase().trim();
         const fullName = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase().trim();
         const altName = String(c.name || '').toLowerCase().trim();
 
-        // 1. NIC match (raw, stripped of branch prefix, or alphanumeric normalized)
+        // 1. NIC match (raw, stripped of branch prefix, or alphanumeric normalized, or digit inclusion)
         const nicMatch = (
           (rawNic && rawNic === cleanVal) ||
           (cleanNic && cleanNic === cleanVal) ||
-          (cleanValDigits.length >= 4 && rawNic.replace(/[^a-z0-9]/g, '') === cleanValDigits) ||
-          (cleanValDigits.length >= 4 && cleanNic.replace(/[^a-z0-9]/g, '') === cleanValDigits)
+          (cleanValDigits.length >= 4 && (
+            rawNicDigits === cleanValDigits ||
+            cleanNicDigits === cleanValDigits ||
+            rawNicDigits.includes(cleanValDigits) ||
+            cleanNicDigits.includes(cleanValDigits) ||
+            cleanValDigits.includes(rawNicDigits) ||
+            cleanValDigits.includes(cleanNicDigits)
+          )) ||
+          (cleanValNumbers.length >= 4 && (
+            rawNicNumbers.includes(cleanValNumbers) ||
+            cleanNicNumbers.includes(cleanValNumbers) ||
+            cleanValNumbers.includes(rawNicNumbers) ||
+            cleanValNumbers.includes(cleanNicNumbers)
+          ))
         );
 
         // 2. ID match
@@ -656,14 +675,14 @@ export default function PawnesPage() {
 
         // 3. Phone match
         const phoneMatch = (
-          (cleanValDigits.length >= 7 && phone.includes(cleanValDigits)) ||
+          (cleanValNumbers.length >= 7 && phone.includes(cleanValNumbers)) ||
           (rawPhone && rawPhone.includes(cleanVal))
         );
 
         // 4. Name match
         const nameMatch = (
-          (fullName && (fullName === cleanVal || fullName.startsWith(cleanVal))) ||
-          (altName && (altName === cleanVal || altName.startsWith(cleanVal)))
+          (fullName && (fullName === cleanVal || fullName.startsWith(cleanVal) || fullName.includes(cleanVal))) ||
+          (altName && (altName === cleanVal || altName.startsWith(cleanVal) || altName.includes(cleanVal)))
         );
 
         return nicMatch || idMatch || phoneMatch || nameMatch;
@@ -680,6 +699,33 @@ export default function PawnesPage() {
       const address = matchedClient.address || matchedClient.addressLine1 || matchedClient.address_line1 || '';
       if (phone) setClientPhone(phone);
       if (address) setClientAddress(address);
+    } else if (cleanVal.length >= 3) {
+      if (clientSearchTimerRef.current) clearTimeout(clientSearchTimerRef.current);
+      clientSearchTimerRef.current = setTimeout(async () => {
+        try {
+          const headers = getAuthHeaders();
+          const res = await fetch(`/api/clients?search=${encodeURIComponent(cleanVal)}&minimal=true&fresh=true`, { headers });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              setClientsList(prev => {
+                const existingIds = new Set(prev.map(c => c.id));
+                const newItems = data.filter((d: any) => !existingIds.has(d.id));
+                return newItems.length > 0 ? [...newItems, ...prev] : prev;
+              });
+              const bestMatch = data[0];
+              const matchName = `${bestMatch.first_name || bestMatch.firstName || ''} ${bestMatch.last_name || bestMatch.lastName || ''}`.trim() || bestMatch.name || '';
+              if (matchName) {
+                setResolvedName(matchName);
+                if (bestMatch.phone) setClientPhone(bestMatch.phone);
+                if (bestMatch.address) setClientAddress(bestMatch.address);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Live loan client lookup notice:', e);
+        }
+      }, 300);
     }
     setShowSuggestions(true);
     setActiveSuggestion(0);
@@ -751,8 +797,11 @@ export default function PawnesPage() {
       const nameParts = inlineName.trim().split(' ');
       const firstName = nameParts[0] || '';
       const lastName  = nameParts.slice(1).join(' ') || '';
+      const normNic = normalizeNationalId(nicVal);
       const payload = {
-        nationalId: nicVal,
+        nationalId: normNic,
+        national_id: normNic,
+        nic: normNic,
         firstName,
         lastName,
         phone: inlinePhone.trim(),
@@ -785,18 +834,29 @@ export default function PawnesPage() {
       } catch {}
       toast.dismiss(toastId);
       // Auto-select the newly registered customer
-      setClientId(nicVal);
+      const finalDisplayNic = stripBranchPrefix(normNic) || normNic;
+      setClientId(finalDisplayNic);
       setResolvedName(inlineName.trim());
       setClientPhone(inlinePhone.trim());
       setClientAddress(inlineAddress.trim());
       setShowInlineReg(false);
       setShowSuggestions(false);
+
+      if (newClient && newClient.id) {
+        setClientsList(prev => [newClient, ...prev.filter(c => c.id !== newClient.id)]);
+        setClientsMap(prev => ({
+          ...prev,
+          [normNic.toLowerCase()]: inlineName.trim(),
+          [finalDisplayNic.toLowerCase()]: inlineName.trim()
+        }));
+      }
+
       // Transition to KYC photo step
       setNewClientId(newClient.id || '');
       setShowKycStep(true);
       setKycActiveTab('front');
-      // Refresh clients list in background
-      loadClients();
+      // Refresh clients list in background with fresh bypass
+      loadClients(true);
     } catch (err: any) {
       toast.error(err.message || 'Registration failed', { id: toastId });
     } finally {
@@ -1630,10 +1690,15 @@ export default function PawnesPage() {
                     onKeyDown={e => {
                       const typed = clientId.toLowerCase().trim();
                       const typedDigits = typed.replace(/[^a-z0-9]/g, '');
+                      const typedNumbers = typed.replace(/\D/g, '');
                       const suggestions = clientsList.filter(c => {
                         if (!typed) return false;
                         const rawNic = String(c.nationalId || c.national_id || c.nic || c.id || '').toLowerCase();
                         const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+                        const rawNicDigits = rawNic.replace(/[^a-z0-9]/g, '');
+                        const cleanNicDigits = cleanNic.replace(/[^a-z0-9]/g, '');
+                        const rawNicNumbers = rawNic.replace(/\D/g, '');
+                        const cleanNicNumbers = cleanNic.replace(/\D/g, '');
                         const cid = String(c.id != null ? c.id : '').toLowerCase();
                         const name = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase();
                         const altName = String(c.name || '').toLowerCase();
@@ -1642,12 +1707,12 @@ export default function PawnesPage() {
                         return (
                           rawNic.includes(typed) ||
                           cleanNic.includes(typed) ||
-                          (typedDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
-                          (typedDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                          (typedDigits.length >= 3 && (rawNicDigits.includes(typedDigits) || cleanNicDigits.includes(typedDigits))) ||
+                          (typedNumbers.length >= 3 && (rawNicNumbers.includes(typedNumbers) || cleanNicNumbers.includes(typedNumbers))) ||
                           cid.includes(typed) ||
                           name.includes(typed) ||
                           altName.includes(typed) ||
-                          (phone && typedDigits.length >= 3 && phone.includes(typedDigits))
+                          (phone && typedNumbers.length >= 3 && phone.includes(typedNumbers))
                         );
                       });
 
@@ -1674,10 +1739,15 @@ export default function PawnesPage() {
                   {(() => {
                     const typed = clientId.toLowerCase().trim();
                     const typedDigits = typed.replace(/[^a-z0-9]/g, '');
+                    const typedNumbers = typed.replace(/\D/g, '');
                     const suggestions = clientsList.filter(c => {
                       if (!typed) return false;
                       const rawNic = String(c.nationalId || c.national_id || c.nic || c.id || '').toLowerCase();
                       const cleanNic = stripBranchPrefix(rawNic).toLowerCase();
+                      const rawNicDigits = rawNic.replace(/[^a-z0-9]/g, '');
+                      const cleanNicDigits = cleanNic.replace(/[^a-z0-9]/g, '');
+                      const rawNicNumbers = rawNic.replace(/\D/g, '');
+                      const cleanNicNumbers = cleanNic.replace(/\D/g, '');
                       const cid = String(c.id != null ? c.id : '').toLowerCase();
                       const name = `${c.firstName || c.first_name || ''} ${c.lastName || c.last_name || ''}`.toLowerCase();
                       const altName = String(c.name || '').toLowerCase();
@@ -1686,12 +1756,12 @@ export default function PawnesPage() {
                       return (
                         rawNic.includes(typed) ||
                         cleanNic.includes(typed) ||
-                        (typedDigits.length >= 3 && rawNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
-                        (typedDigits.length >= 3 && cleanNic.replace(/[^a-z0-9]/g, '').includes(typedDigits)) ||
+                        (typedDigits.length >= 3 && (rawNicDigits.includes(typedDigits) || cleanNicDigits.includes(typedDigits))) ||
+                        (typedNumbers.length >= 3 && (rawNicNumbers.includes(typedNumbers) || cleanNicNumbers.includes(typedNumbers))) ||
                         cid.includes(typed) ||
                         name.includes(typed) ||
                         altName.includes(typed) ||
-                        (phone && typedDigits.length >= 3 && phone.includes(typedDigits))
+                        (phone && typedNumbers.length >= 3 && phone.includes(typedNumbers))
                       );
                     });
 

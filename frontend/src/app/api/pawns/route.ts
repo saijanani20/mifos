@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnReceiptSms } from '@/lib/sms';
-import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { invalidateClientsCache } from '@/app/api/clients/route';
 import { getSriLankaDate } from '@/lib/date-utils';
@@ -336,7 +336,7 @@ export async function POST(request: Request) {
     if (!isUUID(clientId)) {
       const trimmedId = String(clientId).trim();
       const isGovId = isNationalId(trimmedId);
-      const effectiveLookupId = isGovId ? trimmedId.toUpperCase() : formatBranchScopedId(trimmedId, targetBranchId);
+      const effectiveLookupId = isGovId ? normalizeNationalId(trimmedId) : formatBranchScopedId(trimmedId, targetBranchId);
       const cleanLookup = String(effectiveLookupId || '').replace(/[,()"]/g, '').trim();
       const cleanTrimmed = String(trimmedId || '').replace(/[,()"]/g, '').trim();
       const cleanBranch = String(targetBranchId || '').replace(/[,()"]/g, '').trim();
@@ -344,7 +344,7 @@ export async function POST(request: Request) {
       let existingClients = null;
       let snakeQuery = adminSupabase.from('clients').select('*');
       if (isGovId) {
-        snakeQuery = snakeQuery.eq('national_id', effectiveLookupId);
+        snakeQuery = snakeQuery.or(`national_id.eq."${cleanLookup}",national_id.ilike."%${cleanTrimmed}%"`);
       } else {
         snakeQuery = snakeQuery.or(`national_id.eq."${cleanLookup}",and(national_id.eq."${cleanTrimmed}",branch_id.eq."${cleanBranch}")`);
       }
@@ -355,7 +355,7 @@ export async function POST(request: Request) {
       } else {
         let camelQuery = adminSupabase.from('clients').select('*');
         if (isGovId) {
-          camelQuery = camelQuery.eq('nationalId', effectiveLookupId);
+          camelQuery = camelQuery.or(`nationalId.eq."${cleanLookup}",nationalId.ilike."%${cleanTrimmed}%"`);
         } else {
           camelQuery = camelQuery.or(`nationalId.eq."${cleanLookup}",and(nationalId.eq."${cleanTrimmed}",branchId.eq."${cleanBranch}")`);
         }

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, getBranchSearchTerms, isNationalId, formatBranchScopedId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, stripBranchPrefix } from '@/lib/branch-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,18 +70,34 @@ export async function GET(request: Request) {
         const rawQ = searchParam.trim();
         const cleanQ = rawQ.replace(/[,()"]/g, ' ');
         const digitsQ = rawQ.replace(/\D/g, '');
-        const clauses: string[] = [];
+        const normNic = normalizeNationalId(rawQ);
+        const alphanumericQ = rawQ.replace(/[^a-zA-Z0-9]/g, '');
+        const clauses = new Set<string>();
+
         if (cleanQ) {
-          clauses.push(`national_id.ilike.%${cleanQ}%`);
-          clauses.push(`first_name.ilike.%${cleanQ}%`);
-          clauses.push(`last_name.ilike.%${cleanQ}%`);
+          clauses.add(`national_id.ilike.%${cleanQ}%`);
+          clauses.add(`first_name.ilike.%${cleanQ}%`);
+          clauses.add(`last_name.ilike.%${cleanQ}%`);
+        }
+        if (normNic && normNic !== cleanQ) {
+          clauses.add(`national_id.ilike.%${normNic}%`);
+        }
+        if (alphanumericQ && alphanumericQ.length >= 3 && alphanumericQ !== cleanQ) {
+          clauses.add(`national_id.ilike.%${alphanumericQ}%`);
         }
         if (digitsQ && digitsQ.length >= 3) {
-          clauses.push(`phone.ilike.%${digitsQ}%`);
-          clauses.push(`national_id.ilike.%${digitsQ}%`);
+          clauses.add(`phone.ilike.%${digitsQ}%`);
+          clauses.add(`national_id.ilike.%${digitsQ}%`);
         }
-        if (clauses.length > 0) {
-          query = query.or(clauses.join(','));
+        // Support multi-word name searches (e.g. "Namali Priyanka")
+        const words = cleanQ.split(/\s+/).filter(w => w.length >= 2);
+        for (const w of words) {
+          clauses.add(`first_name.ilike.%${w}%`);
+          clauses.add(`last_name.ilike.%${w}%`);
+        }
+
+        if (clauses.size > 0) {
+          query = query.or(Array.from(clauses).join(','));
         }
       } else if (!isAll && branchTokens.length > 0) {
         // Only restrict by branch when NOT doing a specific customer search
@@ -245,7 +261,7 @@ export async function POST(request: Request) {
     // If it's a legacy book-era account / ticket ID (e.g. "3R 14543"), scope it to the branch ("KDW-3R 14543" vs "KIR-3R 14543")
     const isGovNic = isNationalId(trimmedNic);
     const effectiveNic = isGovNic 
-      ? trimmedNic.toUpperCase() 
+      ? normalizeNationalId(trimmedNic) 
       : formatBranchScopedId(trimmedNic, effectiveBranchId);
 
     // DUPLICATE PREVENTION:
@@ -255,10 +271,20 @@ export async function POST(request: Request) {
     const cleanBranchId = String(effectiveBranchId || '').replace(/[,()"]/g, '').trim();
     let existingClient = null;
     if (isGovNic) {
-      const { data: snakeGov } = await adminSupabase.from('clients').select('*').ilike('national_id', effectiveNic).limit(1).maybeSingle();
+      const { data: snakeGov } = await adminSupabase
+        .from('clients')
+        .select('*')
+        .or(`national_id.ilike.%${effectiveNic}%,national_id.ilike.%${cleanTrimmedNic}%`)
+        .limit(1)
+        .maybeSingle();
       existingClient = snakeGov;
       if (!existingClient) {
-        const { data: camelGov } = await adminSupabase.from('clients').select('*').ilike('nationalId', effectiveNic).limit(1).maybeSingle();
+        const { data: camelGov } = await adminSupabase
+          .from('clients')
+          .select('*')
+          .or(`nationalId.ilike.%${effectiveNic}%,nationalId.ilike.%${cleanTrimmedNic}%`)
+          .limit(1)
+          .maybeSingle();
         existingClient = camelGov;
       }
     } else {
@@ -302,6 +328,9 @@ export async function POST(request: Request) {
         nic_image: finalNicImage,
         signature_image: finalSigImage
       };
+      if (isGovNic && effectiveNic) {
+        snakeUpdateData.national_id = effectiveNic;
+      }
       
       const { data: updatedClient, error: updateErr } = await adminSupabase
         .from('clients')
@@ -324,6 +353,9 @@ export async function POST(request: Request) {
         nicImage: finalNicImage,
         signatureImage: finalSigImage
       };
+      if (isGovNic && effectiveNic) {
+        camelUpdateData.nationalId = effectiveNic;
+      }
 
       const { data: camelUpdatedClient } = await adminSupabase
         .from('clients')
