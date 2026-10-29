@@ -1,6 +1,6 @@
 'use client';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
-import { getBranchSearchTerms, normalizeBranchId, isNationalId, normalizeNationalId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, isNationalId, normalizeNationalId, stripBranchPrefix, extractNumericBillNo, isSameNumericBill } from '@/lib/branch-mapping';
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -1049,6 +1049,22 @@ export default function PawnesPage() {
           finalBillNo = `${billPrefix} ${cleanBill.substring(prefixUpper.length).trim()}`;
         } else {
           finalBillNo = `${billPrefix} ${cleanBill}`;
+        }
+      }
+
+      // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
+      const numericPart = extractNumericBillNo(finalBillNo);
+      if (numericPart) {
+        const dupPawn = (pawns || []).find((p: any) => {
+          if (editingPawn && p.id === editingPawn.id) return false;
+          return isSameNumericBill(p.bill_no || p.display_bill_no || p.description, finalBillNo);
+        });
+
+        if (dupPawn) {
+          toast.dismiss(toastId);
+          toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+          setIsSaving(false);
+          return;
         }
       }
 
@@ -2147,9 +2163,33 @@ export default function PawnesPage() {
                         value={billNo}
                         onChange={e => setBillNo(e.target.value)}
                         placeholder="E.g., 20743"
-                        className="h-10 bg-white rounded-xl font-mono font-bold text-xs"
+                        className={`h-10 bg-white rounded-xl font-mono font-bold text-xs ${
+                          (() => {
+                            const numPart = extractNumericBillNo(billNo);
+                            return numPart && (pawns || []).some((p: any) => 
+                              (!editingPawn || p.id !== editingPawn.id) &&
+                              isSameNumericBill(p.bill_no || p.display_bill_no || p.description, billNo)
+                            ) ? 'border-rose-500 text-rose-600 focus:ring-rose-500' : '';
+                          })()
+                        }`}
                       />
                     </div>
+                    {(() => {
+                      const numPart = extractNumericBillNo(billNo);
+                      if (!numPart) return null;
+                      const dupPawn = (pawns || []).find((p: any) => 
+                        (!editingPawn || p.id !== editingPawn.id) &&
+                        isSameNumericBill(p.bill_no || p.display_bill_no || p.description, billNo)
+                      );
+                      if (dupPawn) {
+                        return (
+                          <p className="text-rose-600 font-bold text-xs flex items-center gap-1 mt-1">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Duplicate Bill Number: Bill number {numPart} already exists in the system.
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, formatBranchScopedBillNo, stripBranchPrefix, getBranchSearchTerms } from '@/lib/branch-mapping';
+import { normalizeBranchId, formatBranchScopedBillNo, stripBranchPrefix, getBranchSearchTerms, extractNumericBillNo, isSameNumericBill } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -232,6 +232,45 @@ export async function PATCH(request: Request, context: any) {
     }
     if (body.periodMonths !== undefined) {
       updateObj.period_months = parseInt(body.periodMonths, 10) || 3;
+    }
+
+    if (billNo && String(billNo).trim() !== '' && String(billNo).trim() !== (existingPawn.bill_no || '').trim()) {
+      const numericPart = extractNumericBillNo(billNo);
+      if (numericPart) {
+        const { data: existingPawns } = await adminSupabase
+          .from('pawns')
+          .select('id, bill_no, description')
+          .neq('id', id)
+          .ilike('bill_no', `%${numericPart}%`)
+          .limit(20);
+
+        const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
+          isSameNumericBill(p.bill_no || p.description, billNo)
+        );
+
+        if (hasDuplicatePawn) {
+          return NextResponse.json({
+            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          }, { status: 400 });
+        }
+
+        const { data: existingStock } = await adminSupabase
+          .from('stock_items')
+          .select('id, bill_no')
+          .ilike('bill_no', `%${numericPart}%`)
+          .limit(20);
+
+        const hasDuplicateStock = (existingStock || []).some((s: any) => 
+          isSameNumericBill(s.bill_no, billNo)
+        );
+
+        if (hasDuplicateStock) {
+          return NextResponse.json({
+            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          }, { status: 400 });
+        }
+      }
+      updateObj.bill_no = formatBranchScopedBillNo(String(billNo).trim(), existingPawn.branch_id);
     }
 
     const { data, error } = await adminSupabase.from('pawns').update(updateObj).eq('id', id).select().single();

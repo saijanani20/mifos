@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { getBranchSearchTerms, normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { getBranchSearchTerms, normalizeBranchId, stripBranchPrefix, extractNumericBillNo, isSameNumericBill } from '@/lib/branch-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -107,6 +107,41 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Bill number is required' }, { status: 400 });
     }
 
+    const numericPart = extractNumericBillNo(bill_no);
+    if (numericPart) {
+      const { data: existingStock } = await adminSupabase
+        .from('stock_items')
+        .select('id, bill_no')
+        .ilike('bill_no', `%${numericPart}%`)
+        .limit(20);
+
+      const hasDuplicateStock = (existingStock || []).some((s: any) => 
+        isSameNumericBill(s.bill_no, bill_no)
+      );
+
+      if (hasDuplicateStock) {
+        return NextResponse.json({
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+        }, { status: 400 });
+      }
+
+      const { data: existingPawns } = await adminSupabase
+        .from('pawns')
+        .select('id, bill_no, description')
+        .ilike('bill_no', `%${numericPart}%`)
+        .limit(20);
+
+      const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
+        isSameNumericBill(p.bill_no || p.description, bill_no)
+      );
+
+      if (hasDuplicatePawn) {
+        return NextResponse.json({
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+        }, { status: 400 });
+      }
+    }
+
     const normBranch = normalizeBranchId(branch_id || request.headers.get('x-branch-id') || session?.branchId || 'HQ');
 
     const payload: any = {
@@ -171,6 +206,44 @@ export async function PUT(request: Request) {
 
     if (!id) {
       return NextResponse.json({ error: 'Stock item ID is required for update' }, { status: 400 });
+    }
+
+    if (bill_no !== undefined && bill_no) {
+      const numericPart = extractNumericBillNo(bill_no);
+      if (numericPart) {
+        const { data: existingStock } = await adminSupabase
+          .from('stock_items')
+          .select('id, bill_no')
+          .neq('id', id)
+          .ilike('bill_no', `%${numericPart}%`)
+          .limit(20);
+
+        const hasDuplicateStock = (existingStock || []).some((s: any) => 
+          isSameNumericBill(s.bill_no, bill_no)
+        );
+
+        if (hasDuplicateStock) {
+          return NextResponse.json({
+            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          }, { status: 400 });
+        }
+
+        const { data: existingPawns } = await adminSupabase
+          .from('pawns')
+          .select('id, bill_no, description')
+          .ilike('bill_no', `%${numericPart}%`)
+          .limit(20);
+
+        const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
+          isSameNumericBill(p.bill_no || p.description, bill_no)
+        );
+
+        if (hasDuplicatePawn) {
+          return NextResponse.json({
+            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          }, { status: 400 });
+        }
+      }
     }
 
     const updatePayload: any = {};

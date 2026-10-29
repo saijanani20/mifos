@@ -55,7 +55,7 @@ import { cn } from "@/lib/utils";
 import { WebBluetoothTransport } from "@/lib/bluetooth/WebBluetoothTransport";
 import { TsplAdapter } from "@/lib/bluetooth/TsplAdapter";
 import { EscPosAdapter } from "@/lib/bluetooth/EscPosAdapter";
-import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix, CANONICAL_BRANCHES } from "@/lib/branch-mapping";
+import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix, CANONICAL_BRANCHES, extractNumericBillNo, isSameNumericBill } from "@/lib/branch-mapping";
 import { getAuthHeaders } from "@/lib/getAuthHeaders";
 
 // Stock item abbreviations
@@ -1505,17 +1505,18 @@ function EndOfDayContent() {
     const finalBillNo = stripBranchPrefix(formatBillNo(billPrefix, billNo)).trim();
     console.log("[DEBUG] generated finalBillNo (strictly clean):", finalBillNo);
 
-    // Duplicate bill number check WITHIN THE SAME BRANCH (case-insensitive & trimmed)
-    const isDuplicateInBranch = stockItems.some(item => 
-      normalizeBranchId(item.branch_id) === normalizeBranchId(targetBranch) &&
-      stripBranchPrefix(item.bill_no).toLowerCase().trim() === stripBranchPrefix(finalBillNo).toLowerCase().trim() &&
-      (!isEditingActive || item.id !== selectedActiveItem?.id)
-    );
+    // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
+    const numericPart = extractNumericBillNo(finalBillNo);
+    if (numericPart) {
+      const duplicateItem = stockItems.find(item => 
+        isSameNumericBill(item.bill_no, finalBillNo) &&
+        (!isEditingActive || item.id !== selectedActiveItem?.id)
+      );
 
-    if (isDuplicateInBranch) {
-      const branchName = branches.find(b => b.id === targetBranch)?.name || targetBranch;
-      toast.error(`Bill Number "${finalBillNo}" already exists in ${branchName} branch! Duplicate bill numbers are not allowed within the same branch.`);
-      return;
+      if (duplicateItem) {
+        toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+        return;
+      }
     }
 
     const rawWeightInput = parseFloat(weight) || 0;
@@ -3512,22 +3513,9 @@ function EndOfDayContent() {
                       "h-11 border-slate-200 rounded-xl font-bold",
                       billPrefix ? (billPrefix.length > 2 ? "pl-16" : "pl-12") : "",
                       (() => {
-                        const modalTargetBranch = currentUser?.role === 'ADMIN' ? selectedAddBranch : (currentUser?.branchId || 'HQ');
-                        const formatBillNo = (prefix: string | null, rawNo: string) => {
-                          let clean = rawNo.trim();
-                          if (prefix) {
-                            if (clean.toUpperCase().startsWith(prefix.toUpperCase() + " ")) {
-                              clean = clean.substring(prefix.length + 1).trim();
-                            } else if (clean.toUpperCase().startsWith(prefix.toUpperCase())) {
-                              clean = clean.substring(prefix.length).trim();
-                            }
-                          }
-                          return prefix ? `${prefix} ${clean}` : clean;
-                        };
-                        const checkBill = formatBillNo(billPrefix, billNo);
-                        return billNo.trim() !== "" && modalTargetBranch && stockItems.some(item => 
-                          item.branch_id === modalTargetBranch &&
-                          item.bill_no.toLowerCase().trim() === checkBill.toLowerCase().trim() && 
+                        const numPart = extractNumericBillNo(billNo);
+                        return numPart && stockItems.some(item => 
+                          isSameNumericBill(item.bill_no, billNo) && 
                           (!isEditingActive || item.id !== selectedActiveItem?.id)
                         ) ? "border-rose-500 focus:ring-rose-500" : "";
                       })()
@@ -3535,29 +3523,16 @@ function EndOfDayContent() {
                   />
                 </div>
                 {(() => {
-                  const modalTargetBranch = currentUser?.role === 'ADMIN' ? selectedAddBranch : (currentUser?.branchId || 'HQ');
-                  const formatBillNo = (prefix: string | null, rawNo: string) => {
-                    let clean = rawNo.trim();
-                    if (prefix) {
-                      if (clean.toUpperCase().startsWith(prefix.toUpperCase() + " ")) {
-                        clean = clean.substring(prefix.length + 1).trim();
-                      } else if (clean.toUpperCase().startsWith(prefix.toUpperCase())) {
-                        clean = clean.substring(prefix.length).trim();
-                      }
-                    }
-                    return prefix ? `${prefix} ${clean}` : clean;
-                  };
-                  const checkBill = formatBillNo(billPrefix, billNo);
-                  const isDup = billNo.trim() !== "" && modalTargetBranch && stockItems.some(item => 
-                    item.branch_id === modalTargetBranch &&
-                    item.bill_no.toLowerCase().trim() === checkBill.toLowerCase().trim() && 
+                  const numPart = extractNumericBillNo(billNo);
+                  if (!numPart) return null;
+                  const duplicateItem = stockItems.find(item => 
+                    isSameNumericBill(item.bill_no, billNo) && 
                     (!isEditingActive || item.id !== selectedActiveItem?.id)
                   );
-                  if (isDup) {
-                    const bName = branches.find(b => b.id === modalTargetBranch)?.name || modalTargetBranch;
+                  if (duplicateItem) {
                     return (
                       <p className="text-rose-600 font-bold text-xs flex items-center gap-1 mt-1">
-                        <AlertCircle className="w-3.5 h-3.5" /> Duplicate Bill Number ({checkBill}) already exists in {bName} branch!
+                        <AlertCircle className="w-3.5 h-3.5" /> Duplicate Bill Number: Bill number {numPart} already exists in the system.
                       </p>
                     );
                   }

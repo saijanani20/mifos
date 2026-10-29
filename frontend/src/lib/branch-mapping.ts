@@ -248,3 +248,35 @@ export function formatBranchScopedBillNo(billNo: string | null | undefined, _bra
 export function getBillDisplayNumber(billNo: string | null | undefined): string {
   return stripBranchPrefix(billNo);
 }
+
+/**
+ * Extracts the numeric sequence from a bill number regardless of branch or loan prefix
+ * (e.g. "12R 1234" -> "1234", "6R 1234" -> "1234", "KDW-3R 14543" -> "14543", "3R31472" -> "31472")
+ */
+export function extractNumericBillNo(billNo: string | null | undefined): string {
+  if (!billNo) return '';
+  const clean = stripBranchPrefix(billNo).trim();
+  if (!clean) return '';
+  // Match optional prefix ending with a letter, optional separators, then the bill digits
+  const match = clean.match(/^([0-9]*[A-Za-z]+[-/_:]*)?\s*(\d+)/);
+  if (match && match[2]) {
+    return match[2].trim();
+  }
+  const fallback = clean.match(/\d+/);
+  return fallback ? fallback[0] : '';
+}
+
+/**
+ * Checks if two bill numbers share the same numeric part, regardless of their prefixes.
+ * (e.g. "12R 1234" and "6R 1234" -> true)
+ */
+export function isSameNumericBill(billA: string | null | undefined, billB: string | null | undefined): boolean {
+  const numA = extractNumericBillNo(billA);
+  const numB = extractNumericBillNo(billB);
+  if (!numA || !numB) return false;
+  if (numA === numB) return true;
+  // Also treat '0001' and '1' as identical numeric bills (ignore leading zeroes)
+  const normA = numA.replace(/^0+/, '') || '0';
+  const normB = numB.replace(/^0+/, '') || '0';
+  return normA === normB;
+}

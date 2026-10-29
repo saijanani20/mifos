@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
 import { sendFreeSms, buildPawnReceiptSms } from '@/lib/sms';
-import { normalizeBranchId, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix, extractNumericBillNo, isSameNumericBill } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { invalidateClientsCache } from '@/app/api/clients/route';
 import { getSriLankaDate } from '@/lib/date-utils';
@@ -445,6 +445,42 @@ export async function POST(request: Request) {
 
     if (!billNo || !String(billNo).trim()) {
       return NextResponse.json({ error: "Bill / Ticket Number is required" }, { status: 400 });
+    }
+
+    // Validate numeric bill uniqueness across all prefixes
+    const numericPart = extractNumericBillNo(billNo);
+    if (numericPart) {
+      const { data: existingPawns } = await adminSupabase
+        .from('pawns')
+        .select('id, bill_no, description')
+        .ilike('bill_no', `%${numericPart}%`)
+        .limit(20);
+
+      const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
+        isSameNumericBill(p.bill_no || p.description, billNo)
+      );
+
+      if (hasDuplicatePawn) {
+        return NextResponse.json({
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+        }, { status: 400 });
+      }
+
+      const { data: existingStock } = await adminSupabase
+        .from('stock_items')
+        .select('id, bill_no')
+        .ilike('bill_no', `%${numericPart}%`)
+        .limit(20);
+
+      const hasDuplicateStock = (existingStock || []).some((s: any) => 
+        isSameNumericBill(s.bill_no, billNo)
+      );
+
+      if (hasDuplicateStock) {
+        return NextResponse.json({
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+        }, { status: 400 });
+      }
     }
 
     // Format bill_no with branch prefix behind the scenes (e.g. "KDW-3R 14543")
