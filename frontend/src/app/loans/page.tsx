@@ -1053,18 +1053,21 @@ export default function PawnesPage() {
       }
 
       // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
-      const numericPart = extractNumericBillNo(finalBillNo);
-      if (numericPart) {
-        const dupPawn = (pawns || []).find((p: any) => {
-          if (editingPawn && p.id === editingPawn.id) return false;
-          return isSameNumericBill(p.bill_no || p.display_bill_no || p.description, finalBillNo);
-        });
+      const isChangingNumeric = !editingPawn || !isSameNumericBill(editingPawn.bill_no || editingPawn.display_bill_no || editingPawn.description, finalBillNo);
+      if (isChangingNumeric) {
+        const numericPart = extractNumericBillNo(finalBillNo);
+        if (numericPart) {
+          const dupPawn = (pawns || []).find((p: any) => {
+            if (editingPawn && p.id === editingPawn.id) return false;
+            return isSameNumericBill(p.bill_no || p.display_bill_no || p.description, finalBillNo);
+          });
 
-        if (dupPawn) {
-          toast.dismiss(toastId);
-          toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
-          setIsSaving(false);
-          return;
+          if (dupPawn) {
+            toast.dismiss(toastId);
+            toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+            setIsSaving(false);
+            return;
+          }
         }
       }
 
@@ -2166,7 +2169,8 @@ export default function PawnesPage() {
                         className={`h-10 bg-white rounded-xl font-mono font-bold text-xs ${
                           (() => {
                             const numPart = extractNumericBillNo(billNo);
-                            return numPart && (pawns || []).some((p: any) => 
+                            const isChanging = !editingPawn || !isSameNumericBill(editingPawn.bill_no || editingPawn.display_bill_no || editingPawn.description, billNo);
+                            return isChanging && numPart && (pawns || []).some((p: any) => 
                               (!editingPawn || p.id !== editingPawn.id) &&
                               isSameNumericBill(p.bill_no || p.display_bill_no || p.description, billNo)
                             ) ? 'border-rose-500 text-rose-600 focus:ring-rose-500' : '';
@@ -2175,6 +2179,8 @@ export default function PawnesPage() {
                       />
                     </div>
                     {(() => {
+                      const isChanging = !editingPawn || !isSameNumericBill(editingPawn.bill_no || editingPawn.display_bill_no || editingPawn.description, billNo);
+                      if (!isChanging) return null;
                       const numPart = extractNumericBillNo(billNo);
                       if (!numPart) return null;
                       const dupPawn = (pawns || []).find((p: any) => 

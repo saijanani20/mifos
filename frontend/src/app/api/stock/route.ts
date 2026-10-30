@@ -208,40 +208,54 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Stock item ID is required for update' }, { status: 400 });
     }
 
+    const { data: currentStockItem, error: fetchErr } = await adminSupabase
+      .from('stock_items')
+      .select('id, bill_no, branch_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !currentStockItem) {
+      return NextResponse.json({ error: 'Stock item not found' }, { status: 404 });
+    }
+
     if (bill_no !== undefined && bill_no) {
-      const numericPart = extractNumericBillNo(bill_no);
-      if (numericPart) {
-        const { data: existingStock } = await adminSupabase
-          .from('stock_items')
-          .select('id, bill_no')
-          .neq('id', id)
-          .ilike('bill_no', `%${numericPart}%`)
-          .limit(20);
+      const isNumericChanged = !isSameNumericBill(currentStockItem.bill_no, bill_no);
+      if (isNumericChanged) {
+        const numericPart = extractNumericBillNo(bill_no);
+        if (numericPart) {
+          const { data: existingStock } = await adminSupabase
+            .from('stock_items')
+            .select('id, bill_no')
+            .neq('id', id)
+            .ilike('bill_no', `%${numericPart}%`)
+            .limit(20);
 
-        const hasDuplicateStock = (existingStock || []).some((s: any) => 
-          isSameNumericBill(s.bill_no, bill_no)
-        );
+          const hasDuplicateStock = (existingStock || []).some((s: any) => 
+            isSameNumericBill(s.bill_no, bill_no)
+          );
 
-        if (hasDuplicateStock) {
-          return NextResponse.json({
-            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
-          }, { status: 400 });
-        }
+          if (hasDuplicateStock) {
+            return NextResponse.json({
+              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+            }, { status: 400 });
+          }
 
-        const { data: existingPawns } = await adminSupabase
-          .from('pawns')
-          .select('id, bill_no, description')
-          .ilike('bill_no', `%${numericPart}%`)
-          .limit(20);
+          const { data: existingPawns } = await adminSupabase
+            .from('pawns')
+            .select('id, bill_no, description')
+            .ilike('bill_no', `%${numericPart}%`)
+            .limit(20);
 
-        const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
-          isSameNumericBill(p.bill_no || p.description, bill_no)
-        );
+          const hasDuplicatePawn = (existingPawns || []).some((p: any) => 
+            !isSameNumericBill(p.bill_no || p.description, currentStockItem.bill_no) &&
+            isSameNumericBill(p.bill_no || p.description, bill_no)
+          );
 
-        if (hasDuplicatePawn) {
-          return NextResponse.json({
-            error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
-          }, { status: 400 });
+          if (hasDuplicatePawn) {
+            return NextResponse.json({
+              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+            }, { status: 400 });
+          }
         }
       }
     }

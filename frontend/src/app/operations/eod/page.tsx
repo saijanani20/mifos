@@ -1506,16 +1506,19 @@ function EndOfDayContent() {
     console.log("[DEBUG] generated finalBillNo (strictly clean):", finalBillNo);
 
     // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
-    const numericPart = extractNumericBillNo(finalBillNo);
-    if (numericPart) {
-      const duplicateItem = stockItems.find(item => 
-        isSameNumericBill(item.bill_no, finalBillNo) &&
-        (!isEditingActive || item.id !== selectedActiveItem?.id)
-      );
+    const isChangingNumeric = !isEditingActive || !selectedActiveItem || !isSameNumericBill(selectedActiveItem.bill_no, finalBillNo);
+    if (isChangingNumeric) {
+      const numericPart = extractNumericBillNo(finalBillNo);
+      if (numericPart) {
+        const duplicateItem = stockItems.find(item => 
+          (!isEditingActive || item.id !== selectedActiveItem?.id) &&
+          isSameNumericBill(item.bill_no, finalBillNo)
+        );
 
-      if (duplicateItem) {
-        toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
-        return;
+        if (duplicateItem) {
+          toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+          return;
+        }
       }
     }
 
@@ -3514,20 +3517,23 @@ function EndOfDayContent() {
                       billPrefix ? (billPrefix.length > 2 ? "pl-16" : "pl-12") : "",
                       (() => {
                         const numPart = extractNumericBillNo(billNo);
-                        return numPart && stockItems.some(item => 
-                          isSameNumericBill(item.bill_no, billNo) && 
-                          (!isEditingActive || item.id !== selectedActiveItem?.id)
+                        const isChanging = !isEditingActive || !selectedActiveItem || !isSameNumericBill(selectedActiveItem.bill_no, billNo);
+                        return isChanging && numPart && stockItems.some(item => 
+                          (!isEditingActive || item.id !== selectedActiveItem?.id) &&
+                          isSameNumericBill(item.bill_no, billNo)
                         ) ? "border-rose-500 focus:ring-rose-500" : "";
                       })()
                     )}
                   />
                 </div>
                 {(() => {
+                  const isChanging = !isEditingActive || !selectedActiveItem || !isSameNumericBill(selectedActiveItem.bill_no, billNo);
+                  if (!isChanging) return null;
                   const numPart = extractNumericBillNo(billNo);
                   if (!numPart) return null;
                   const duplicateItem = stockItems.find(item => 
-                    isSameNumericBill(item.bill_no, billNo) && 
-                    (!isEditingActive || item.id !== selectedActiveItem?.id)
+                    (!isEditingActive || item.id !== selectedActiveItem?.id) &&
+                    isSameNumericBill(item.bill_no, billNo)
                   );
                   if (duplicateItem) {
                     return (
