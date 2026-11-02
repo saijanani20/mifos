@@ -1505,18 +1505,21 @@ function EndOfDayContent() {
     const finalBillNo = stripBranchPrefix(formatBillNo(billPrefix, billNo)).trim();
     console.log("[DEBUG] generated finalBillNo (strictly clean):", finalBillNo);
 
-    // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
+    // Duplicate numeric bill number validation within current branch
     const isChangingNumeric = !isEditingActive || !selectedActiveItem || !isSameNumericBill(selectedActiveItem.bill_no, finalBillNo);
     if (isChangingNumeric) {
       const numericPart = extractNumericBillNo(finalBillNo);
       if (numericPart) {
-        const duplicateItem = stockItems.find(item => 
-          (!isEditingActive || item.id !== selectedActiveItem?.id) &&
-          isSameNumericBill(item.bill_no, finalBillNo)
-        );
+        const targetBranch = normalizeBranchId(selectedBranch || 'HQ');
+        const duplicateItem = stockItems.find(item => {
+          if (isEditingActive && item.id === selectedActiveItem?.id) return false;
+          const iBranch = normalizeBranchId(item.branch_id || item.branch || '');
+          if (targetBranch !== 'ALL' && iBranch && iBranch !== targetBranch) return false;
+          return isSameNumericBill(item.bill_no, finalBillNo);
+        });
 
         if (duplicateItem) {
-          toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+          toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in ${targetBranch} branch.`);
           return;
         }
       }

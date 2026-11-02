@@ -17,7 +17,7 @@ export async function GET(request: Request, context: any) {
     if (isUUID(id)) {
       query = query.eq('id', id);
     } else {
-      const sessBranch = session?.branchId ? normalizeBranchId(session.branchId) : null;
+      const sessBranch = session?.branchId ? normalizeBranchId(session?.branchId) : null;
       if (sessBranch && sessBranch !== 'HQ') {
         const scoped = formatBranchScopedBillNo(id, sessBranch);
         query = query.or(`bill_no.eq.${id},bill_no.eq.${scoped}`);
@@ -239,10 +239,14 @@ export async function PATCH(request: Request, context: any) {
       if (isNumericChanged) {
         const numericPart = extractNumericBillNo(billNo);
         if (numericPart) {
+          const targetBranch = normalizeBranchId(existingPawn.branch_id || session?.branchId || 'HQ');
+          const branchTerms = getBranchSearchTerms(targetBranch);
+
           const { data: existingPawns } = await adminSupabase
             .from('pawns')
-            .select('id, bill_no, description')
+            .select('id, bill_no, description, branch_id')
             .neq('id', id)
+            .in('branch_id', branchTerms)
             .ilike('bill_no', `%${numericPart}%`)
             .limit(20);
 
@@ -252,13 +256,14 @@ export async function PATCH(request: Request, context: any) {
 
           if (hasDuplicatePawn) {
             return NextResponse.json({
-              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in ${targetBranch} branch.`
             }, { status: 400 });
           }
 
           const { data: existingStock } = await adminSupabase
             .from('stock_items')
-            .select('id, bill_no')
+            .select('id, bill_no, branch_id')
+            .in('branch_id', branchTerms)
             .ilike('bill_no', `%${numericPart}%`)
             .limit(20);
 
@@ -269,7 +274,7 @@ export async function PATCH(request: Request, context: any) {
 
           if (hasDuplicateStock) {
             return NextResponse.json({
-              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+              error: `Duplicate Bill Number: Bill number ${numericPart} already exists in ${targetBranch} branch.`
             }, { status: 400 });
           }
         }

@@ -447,12 +447,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Bill / Ticket Number is required" }, { status: 400 });
     }
 
-    // Validate numeric bill uniqueness across all prefixes
+    // Validate numeric bill uniqueness within the same branch only
     const numericPart = extractNumericBillNo(billNo);
     if (numericPart) {
+      const branchTerms = getBranchSearchTerms(targetBranchId);
+
       const { data: existingPawns } = await adminSupabase
         .from('pawns')
-        .select('id, bill_no, description')
+        .select('id, bill_no, description, branch_id')
+        .in('branch_id', branchTerms)
         .ilike('bill_no', `%${numericPart}%`)
         .limit(20);
 
@@ -462,13 +465,14 @@ export async function POST(request: Request) {
 
       if (hasDuplicatePawn) {
         return NextResponse.json({
-          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in ${targetBranchId} branch.`
         }, { status: 400 });
       }
 
       const { data: existingStock } = await adminSupabase
         .from('stock_items')
-        .select('id, bill_no')
+        .select('id, bill_no, branch_id')
+        .in('branch_id', branchTerms)
         .ilike('bill_no', `%${numericPart}%`)
         .limit(20);
 
@@ -478,7 +482,7 @@ export async function POST(request: Request) {
 
       if (hasDuplicateStock) {
         return NextResponse.json({
-          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`
+          error: `Duplicate Bill Number: Bill number ${numericPart} already exists in ${targetBranchId} branch.`
         }, { status: 400 });
       }
     }

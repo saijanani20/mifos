@@ -1052,19 +1052,22 @@ export default function PawnesPage() {
         }
       }
 
-      // Duplicate numeric bill number validation regardless of prefix (unique across all prefixes)
+      // Duplicate numeric bill number validation within current branch
       const isChangingNumeric = !editingPawn || !isSameNumericBill(editingPawn.bill_no || editingPawn.display_bill_no || editingPawn.description, finalBillNo);
       if (isChangingNumeric) {
         const numericPart = extractNumericBillNo(finalBillNo);
         if (numericPart) {
+          const effectiveTargetBranch = normalizeBranchId(editingPawn?.branch_id || editingPawn?.branchId || branchId || 'HQ');
           const dupPawn = (pawns || []).find((p: any) => {
             if (editingPawn && p.id === editingPawn.id) return false;
+            const pBranch = normalizeBranchId(p.branch_id || p.branchId || '');
+            if (effectiveTargetBranch !== 'ALL' && pBranch && pBranch !== effectiveTargetBranch) return false;
             return isSameNumericBill(p.bill_no || p.display_bill_no || p.description, finalBillNo);
           });
 
           if (dupPawn) {
             toast.dismiss(toastId);
-            toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in the system.`);
+            toast.error(`Duplicate Bill Number: Bill number ${numericPart} already exists in ${effectiveTargetBranch} branch.`);
             setIsSaving(false);
             return;
           }
@@ -2183,14 +2186,17 @@ export default function PawnesPage() {
                       if (!isChanging) return null;
                       const numPart = extractNumericBillNo(billNo);
                       if (!numPart) return null;
-                      const dupPawn = (pawns || []).find((p: any) => 
-                        (!editingPawn || p.id !== editingPawn.id) &&
-                        isSameNumericBill(p.bill_no || p.display_bill_no || p.description, billNo)
-                      );
+                      const targetBranch = normalizeBranchId(editingPawn?.branch_id || editingPawn?.branchId || branchId || 'HQ');
+                      const dupPawn = (pawns || []).find((p: any) => {
+                        if (editingPawn && p.id === editingPawn.id) return false;
+                        const pBranch = normalizeBranchId(p.branch_id || p.branchId || '');
+                        if (targetBranch !== 'ALL' && pBranch && pBranch !== targetBranch) return false;
+                        return isSameNumericBill(p.bill_no || p.display_bill_no || p.description, billNo);
+                      });
                       if (dupPawn) {
                         return (
                           <p className="text-rose-600 font-bold text-xs flex items-center gap-1 mt-1">
-                            <AlertTriangle className="w-3.5 h-3.5" /> Duplicate Bill Number: Bill number {numPart} already exists in the system.
+                            <AlertTriangle className="w-3.5 h-3.5" /> Duplicate Bill Number: Bill number {numPart} already exists in {targetBranch} branch.
                           </p>
                         );
                       }
