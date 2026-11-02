@@ -538,7 +538,14 @@ export async function POST(request: Request) {
     }
 
     // 3. Insert pawn collateral items into pawn_items and a single consolidated stock_item (Option 1)
-    const baseBill = stripBranchPrefix(scopedBillNo || billNo || pawnId.substring(0, 8).toUpperCase()).trim();
+    let cleanBillNo = stripBranchPrefix(billNo || '').trim();
+    if (!cleanBillNo || cleanBillNo.startsWith('REC-') || cleanBillNo.startsWith('TEMP-')) {
+      const descMatch = (description || '').match(/^([A-Za-z0-9]+\s+[0-9A-Za-z]+)\s*\|?\s*(.*)/);
+      if (descMatch && descMatch[1]) {
+        cleanBillNo = stripBranchPrefix(descMatch[1].trim());
+      }
+    }
+    const baseBill = (cleanBillNo || stripBranchPrefix(scopedBillNo || '') || pawnId.substring(0, 8).toUpperCase()).trim();
 
     if (Array.isArray(items) && items.length > 0) {
       const pawnItemsPayload = items.map((item: any) => {
@@ -607,12 +614,30 @@ export async function POST(request: Request) {
         created_at: pawnCreatedAt
       };
 
-      const { error: stockErr } = await adminSupabase
+      let { error: stockErr } = await adminSupabase
         .from('stock_items')
         .upsert([singleStockPayload], { onConflict: 'branch_id, bill_no' });
 
       if (stockErr) {
-        console.warn("Could not upsert matching vault stock item:", stockErr.message);
+        console.warn("Could not upsert matching vault stock item, retrying with fallback:", stockErr.message);
+        const { data: existingStock } = await adminSupabase
+          .from('stock_items')
+          .select('id')
+          .eq('branch_id', targetBranchId)
+          .eq('bill_no', baseBill)
+          .maybeSingle();
+
+        if (existingStock) {
+          await adminSupabase.from('stock_items').update({
+            item_type: singleStockPayload.item_type,
+            weight: singleStockPayload.weight,
+            price: singleStockPayload.price,
+            status: 'Active',
+            date: pawnDate
+          }).eq('id', existingStock.id);
+        } else {
+          await adminSupabase.from('stock_items').insert([singleStockPayload]);
+        }
       }
     } else {
       // Single default collateral item when items array is empty (guarantees pawn_items is NEVER missing)
@@ -640,8 +665,19 @@ export async function POST(request: Request) {
       }
 
       // Single default stock item
-      const defaultCode = (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || 'CH');
-      const { error: singleStockErr } = await adminSupabase.from('stock_items').upsert([{
+      let defaultCode = (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || '');
+      if (!defaultCode) {
+        const d = (description || '').toUpperCase();
+        if (d.includes('RING') || d.includes('මුදුව') || d.includes('මුද්ද')) defaultCode = 'PR';
+        else if (d.includes('CHAIN') || d.includes('මාලය')) defaultCode = 'CH';
+        else if (d.includes('PENDANT') || d.includes('පෙන්ඩන්ට්')) defaultCode = 'PP';
+        else if (d.includes('EARRING') || d.includes('කරාබු')) defaultCode = 'EAR';
+        else if (d.includes('BRACELET') || d.includes('බ්‍රේස්ලට්')) defaultCode = 'BRC';
+        else if (d.includes('BANGLE') || d.includes('වළලු')) defaultCode = 'PB';
+        else defaultCode = 'CH';
+      }
+
+      const singleStockPayload = {
         id: crypto.randomUUID(),
         bill_no: baseBill,
         branch_id: targetBranchId,
@@ -651,9 +687,29 @@ export async function POST(request: Request) {
         status: 'Active',
         date: pawnDate,
         created_at: pawnCreatedAt
-      }], { onConflict: 'branch_id, bill_no' });
+      };
+
+      let { error: singleStockErr } = await adminSupabase.from('stock_items').upsert([singleStockPayload], { onConflict: 'branch_id, bill_no' });
       if (singleStockErr) {
-        console.warn("Could not insert matching vault stock item:", singleStockErr.message);
+        console.warn("Could not insert matching vault stock item, retrying with fallback:", singleStockErr.message);
+        const { data: existingStock } = await adminSupabase
+          .from('stock_items')
+          .select('id')
+          .eq('branch_id', targetBranchId)
+          .eq('bill_no', baseBill)
+          .maybeSingle();
+
+        if (existingStock) {
+          await adminSupabase.from('stock_items').update({
+            item_type: singleStockPayload.item_type,
+            weight: singleStockPayload.weight,
+            price: singleStockPayload.price,
+            status: 'Active',
+            date: pawnDate
+          }).eq('id', existingStock.id);
+        } else {
+          await adminSupabase.from('stock_items').insert([singleStockPayload]);
+        }
       }
     }
 

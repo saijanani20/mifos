@@ -294,16 +294,34 @@ export async function PATCH(request: Request, context: any) {
       }
       if (totWeight > 0) stockUpdate.weight = totWeight;
       if (itemType) stockUpdate.item_type = itemType;
+      const cleanTargetBill = stripBranchPrefix(billNo ? billNo.trim() : oldBillNo);
       if (billNo && billNo.trim() !== oldBillNo) {
-        stockUpdate.bill_no = formatBranchScopedBillNo(billNo.trim(), existingPawn.branch_id);
+        stockUpdate.bill_no = cleanTargetBill;
       }
       
       if (Object.keys(stockUpdate).length > 0) {
-        let stockQuery = adminSupabase.from('stock_items').update(stockUpdate).eq('bill_no', oldBillNo);
-        if (existingPawn.branch_id) {
-          stockQuery = stockQuery.eq('branch_id', existingPawn.branch_id);
+        const { data: existingStock } = await adminSupabase
+          .from('stock_items')
+          .select('id')
+          .eq('branch_id', existingPawn.branch_id)
+          .or(`bill_no.eq.${oldBillNo},bill_no.eq.${cleanTargetBill}`)
+          .maybeSingle();
+
+        if (existingStock) {
+          await adminSupabase.from('stock_items').update(stockUpdate).eq('id', existingStock.id);
+        } else {
+          // If pawn was missing in stock_items, auto-create it now
+          await adminSupabase.from('stock_items').insert([{
+            id: crypto.randomUUID(),
+            bill_no: cleanTargetBill,
+            branch_id: existingPawn.branch_id,
+            item_type: stockUpdate.item_type || 'CH',
+            weight: stockUpdate.weight || totWeight || 0,
+            price: stockUpdate.price || parseFloat(appraisedValue) || parseFloat(disbursedAmount) || 0,
+            status: 'Active',
+            date: new Date().toISOString().split('T')[0]
+          }]);
         }
-        await stockQuery;
         try {
           await invalidateBranchInventoryCache(existingPawn.branch_id);
         } catch (cErr) {
