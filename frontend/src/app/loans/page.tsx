@@ -334,10 +334,22 @@ export default function PawnesPage() {
   const getBillNo = (pawn: any) => {
     if (!pawn) return '—';
     if (pawn.display_bill_no && String(pawn.display_bill_no).trim()) return String(pawn.display_bill_no).trim();
-    if (pawn.bill_no && String(pawn.bill_no).trim()) return stripBranchPrefix(String(pawn.bill_no).trim());
+
+    const rawBill = pawn.bill_no ? String(pawn.bill_no).trim() : '';
+    const isPlaceholder = !rawBill || rawBill.startsWith('REC-') || rawBill.startsWith('TEMP-');
+
+    // If description has a real bill number prefix (e.g. "1R 0101 | Chain (0.61mg)"), prioritize it over placeholder
     const desc = String(pawn.description || '');
     const match = desc.match(/^([A-Za-z0-9]+\s+[0-9A-Za-z]+)\s*\|?\s*(.*)/);
+    if (match && match[1]) {
+      const descBill = stripBranchPrefix(match[1].trim());
+      if (isPlaceholder || !rawBill) return descBill;
+    }
+
+    if (rawBill && !isPlaceholder) return stripBranchPrefix(rawBill);
     if (match && match[1]) return stripBranchPrefix(match[1].trim());
+    if (rawBill) return stripBranchPrefix(rawBill);
+
     const pid = String(pawn.id || '');
     return `#${pid.substring(0, 8).toUpperCase()}`;
   };
