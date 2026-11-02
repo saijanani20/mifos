@@ -3611,6 +3611,57 @@ function PawnDetailsModal({
     }
   };
 
+  // Standard Web / Desktop Print Handler for Pawn Bill
+  const handleStandardPrint = () => {
+    const printWindow = window.open('', '_blank', 'width=750,height=900');
+    if (!printWindow) {
+      toast.error('Popup blocked. Please allow popups to print.');
+      return;
+    }
+    const receiptElement = document.getElementById('printable-pawn-receipt');
+    if (!receiptElement) {
+      toast.error('Printable content not found.');
+      return;
+    }
+
+    // Clone element and replace any input values with static text for clean printing
+    const clone = receiptElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('input').forEach((input) => {
+      const span = document.createElement('span');
+      span.textContent = input.value;
+      span.className = input.className;
+      span.style.borderBottom = '1px solid #000';
+      span.style.padding = '0 4px';
+      input.parentNode?.replaceChild(span, input);
+    });
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8"/>
+        <title>Pawn Agreement Bill - ${billNo}</title>
+        <style>
+          @media print {
+            @page { size: auto; margin: 8mm; }
+            body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: white !important; margin: 0; padding: 0; }
+          }
+          body { font-family: 'Times New Roman', Times, serif; font-size: 12px; margin: 0 auto; max-width: 650px; padding: 15px; background: white; color: #000; }
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        ${clone.outerHTML}
+        <script>
+          setTimeout(() => { window.print(); window.close(); }, 500);
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
 
   return (
     <Dialog open={!!pawn} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -3632,6 +3683,14 @@ function PawnDetailsModal({
                 className="border-slate-700 text-slate-300 hover:bg-slate-800 text-xs font-bold px-3 py-1.5 rounded-xl"
               >
                 Reset Defaults
+              </Button>
+              <Button
+                onClick={handleStandardPrint}
+                type="button"
+                className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-xs uppercase tracking-wider px-4 py-2 rounded-xl flex items-center gap-1.5"
+              >
+                <Printer className="w-4 h-4" />
+                Web Print
               </Button>
               <Button
                 onClick={handleBluetoothPrint}

@@ -213,7 +213,7 @@ export async function PUT(request: Request) {
 
     const { data: currentStockItem, error: fetchErr } = await adminSupabase
       .from('stock_items')
-      .select('id, bill_no, branch_id')
+      .select('id, bill_no, branch_id, price')
       .eq('id', id)
       .maybeSingle();
 
@@ -290,6 +290,58 @@ export async function PUT(request: Request) {
     if (error) {
       console.error('[Stock PUT Error]:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Sync Pawn status if stock item is Withdrawn or Restored
+    try {
+      const targetBill = data.bill_no || currentStockItem?.bill_no;
+      const targetBranch = data.branch_id || currentStockItem?.branch_id;
+      if (targetBill && targetBranch) {
+        const branchTerms = getBranchSearchTerms(targetBranch);
+        const numericPart = extractNumericBillNo(targetBill);
+        
+        if (status === 'Withdrawn') {
+          // If reason is Pawn Redeemed (Closed), mark pawn as REDEEMED
+          const { data: matchedPawns } = await adminSupabase
+            .from('pawns')
+            .select('id, bill_no, status')
+            .in('branch_id', branchTerms)
+            .ilike('bill_no', `%${numericPart || targetBill}%`)
+            .eq('status', 'ACTIVE')
+            .limit(5);
+
+          const exactPawn = (matchedPawns || []).find((p: any) => isSameNumericBill(p.bill_no, targetBill));
+          if (exactPawn) {
+            await adminSupabase.from('pawns').update({
+              status: 'REDEEMED',
+              redeemed_at: withdrawal_date ? new Date(withdrawal_date).toISOString() : new Date().toISOString(),
+              redeemed_by: (session as any)?.profile?.name || session?.user?.email || 'Vault Cashier',
+              redeem_amount: currentStockItem?.price || data.price || 0
+            }).eq('id', exactPawn.id);
+          }
+        } else if (status === 'Active') {
+          // If restored to Active, restore pawn if it was REDEEMED
+          const { data: matchedPawns } = await adminSupabase
+            .from('pawns')
+            .select('id, bill_no, status')
+            .in('branch_id', branchTerms)
+            .ilike('bill_no', `%${numericPart || targetBill}%`)
+            .eq('status', 'REDEEMED')
+            .limit(5);
+
+          const exactPawn = (matchedPawns || []).find((p: any) => isSameNumericBill(p.bill_no, targetBill));
+          if (exactPawn) {
+            await adminSupabase.from('pawns').update({
+              status: 'ACTIVE',
+              redeemed_at: null,
+              redeemed_by: null,
+              redeem_amount: null
+            }).eq('id', exactPawn.id);
+          }
+        }
+      }
+    } catch (syncErr) {
+      console.warn('[Pawn status sync warning during stock update]:', syncErr);
     }
 
     return NextResponse.json({

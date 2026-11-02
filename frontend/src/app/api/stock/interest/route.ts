@@ -177,6 +177,62 @@ export async function POST(req: Request) {
           branchId: cleanBranch,
           details: insertedData
         });
+
+        // Record Transaction and General Ledger Double-Entry
+        try {
+          let clientId: string | null = null;
+          if (item_id) {
+            const { data: pawnMatch } = await adminSupabase.from('pawns').select('client_id').eq('id', item_id).maybeSingle();
+            if (pawnMatch?.client_id) clientId = pawnMatch.client_id;
+          }
+          if (!clientId && payload.bill_no) {
+            const { data: pawnMatch } = await adminSupabase.from('pawns').select('client_id').ilike('bill_no', `%${payload.bill_no}%`).limit(1).maybeSingle();
+            if (pawnMatch?.client_id) clientId = pawnMatch.client_id;
+          }
+
+          // 1. Transaction log
+          await adminSupabase.from('transaction').insert([{
+            id: crypto.randomUUID(),
+            client_id: clientId,
+            type: 'INTEREST_PAYMENT',
+            amount: numericValue,
+            description: `Pawn Interest Payment: Bill #${payload.bill_no} (${cleanBranch})`,
+            branch_id: cleanBranch,
+            timestamp: new Date().toISOString()
+          }]);
+
+          // 2. Balanced Double-Entry Journal Entry
+          const jeId = `JE-AUTO-INT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+          const dateStr = date || getSriLankaDate();
+          const { error: jeErr } = await adminSupabase.from('journal_entry').insert([{
+            id: jeId,
+            date: dateStr,
+            description: `Pawn Interest Collection - Bill #${payload.bill_no} (${cleanBranch})`,
+            reference: `INT-PAY-${payload.bill_no}`,
+            total_debit: numericValue,
+            total_credit: numericValue,
+            created_by: (session as any)?.profile?.name || session?.user?.email || 'Cashier'
+          }]);
+
+          if (!jeErr) {
+            await adminSupabase.from('journal_entry_line').insert([
+              {
+                journal_entry_id: jeId,
+                account_name: 'Vault Cash (Asset)',
+                debit: numericValue,
+                credit: 0
+              },
+              {
+                journal_entry_id: jeId,
+                account_name: 'Interest & Fee Income (Revenue)',
+                debit: 0,
+                credit: numericValue
+              }
+            ]);
+          }
+        } catch (glErr) {
+          console.warn('[Non-fatal GL/Transaction warning during interest payment]:', glErr);
+        }
       } catch (e: any) {
         console.error('[Exception during stock_interests insert]:', e);
         return NextResponse.json({ 

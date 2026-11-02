@@ -474,6 +474,76 @@ export default function InterestPaymentPage() {
     }
   };
 
+  // Standard Browser Print for Interest Payment Receipt
+  const handleBrowserPrint = (data: any) => {
+    if (!data) return;
+    const printWindow = window.open('', '_blank', 'width=450,height=650');
+    if (!printWindow) {
+      toast.error('Popup blocked. Please allow popups to print.');
+      return;
+    }
+    const fmt = (n: number) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8"/>
+        <title>Pawn Interest Receipt - ${data.receiptNo}</title>
+        <style>
+          @media print {
+            @page { size: 80mm auto; margin: 0; }
+            body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: white !important; margin: 0; padding: 10px; }
+          }
+          body { font-family: 'Courier New', monospace; font-size: 12px; width: 300px; margin: 0 auto; padding: 16px; background: white; color: #000; }
+          .center { text-align: center; }
+          .right { text-align: right; }
+          .bold { font-weight: bold; }
+          .sep { border-top: 1px dashed #000; margin: 8px 0; }
+          .row { display: flex; justify-space-between; margin-bottom: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="center bold" style="font-size: 14px;">RUPASINGHE TRUST</div>
+        <div class="center bold">INVESTMENTS LTD.</div>
+        <div class="center" style="font-size: 10px;">(PREV. L.S. RUPASINGHE PAWN BROKERS)</div>
+        <div class="center" style="font-size: 10px;">${data.branch || 'Dehiwala Head Office'} &bull; Tel: 011 7006588</div>
+        <div class="sep"></div>
+        <div class="center bold">** PAWN INTEREST RECEIPT **</div>
+        <div class="sep"></div>
+        <div class="row"><span>Receipt No: <strong>${data.receiptNo}</strong></span><span>Date: ${data.date}</span></div>
+        <div class="row"><span>Bill No: <strong>${data.billNo}</strong></span></div>
+        <div class="sep"></div>
+        <div>Customer: <strong>${data.customerName}</strong></div>
+        <div>NIC: <strong>${data.customerNic}</strong></div>
+        <div>Phone: ${data.customerPhone}</div>
+        <div class="sep"></div>
+        <div>Article: ${data.articleDescription}</div>
+        <div class="row"><span>Weight: ${data.weight}</span><span>Principal: Rs. ${fmt(data.principal)}</span></div>
+        <div class="sep"></div>
+        <div class="center bold" style="border: 2px solid #000; padding: 6px; margin: 8px 0;">
+          <div style="font-size: 10px;">INTEREST PAID</div>
+          <div style="font-size: 16px;">Rs. ${fmt(data.interestPaid)}</div>
+        </div>
+        <div class="row"><span>Period:</span><span>${data.paidPeriod}</span></div>
+        <div class="row"><span>Mode:</span><span>${data.paymentMode}</span></div>
+        <div class="row"><span>Total Paid Till:</span><span>Rs. ${fmt(data.totalPaidToDate)}</span></div>
+        <div class="row"><span>Cashier:</span><span>${data.cashier}</span></div>
+        <div class="sep"></div>
+        <div style="margin-top: 30px; display: flex; justify-content: space-between; font-size: 9px;" class="center">
+          <div><div>-------------------</div>Customer Signature</div>
+          <div><div>-------------------</div>Cashier Signature</div>
+        </div>
+        <div class="center" style="font-size: 9px; margin-top: 15px;">Thank you for transacting with Rupasinghe Trust!</div>
+        <script>
+          setTimeout(() => { window.print(); window.close(); }, 500);
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -1074,7 +1144,7 @@ export default function InterestPaymentPage() {
 
                 <Button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => handleBrowserPrint(activeReceiptData)}
                   variant="outline"
                   className="border-slate-700 bg-slate-950 text-white hover:bg-slate-800 text-xs font-bold h-11 rounded-xl gap-1.5"
                 >

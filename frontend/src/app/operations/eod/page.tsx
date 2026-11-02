@@ -536,7 +536,7 @@ function EndOfDayContent() {
   const [showAddInterestModal, setShowAddInterestModal] = useState(false);
   const [interestDate, setInterestDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [interestValue, setInterestValue] = useState<string>("");
-  const [interestBranch, setInterestBranch] = useState<string>("DMT");
+  const [interestBranch, setInterestBranch] = useState<string>("HQ");
   const [interestItemId, setInterestItemId] = useState<string>("");
   const [interestNotes, setInterestNotes] = useState<string>("");
   const [isSubmittingInterest, setIsSubmittingInterest] = useState(false);
@@ -642,7 +642,7 @@ function EndOfDayContent() {
       selectedBranchForCustomerView ||
       (selectedBranch !== 'ALL' ? selectedBranch : null) ||
       currentUser?.branchId ||
-      "DMT"
+      "HQ"
     );
     setInterestBranch(targetBranch);
     setInterestItemId(itemId || selectedStockItemForCustomerView?.id || "");
