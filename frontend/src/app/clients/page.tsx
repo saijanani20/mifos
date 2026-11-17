@@ -517,33 +517,12 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
       return;
     }
 
-    // Maker-Checker: Tellers must submit Customer Profile edits for Manager/Admin approval
-    if (editingClient && userRole === 'TELLER') {
-      const targetBranch = normalizeBranchId(
-        editingClient.branch_id || editingClient.branchId || branchId || 'HQ'
-      );
-      const normNic = normalizeNationalId(nic);
-      const refNic = stripBranchPrefix(
-        editingClient.national_id || editingClient.nationalId || normNic || firstName || 'CLIENT'
-      );
-      setIsOpen(false);
-      setClientChangeModal({
-        isOpen: true,
-        entityId: editingClient.id,
-        referenceNo: refNic,
-        branchId: targetBranch,
-        currentData: editingClient,
-        initialProposedData: {
-          first_name: firstName.trim(),
-          national_id: normNic,
-          phone: formattedPhone,
-          address: (address || '').trim(),
-        },
-      });
-      return;
+    // Allow employees (tellers, managers, admins) to directly update customer profile and upload/edit KYC documents
+    if (editingClient) {
+      // If updating an existing customer, allow optional or updated images; if none provided, preserve existing
     }
 
-    if (!nicFrontImage || !nicBackImage || !signatureImage) {
+    if (!editingClient && (!nicFrontImage || !nicBackImage || !signatureImage)) {
       toast.error("capture the pictures", {
         description: "Please capture NIC Front, NIC Back, and Signature pictures before proceeding."
       });
@@ -562,13 +541,30 @@ localStorage.setItem(CACHE_KEY, JSON.stringify(allCustomers));
 
       // Compress both NIC scans and signature to guarantee lightweight, safe payload
       const [compressedFront, compressedBack, compressedSign] = await Promise.all([
-        compressImage(nicFrontImage),
-        compressImage(nicBackImage),
-        compressImage(signatureImage)
+        nicFrontImage ? compressImage(nicFrontImage) : Promise.resolve(null),
+        nicBackImage ? compressImage(nicBackImage) : Promise.resolve(null),
+        signatureImage ? compressImage(signatureImage) : Promise.resolve(null)
       ]);
 
       // Serialize Front and Back NIC scan base64 frames into a single robust JSON payload string
-      const serializedNicImage = JSON.stringify({ front: compressedFront, back: compressedBack });
+      let serializedNicImage: string | undefined = undefined;
+      if (compressedFront || compressedBack) {
+        let existingFront = null;
+        let existingBack = null;
+        if (editingClient?.nic_image) {
+          try {
+            const parsed = JSON.parse(editingClient.nic_image);
+            existingFront = parsed.front || null;
+            existingBack = parsed.back || null;
+          } catch {
+            existingFront = editingClient.nic_image;
+          }
+        }
+        serializedNicImage = JSON.stringify({
+          front: compressedFront || existingFront,
+          back: compressedBack || existingBack
+        });
+      }
 
       // Guarantee effective operating branch is never empty or fallen back to HQ
       const rawUserBranch = typeof window !== 'undefined' ? localStorage.getItem('user_branch') : null;
