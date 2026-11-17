@@ -236,7 +236,7 @@ export default function PawnesPage() {
     { code: 'NL', label: 'Necklace' },
     { code: 'EAR', label: 'Earrings' },
     { code: 'BRC', label: 'Bracelet' },
-    { code: 'BKT', label: 'Bangles' },
+    { code: 'PB', label: 'Bangles' },
     { code: 'COIN', label: 'Gold Coin / Bar' },
     { code: 'OTHER', label: 'Other' }
   ];

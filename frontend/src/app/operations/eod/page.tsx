@@ -78,7 +78,6 @@ const ITEM_TYPES = [
   { code: 'DCH', name: 'Diamond Chain (DCH)' },
   { code: 'SPCH', name: 'Singapore Chain (SPCH)' },
   { code: 'VCH', name: 'V Chain (VCH)' },
-  { code: 'BKT', name: 'Biscuit (BKT)' },
   { code: 'COIN', name: 'Coin (COIN)' },
   { code: 'NA', name: 'Not Applicable (NA)' },
   { code: 'TS', name: 'Tassel (TS)' },
@@ -101,7 +100,7 @@ const normalizeItemToken = (rawToken: string): string => {
   }
 
   // 1. Check parenthesized item code e.g. (EAR), (PR), (CH), (PP)
-  const paren = clean.match(/\((EAR|PR|CH|PP|NL|BRC|PB|CR|WJ|BJ|ANK|DCH|SPCH|VCH|BKT|COIN|NA|TS|SPJ|BPR)\)/i);
+  const paren = clean.match(/\((EAR|PR|CH|PP|NL|BRC|PB|CR|WJ|BJ|ANK|DCH|SPCH|VCH|COIN|NA|TS|SPJ|BPR)\)/i);
   if (paren) {
     const code = paren[1].toUpperCase();
     return is18K ? `18K-${code}` : code;
@@ -2447,7 +2446,7 @@ function EndOfDayContent() {
     if (codeWithCount.includes(",")) {
       return codeWithCount.split(",").map(t => getItemName(t.trim())).filter(Boolean).join(" + ");
     }
-    if (codeWithCount === 'BLCT') return 'Biscuit (BKT)'; // Backward compatibility
+    if (codeWithCount === 'BLCT' || codeWithCount === 'BKT') return 'Bangle (PB)'; // Backward compatibility
     
     let is18K = false;
     let cleanCode = codeWithCount;
