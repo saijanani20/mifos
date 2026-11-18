@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import {
   AlertTriangle, ShieldAlert, Send, RefreshCcw, Search, Download, 
   Phone, User, Calendar, Clock, DollarSign, CheckCircle2, 
   X, Check, AlertCircle, FileSpreadsheet, Smartphone, Gavel,
-  Printer, Layers, Tag, Percent, RotateCcw, MessageSquare
+  Printer, Layers, Tag, Percent, RotateCcw, MessageSquare, FileText, Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CANONICAL_BRANCHES, normalizeBranchId } from '@/lib/branch-mapping';
@@ -57,13 +57,31 @@ export default function ForfeitureManagementPage() {
   const [forfeitNotes, setForfeitNotes] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Verify Admin Role on Mount
+  // Tab & Letter Printing states
+  const [activeTab, setActiveTab] = useState<'items' | 'letters'>('items');
+  const [letterSendingDate, setLetterSendingDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [letterFsDateOverride, setLetterFsDateOverride] = useState<string>('');
+  const [includeBackPage, setIncludeBackPage] = useState<boolean>(true);
+  const [printMode, setPrintMode] = useState<'report' | 'letters'>('report');
+  const [letterTargetIds, setLetterTargetIds] = useState<string[]>([]);
+  const [previewLetterItem, setPreviewLetterItem] = useState<any | null>(null);
+
+  // Verify Role on Mount (Admin, Manager, Teller)
   useEffect(() => {
     try {
       const stored = localStorage.getItem('user');
       if (stored) {
         const u = JSON.parse(stored);
         setCurrentUser(u);
+        const role = (u.role || u.user_metadata?.role || '').toUpperCase().trim();
+        const uBranch = u.branchId ? normalizeBranchId(u.branchId) : '';
+        if (role !== 'ADMIN' && uBranch && uBranch !== 'HQ' && uBranch !== 'ALL') {
+          setFilterBranch(uBranch);
+        }
+        const urlTab = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
+        if (role !== 'ADMIN' || urlTab === 'letters') {
+          setActiveTab('letters');
+        }
       }
     } catch (e) {
       console.error('Error loading stored user:', e);
@@ -72,11 +90,13 @@ export default function ForfeitureManagementPage() {
     }
   }, []);
 
-  const isAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const role = (currentUser.role || currentUser.user_metadata?.role || '').toUpperCase().trim();
-    return role === 'ADMIN';
+  const userRole = useMemo(() => {
+    if (!currentUser) return '';
+    return (currentUser.role || currentUser.user_metadata?.role || '').toUpperCase().trim();
   }, [currentUser]);
+
+  const isAdmin = userRole === 'ADMIN';
+  const canAccessForfeiture = ['ADMIN', 'MANAGER', 'TELLER'].includes(userRole);
 
   // Fetch Forfeiture Data
   const loadData = async (silent = false) => {
@@ -118,10 +138,10 @@ export default function ForfeitureManagementPage() {
   };
 
   useEffect(() => {
-    if (authChecked && isAdmin) {
+    if (authChecked && canAccessForfeiture) {
       loadData();
     }
-  }, [authChecked, isAdmin, filterBranch, filterSeverity, filterPeriod, filterBillTag, filterInterestStatus]);
+  }, [authChecked, canAccessForfeiture, filterBranch, filterSeverity, filterPeriod, filterBillTag, filterInterestStatus]);
 
   // Handle Search on Enter or filter change
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -588,14 +608,37 @@ Please settle immediately to avoid collateral forfeiture/auction.
     }
   };
 
-  // PDF Print Function
+  // PDF Print Function (FS Report)
   const handlePrintPdf = () => {
     if (displayedItems.length === 0) {
       toast.error('No items to print');
       return;
     }
-    window.print();
+    setPrintMode('report');
+    setTimeout(() => {
+      window.print();
+    }, 100);
   };
+
+  // Print Final Notice Letters (A4 Front + Back Tri-Fold)
+  const handlePrintLetters = (idsToPrint?: string[]) => {
+    const targetIds = idsToPrint && idsToPrint.length > 0 ? idsToPrint : selectedIds;
+    if (targetIds.length === 0) {
+      toast.error('Please select at least one bill to print.');
+      return;
+    }
+    setLetterTargetIds(targetIds);
+    setPrintMode('letters');
+    setTimeout(() => {
+      window.print();
+    }, 120);
+  };
+
+  const lettersToPrint = useMemo(() => {
+    if (letterTargetIds.length === 0) return [];
+    const idSet = new Set(letterTargetIds);
+    return items.filter(it => idSet.has(it.id));
+  }, [items, letterTargetIds]);
 
   const selectedWithPhoneCount = useMemo(() => {
     return items.filter(it => selectedIds.includes(it.id) && it.has_phone).length;
@@ -616,18 +659,18 @@ Please settle immediately to avoid collateral forfeiture/auction.
       .replace(/\{interest_paid\}/gi, parseFloat(firstItem.total_interest_paid || 0).toLocaleString());
   }, [items, selectedIds, displayedItems, bulkCustomTemplate]);
 
-  // Access Denied Screen for Non-Admin
-  if (authChecked && !isAdmin) {
+  // Access Denied Screen for Unauthorized Roles
+  if (authChecked && !canAccessForfeiture) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
         <div className="w-20 h-20 bg-rose-500/10 text-rose-600 rounded-3xl flex items-center justify-center border border-rose-500/20 mb-6 shadow-xl">
           <ShieldAlert className="w-10 h-10" />
         </div>
         <h1 className="text-3xl font-black text-slate-900 tracking-tight mb-2">
-          Admin Access Required
+          Access Denied
         </h1>
         <p className="text-slate-500 max-w-md text-sm mb-6 font-medium">
-          The Forfeited Stock (FS Items / සින්න වන භාණ්ඩ) management module and customer SMS dispatch controls are strictly reserved for Head Office Administrators.
+          The Forfeited Stock (FS Items / සින්න වන භාණ්ඩ) letters and management module is restricted to Branch Tellers, Managers, and Head Office Administrators.
         </p>
         <Button 
           onClick={() => router.push('/')}
@@ -688,6 +731,18 @@ Please settle immediately to avoid collateral forfeiture/auction.
             page-break-after: auto;
             break-after: auto;
           }
+          .letter-a4-page {
+            page-break-after: always;
+            break-after: page;
+            width: 100%;
+            min-height: 277mm;
+            box-sizing: border-box;
+            background: white !important;
+          }
+          .letter-a4-page:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
           .table-header-repeat {
             display: table-header-group;
           }
@@ -698,9 +753,124 @@ Please settle immediately to avoid collateral forfeiture/auction.
         }
       `}</style>
 
-      {/* PRINT AREA (Hidden in UI, Visible during window.print() in A4 Portrait grouped by Branch) */}
+      {/* PRINT AREA (Hidden in UI, Visible during window.print() in A4 Portrait) */}
       <div id="print-area" className="hidden">
-        {branchGroups.length === 0 ? (
+        {printMode === 'letters' ? (
+          lettersToPrint.length === 0 ? (
+            <div className="p-8 text-center text-sm font-bold text-slate-700">
+              No letters selected to print.
+            </div>
+          ) : (
+            lettersToPrint.map((item) => {
+              const fsDateStr =
+                letterFsDateOverride ||
+                item.effective_expiry_date ||
+                item.initial_maturity_date ||
+                '....................';
+              const sendingDateStr = letterSendingDate || '....................';
+              const branchDisplay = getBranchDisplayName(item.branch_id || 'HQ');
+              return (
+                <React.Fragment key={item.id}>
+                  {/* FRONT PAGE: අවසාන දැන්වීම */}
+                  <div
+                    className="letter-a4-page flex flex-col justify-between px-[22mm] py-[22mm]"
+                    style={{ color: '#8B1E2B', fontFamily: '"Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif' }}
+                  >
+                    <div>
+                      <h1 className="text-center text-[22px] font-bold underline underline-offset-8 tracking-wide mb-14">
+                        අවසාන දැන්වීම
+                      </h1>
+
+                      <div className="flex justify-end items-baseline gap-2 mb-8 text-[15px]">
+                        <span>දිනය :</span>
+                        <span className="inline-block min-w-[44mm] border-b border-dotted border-[#8B1E2B] text-center font-semibold pb-0.5 text-black">
+                          {sendingDateStr}
+                        </span>
+                      </div>
+
+                      <p className="text-[15px] mb-6">
+                        ප්‍රිය මහත්මයාණනි / මහත්මියනි,
+                      </p>
+
+                      <p className="text-[15px] leading-[2.35] text-justify indent-12">
+                        මෙහි පහත අංක සඳහන් රිසිට් පත්වලට අයත් රන් භාණ්ඩ{' '}
+                        <span className="inline-block min-w-[40mm] border-b border-dotted border-[#8B1E2B] text-center font-semibold px-2 text-black">
+                          {fsDateStr}
+                        </span>{' '}
+                        වන දිනට සින්නවී ඇත.{' '}
+                        <span className="inline-block min-w-[40mm] border-b border-dotted border-[#8B1E2B]">
+                          &nbsp;
+                        </span>{' '}
+                        වන දිනට ප්‍රථම පැමිණ පොලී ගෙවා අලුත් කිරීම හෝ නිදහස් කිරීම කළ යුතුව ඇත. එසේ නොවුණහොත් ඒවා{' '}
+                        <span className="inline-block min-w-[40mm] border-b border-dotted border-[#8B1E2B]">
+                          &nbsp;
+                        </span>{' '}
+                        වන දින විකුණන බව කණගාටුවෙන් දන්වමි. මෙයට ප්‍රථම ලිපි එවා ඇත. මේ අවසාන දැන්වීම බව කරුණාවෙන් සලකන්න.
+                      </p>
+
+                      <p className="text-center text-[15px] font-semibold mt-12">
+                        මෙම ලිපිය රැගෙන එන්න
+                      </p>
+                    </div>
+
+                    <div className="flex justify-between items-start pt-10 pb-6 text-[15px]">
+                      <div>
+                        <div className="underline underline-offset-4">රිසිට් අංක.</div>
+                        <div className="mt-4 font-mono font-bold text-[17px] text-black">
+                          {item.bill_no}
+                        </div>
+                      </div>
+                      <div className="text-left leading-relaxed pr-6">
+                        <div>මෙයට,</div>
+                        <div>විශ්වාස වූ</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* BACK PAGE: Tri-Fold Middle 1/3 Postal Address Panel */}
+                  {includeBackPage && (
+                    <div className="letter-a4-page flex flex-col justify-between px-[16mm] py-[8mm] text-black">
+                      {/* Top 1/3 panel (inside fold when sealed) */}
+                      <div className="h-[86mm]" />
+
+                      {/* Middle 1/3 panel (outer visible postal face when tri-folded) */}
+                      <div className="h-[92mm] flex flex-col justify-between py-4 px-4">
+                        <div className="flex justify-between items-start">
+                          <div className="text-[11px] leading-snug text-slate-700">
+                            <div className="font-bold uppercase tracking-wide text-black">
+                              From: Rupasinghe Capital
+                            </div>
+                            <div>{branchDisplay} Branch</div>
+                            <div className="font-mono text-[10px] text-slate-500 mt-0.5">
+                              Ref: {item.bill_no}
+                            </div>
+                          </div>
+                          {/* Top-right left open for postage stamp */}
+                          <div className="w-[24mm] h-[18mm]" />
+                        </div>
+
+                        <div className="pl-[48mm] pr-4 pb-3">
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                            To:
+                          </div>
+                          <div className="text-[17px] font-bold text-black leading-snug">
+                            {item.customer_name || 'Valued Customer'}
+                          </div>
+                          <div className="text-[14px] text-slate-900 leading-relaxed whitespace-pre-line mt-1">
+                            {item.customer_address || 'Address not on file'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom 1/3 panel */}
+                      <div className="h-[86mm]" />
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })
+          )
+        ) : branchGroups.length === 0 ? (
           <div className="p-8 text-center text-sm font-bold text-slate-700">
             No overdue items match the selected filter criteria.
           </div>
@@ -851,7 +1021,7 @@ Please settle immediately to avoid collateral forfeiture/auction.
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 border border-rose-300">
-                    Admin Only
+                    {isAdmin ? 'Admin' : `${filterBranch} Branch`}
                   </span>
                   <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 border border-amber-300">
                     සින්න වන භාණ්ඩ කළමනාකරණය
@@ -869,38 +1039,42 @@ Please settle immediately to avoid collateral forfeiture/auction.
 
           {/* Global Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto relative z-10">
-            <Button
-              onClick={handlePrintPdf}
-              variant="outline"
-              className="h-10 px-3.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 border-indigo-200 font-bold rounded-2xl shadow-sm text-xs"
-              title="Print official A4 PDF report"
-            >
-              <Printer className="w-4 h-4 mr-1.5" /> Print PDF
-            </Button>
+            {isAdmin && activeTab === 'items' && (
+              <>
+                <Button
+                  onClick={handlePrintPdf}
+                  variant="outline"
+                  className="h-10 px-3.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 border-indigo-200 font-bold rounded-2xl shadow-sm text-xs"
+                  title="Print official A4 PDF report"
+                >
+                  <Printer className="w-4 h-4 mr-1.5" /> Print PDF
+                </Button>
 
-            <Button
-              onClick={exportFsMarkedBranchExcel}
-              variant="outline"
-              className="h-10 px-3.5 bg-amber-600 hover:bg-amber-700 text-white border-amber-700 font-bold rounded-2xl shadow-sm text-xs"
-            >
-              <FileSpreadsheet className="w-4 h-4 mr-1.5" /> F/S Marked Excel (.xlsx)
-            </Button>
+                <Button
+                  onClick={exportFsMarkedBranchExcel}
+                  variant="outline"
+                  className="h-10 px-3.5 bg-amber-600 hover:bg-amber-700 text-white border-amber-700 font-bold rounded-2xl shadow-sm text-xs"
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5" /> F/S Marked Excel (.xlsx)
+                </Button>
 
-            <Button
-              onClick={exportToBranchExcel}
-              variant="outline"
-              className="h-10 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 font-bold rounded-2xl shadow-sm text-xs"
-            >
-              <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Branch Excel (.xlsx)
-            </Button>
+                <Button
+                  onClick={exportToBranchExcel}
+                  variant="outline"
+                  className="h-10 px-3.5 bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 font-bold rounded-2xl shadow-sm text-xs"
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-1.5" /> Branch Excel (.xlsx)
+                </Button>
 
-            <Button
-              onClick={exportToCSV}
-              variant="outline"
-              className="h-10 px-3.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 border-emerald-200 font-bold rounded-2xl shadow-sm text-xs"
-            >
-              <Download className="w-4 h-4 mr-1.5" /> Export CSV
-            </Button>
+                <Button
+                  onClick={exportToCSV}
+                  variant="outline"
+                  className="h-10 px-3.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 border-emerald-200 font-bold rounded-2xl shadow-sm text-xs"
+                >
+                  <Download className="w-4 h-4 mr-1.5" /> Export CSV
+                </Button>
+              </>
+            )}
 
             <Button
               onClick={() => loadData(true)}
@@ -912,7 +1086,7 @@ Please settle immediately to avoid collateral forfeiture/auction.
               Refresh
             </Button>
 
-            {selectedIds.length > 0 && (
+            {isAdmin && activeTab === 'items' && selectedIds.length > 0 && (
               <Button
                 onClick={openBulkSmsModal}
                 className="h-10 px-4 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-700 hover:to-rose-700 text-white font-bold rounded-2xl shadow-lg shadow-rose-600/20 text-xs animate-in zoom-in-95 duration-200"
@@ -921,7 +1095,47 @@ Please settle immediately to avoid collateral forfeiture/auction.
                 Customize &amp; Send SMS ({selectedIds.length})
               </Button>
             )}
+
+            {activeTab === 'letters' && selectedIds.length > 0 && (
+              <Button
+                onClick={() => handlePrintLetters()}
+                className="h-10 px-4 bg-gradient-to-r from-rose-700 to-amber-600 hover:from-rose-800 hover:to-amber-700 text-white font-bold rounded-2xl shadow-lg shadow-rose-600/20 text-xs animate-in zoom-in-95 duration-200"
+              >
+                <Printer className="w-4 h-4 mr-1.5" />
+                Print Selected Letters ({selectedIds.length})
+              </Button>
+            )}
           </div>
+        </div>
+
+        {/* Tab Switcher */}
+        <div className="flex flex-wrap items-center gap-2 bg-white/80 p-1.5 rounded-2xl border border-slate-200/80 shadow-sm w-fit">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('items')}
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'items'
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              FS Items &amp; SMS
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setActiveTab('letters')}
+            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
+              activeTab === 'letters'
+                ? 'bg-rose-700 text-white shadow-md'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Final Notice Letters (අවසාන දැන්වීම්)
+          </button>
         </div>
 
         {/* KPI Metrics Dashboard (6 Cards) */}
@@ -1043,7 +1257,7 @@ Please settle immediately to avoid collateral forfeiture/auction.
           <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
             
             {/* 1. Branch Filter */}
-            <Select value={filterBranch} onValueChange={(val) => setFilterBranch(val || 'ALL')}>
+            <Select value={filterBranch} onValueChange={(val) => setFilterBranch(val || 'ALL')} disabled={!isAdmin}>
               <SelectTrigger className="h-10 w-32 rounded-2xl bg-white border-slate-200 text-xs font-bold">
                 <SelectValue placeholder="Branch" />
               </SelectTrigger>
@@ -1138,7 +1352,8 @@ Please settle immediately to avoid collateral forfeiture/auction.
           </div>
         </div>
 
-        {/* Spacious, Full-Width Main FS Data Table */}
+        {activeTab === 'items' && isAdmin ? (
+        /* Spacious, Full-Width Main FS Data Table */
         <Card className="glass border-white/40 shadow-2xl rounded-3xl overflow-hidden">
           <CardContent className="p-0">
             <Table className="w-full">
@@ -1405,6 +1620,276 @@ Please settle immediately to avoid collateral forfeiture/auction.
               </Table>
           </CardContent>
         </Card>
+        ) : (
+          /* FINAL NOTICE LETTERS TAB (අවසාන දැන්වීම් - Admin, Manager, Branch Tellers) */
+          <div className="space-y-4">
+            {/* Letter Settings Bar */}
+            <div className="glass p-5 rounded-3xl border-white/40 shadow-xl bg-white/85 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">
+                    Sending Date (දිනය)
+                  </label>
+                  <Input
+                    type="date"
+                    value={letterSendingDate}
+                    onChange={(e) => setLetterSendingDate(e.target.value)}
+                    className="h-10 w-44 rounded-2xl bg-white border-slate-200 text-xs font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">
+                    FS Date Override (Optional)
+                  </label>
+                  <Input
+                    type="date"
+                    value={letterFsDateOverride}
+                    onChange={(e) => setLetterFsDateOverride(e.target.value)}
+                    className="h-10 w-44 rounded-2xl bg-white border-slate-200 text-xs font-bold"
+                    title="Leave empty to auto-fill each bill's own FS / maturity date"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 h-10 px-3.5 rounded-2xl bg-slate-50 border border-slate-200 cursor-pointer text-xs font-bold text-slate-700 select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeBackPage}
+                    onChange={(e) => setIncludeBackPage(e.target.checked)}
+                    className="rounded border-slate-300 text-rose-700 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span>Print Back Page (Name &amp; Address)</span>
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <Button
+                  type="button"
+                  onClick={() => handlePrintLetters()}
+                  disabled={selectedIds.length === 0}
+                  className="h-10 px-5 bg-gradient-to-r from-rose-700 to-amber-600 hover:from-rose-800 hover:to-amber-700 text-white font-bold rounded-2xl shadow-lg text-xs"
+                >
+                  <Printer className="w-4 h-4 mr-1.5" />
+                  Print Selected Letters ({selectedIds.length})
+                </Button>
+              </div>
+            </div>
+
+            {/* Letters Selection Table */}
+            <Card className="glass border-white/40 shadow-2xl rounded-3xl overflow-hidden">
+              <CardContent className="p-0">
+                <Table className="w-full">
+                  <TableHeader className="bg-slate-50/90 border-b border-slate-200">
+                    <TableRow>
+                      <TableHead className="w-12 text-center p-3">
+                        <input
+                          type="checkbox"
+                          checked={displayedItems.length > 0 && selectedIds.length === displayedItems.length}
+                          onChange={handleSelectAll}
+                          className="rounded border-slate-300 text-rose-700 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                        />
+                      </TableHead>
+                      <TableHead className="font-black text-xs text-slate-700 uppercase tracking-wider py-3.5 px-3 whitespace-nowrap">
+                        Bill &amp; Branch
+                      </TableHead>
+                      <TableHead className="font-black text-xs text-slate-700 uppercase tracking-wider py-3.5 px-3 min-w-[240px]">
+                        Customer &amp; Mailing Address
+                      </TableHead>
+                      <TableHead className="font-black text-xs text-slate-700 uppercase tracking-wider py-3.5 px-3 whitespace-nowrap">
+                        FS / Expiry Date
+                      </TableHead>
+                      <TableHead className="font-black text-xs text-slate-700 uppercase tracking-wider py-3.5 px-3 text-center whitespace-nowrap">
+                        Letter Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-48 text-center">
+                          <div className="flex flex-col items-center justify-center gap-3">
+                            <RefreshCcw className="w-7 h-7 text-rose-600 animate-spin" />
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                              Loading FS items for notice letters...
+                            </span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : displayedItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-48 text-center text-sm font-bold text-slate-500">
+                          No FS items match the selected filter criteria.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      displayedItems.map((item) => {
+                        const isChecked = selectedIds.includes(item.id);
+                        const fsDateStr =
+                          letterFsDateOverride ||
+                          item.effective_expiry_date ||
+                          item.initial_maturity_date ||
+                          'N/A';
+                        return (
+                          <TableRow key={item.id} className={isChecked ? 'bg-rose-50/40' : 'hover:bg-slate-50/70'}>
+                            <TableCell className="text-center p-3">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleToggleSelect(item.id)}
+                                className="rounded border-slate-300 text-rose-700 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                              />
+                            </TableCell>
+                            <TableCell className="py-3 px-3 whitespace-nowrap">
+                              <div className="font-mono font-black text-sm text-slate-900">{item.bill_no}</div>
+                              <div className="text-[10px] font-bold text-slate-500 uppercase">
+                                {getBranchDisplayName(item.branch_id)} ({item.branch_id})
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3 px-3">
+                              <div className="font-bold text-sm text-slate-900">{item.customer_name || 'Valued Customer'}</div>
+                              <div className="text-xs text-slate-600 mt-0.5">
+                                {item.customer_address || <span className="text-rose-600 font-semibold">No Address on File</span>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3 px-3 whitespace-nowrap">
+                              <span className="font-mono text-xs font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200">
+                                {fsDateStr}
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-3 px-3 text-center whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setPreviewLetterItem(item)}
+                                  className="h-8 px-2.5 bg-white hover:bg-slate-50 text-slate-700 border-slate-200 font-bold text-xs rounded-xl"
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-1" />
+                                  Preview
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handlePrintLetters([item.id])}
+                                  className="h-8 px-3 bg-rose-700 hover:bg-rose-800 text-white font-bold text-xs rounded-xl"
+                                >
+                                  <Printer className="w-3.5 h-3.5 mr-1" />
+                                  Print
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* LETTER PREVIEW MODAL */}
+        {previewLetterItem && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl border border-slate-100 max-h-[92vh] overflow-y-auto space-y-5">
+              <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Final Notice Letter Preview — {previewLetterItem.bill_no}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Front (A4 Sinhala Notice){includeBackPage ? ' + Back (Tri-Fold Address Panel)' : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => handlePrintLetters([previewLetterItem.id])}
+                    className="h-9 px-4 bg-rose-700 hover:bg-rose-800 text-white font-bold text-xs rounded-xl"
+                  >
+                    <Printer className="w-3.5 h-3.5 mr-1.5" />
+                    Print Letter
+                  </Button>
+                  <button
+                    onClick={() => setPreviewLetterItem(null)}
+                    className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-500"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Front Preview */}
+              <div
+                className="border border-slate-200 rounded-2xl p-8 bg-white shadow-inner"
+                style={{ color: '#8B1E2B', fontFamily: '"Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif' }}
+              >
+                <h2 className="text-center text-lg font-bold underline underline-offset-8 mb-8">
+                  අවසාන දැන්වීම
+                </h2>
+                <div className="flex justify-end items-baseline gap-2 mb-5 text-sm">
+                  <span>දිනය :</span>
+                  <span className="inline-block min-w-[140px] border-b border-dotted border-[#8B1E2B] text-center font-semibold text-black">
+                    {letterSendingDate || '....................'}
+                  </span>
+                </div>
+                <p className="text-sm mb-4">ප්‍රිය මහත්මයාණනි / මහත්මියනි,</p>
+                <p className="text-sm leading-[2.2] text-justify indent-8">
+                  මෙහි පහත අංක සඳහන් රිසිට් පත්වලට අයත් රන් භාණ්ඩ{' '}
+                  <span className="inline-block min-w-[120px] border-b border-dotted border-[#8B1E2B] text-center font-semibold text-black px-2">
+                    {letterFsDateOverride || previewLetterItem.effective_expiry_date || previewLetterItem.initial_maturity_date || '....................'}
+                  </span>{' '}
+                  වන දිනට සින්නවී ඇත.{' '}
+                  <span className="inline-block min-w-[120px] border-b border-dotted border-[#8B1E2B]">&nbsp;</span>{' '}
+                  වන දිනට ප්‍රථම පැමිණ පොලී ගෙවා අලුත් කිරීම හෝ නිදහස් කිරීම කළ යුතුව ඇත. එසේ නොවුණහොත් ඒවා{' '}
+                  <span className="inline-block min-w-[120px] border-b border-dotted border-[#8B1E2B]">&nbsp;</span>{' '}
+                  වන දින විකුණන බව කණගාටුවෙන් දන්වමි. මෙයට ප්‍රථම ලිපි එවා ඇත. මේ අවසාන දැන්වීම බව කරුණාවෙන් සලකන්න.
+                </p>
+                <p className="text-center text-sm font-semibold mt-7">මෙම ලිපිය රැගෙන එන්න</p>
+                <div className="flex justify-between items-start mt-8 text-sm">
+                  <div>
+                    <div className="underline underline-offset-4">රිසිට් අංක.</div>
+                    <div className="mt-2 font-mono font-bold text-black">{previewLetterItem.bill_no}</div>
+                  </div>
+                  <div className="pr-4">
+                    <div>මෙයට,</div>
+                    <div>විශ්වාස වූ</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Back Preview */}
+              {includeBackPage && (
+                <div className="border border-dashed border-slate-300 rounded-2xl p-6 bg-slate-50/70 text-black">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-3">
+                    Back Page — Middle 1/3 Tri-Fold Postal Panel
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between min-h-[140px]">
+                    <div className="flex justify-between items-start">
+                      <div className="text-[11px] text-slate-600">
+                        <div className="font-bold uppercase text-slate-900">From: Rupasinghe Capital</div>
+                        <div>{getBranchDisplayName(previewLetterItem.branch_id || 'HQ')} Branch</div>
+                        <div className="font-mono text-[10px] text-slate-400">Ref: {previewLetterItem.bill_no}</div>
+                      </div>
+                      <div className="border border-dashed border-slate-300 rounded px-2 py-1 text-[9px] text-slate-400 uppercase">
+                        Stamp
+                      </div>
+                    </div>
+                    <div className="pl-28 pt-4">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">To:</div>
+                      <div className="text-base font-bold text-slate-900">
+                        {previewLetterItem.customer_name || 'Valued Customer'}
+                      </div>
+                      <div className="text-xs text-slate-700 whitespace-pre-line mt-0.5">
+                        {previewLetterItem.customer_address || 'Address not on file'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* CUSTOMIZABLE SINGLE SMS MODAL */}
         {smsModalItem && (

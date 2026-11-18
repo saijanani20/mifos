@@ -116,6 +116,7 @@ const tellerNavItems = [
   { name: 'Pawning', href: '/loans', icon: Wallet },
   { name: 'Interest', href: '/finance/interest', icon: Percent },
   { name: 'Stock Management', href: '/operations/eod?tab=stock', icon: Package },
+  { name: 'FS Letters', href: '/operations/forfeiture?tab=letters', icon: FileText },
   { name: 'Daily ledger', href: '/accounting/ledger?tab=entry', icon: FileSpreadsheet },
   { name: 'Profile', href: '/profile', icon: User },
 ];
@@ -124,6 +125,7 @@ const managerNavItems = [
   { name: 'Approvals', href: '/operations/approvals', icon: CheckSquare },
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Pawn Review', href: '/loans', icon: Wallet },
+  { name: 'FS Letters', href: '/operations/forfeiture?tab=letters', icon: FileText },
   { name: 'Transactions', href: '/transactions', icon: ArrowRightLeft },
   { name: 'End-of-Day', href: '/operations/eod', icon: ShieldCheck },
 ];

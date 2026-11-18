@@ -66,16 +66,18 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized. Please log in.' }, { status: 401 });
     }
 
-    // Role Security: Strictly Admin-only
-    if (session.role !== 'ADMIN') {
+    // Role Security: Admin, Manager, and Branch Tellers (strictly branch-scoped for non-Admin)
+    if (!['ADMIN', 'MANAGER', 'TELLER'].includes(session.role)) {
       return NextResponse.json({ 
-        error: 'Access Denied: Only Administrators can view or manage Forfeited Stock (FS Items).' 
+        error: 'Access Denied: You do not have permission to view Forfeited Stock (FS Items).' 
       }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);
     const modeParam = (searchParams.get('mode') || '').toLowerCase();
-    const branchParam = searchParams.get('branch') || 'ALL';
+    const userBranch = session.branchId ? normalizeBranchId(session.branchId) : '';
+    const isHead = session.role === 'ADMIN' || userBranch === 'HQ' || userBranch === 'ALL' || !userBranch;
+    const branchParam = isHead ? (searchParams.get('branch') || 'ALL') : userBranch;
 
     // Mode: Return only items explicitly marked as Forfeited ('F/S') in stock_items
     if (modeParam === 'fs_marked') {
