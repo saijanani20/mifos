@@ -735,7 +735,9 @@ Please settle immediately to avoid collateral forfeiture/auction.
             page-break-after: always;
             break-after: page;
             width: 100%;
-            min-height: 277mm;
+            height: 268mm;
+            max-height: 268mm;
+            overflow: hidden;
             box-sizing: border-box;
             background: white !important;
           }
@@ -773,7 +775,7 @@ Please settle immediately to avoid collateral forfeiture/auction.
                 <React.Fragment key={item.id}>
                   {/* FRONT PAGE: අවසාන දැන්වීම */}
                   <div
-                    className="letter-a4-page flex flex-col justify-between px-[22mm] py-[22mm]"
+                    className="letter-a4-page flex flex-col justify-between px-[20mm] py-[18mm]"
                     style={{ color: '#8B1E2B', fontFamily: '"Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif' }}
                   >
                     <div>
@@ -829,12 +831,12 @@ Please settle immediately to avoid collateral forfeiture/auction.
 
                   {/* BACK PAGE: Tri-Fold Middle 1/3 Postal Address Panel */}
                   {includeBackPage && (
-                    <div className="letter-a4-page flex flex-col justify-between px-[16mm] py-[8mm] text-black">
+                    <div className="letter-a4-page flex flex-col justify-between px-[16mm] py-[6mm] text-black">
                       {/* Top 1/3 panel (inside fold when sealed) */}
-                      <div className="h-[86mm]" />
+                      <div className="h-[82mm]" />
 
                       {/* Middle 1/3 panel (outer visible postal face when tri-folded) */}
-                      <div className="h-[92mm] flex flex-col justify-between py-4 px-4">
+                      <div className="h-[88mm] flex flex-col justify-between py-3 px-4">
                         <div className="flex justify-between items-start">
                           <div className="text-[11px] leading-snug text-slate-700">
                             <div className="font-bold uppercase tracking-wide text-black">
@@ -853,17 +855,28 @@ Please settle immediately to avoid collateral forfeiture/auction.
                           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                             To:
                           </div>
-                          <div className="text-[17px] font-bold text-black leading-snug">
-                            {item.customer_name || 'Valued Customer'}
-                          </div>
-                          <div className="text-[14px] text-slate-900 leading-relaxed whitespace-pre-line mt-1">
-                            {item.customer_address || 'Address not on file'}
-                          </div>
+                          {item.customer_name && !['.', 'VALUED CUSTOMER', 'N/A'].includes(String(item.customer_name).trim().toUpperCase()) ? (
+                            <div className="text-[17px] font-bold text-black leading-snug">
+                              {item.customer_name}
+                            </div>
+                          ) : (
+                            <div className="w-[80mm] border-b border-dotted border-slate-600 h-6 mt-1" />
+                          )}
+                          {item.customer_address && !['.', 'N/A', 'NO ADDRESS'].includes(String(item.customer_address).trim().toUpperCase()) ? (
+                            <div className="text-[14px] text-slate-900 leading-relaxed whitespace-pre-line mt-1">
+                              {item.customer_address}
+                            </div>
+                          ) : (
+                            <div className="space-y-3 mt-2">
+                              <div className="w-[90mm] border-b border-dotted border-slate-600 h-6" />
+                              <div className="w-[90mm] border-b border-dotted border-slate-600 h-6" />
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {/* Bottom 1/3 panel */}
-                      <div className="h-[86mm]" />
+                      <div className="h-[82mm]" />
                     </div>
                   )}
                 </React.Fragment>
@@ -1877,12 +1890,23 @@ Please settle immediately to avoid collateral forfeiture/auction.
                     </div>
                     <div className="pl-28 pt-4">
                       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">To:</div>
-                      <div className="text-base font-bold text-slate-900">
-                        {previewLetterItem.customer_name || 'Valued Customer'}
-                      </div>
-                      <div className="text-xs text-slate-700 whitespace-pre-line mt-0.5">
-                        {previewLetterItem.customer_address || 'Address not on file'}
-                      </div>
+                      {previewLetterItem.customer_name && !['.', 'VALUED CUSTOMER', 'N/A'].includes(String(previewLetterItem.customer_name).trim().toUpperCase()) ? (
+                        <div className="text-base font-bold text-slate-900">
+                          {previewLetterItem.customer_name}
+                        </div>
+                      ) : (
+                        <div className="w-64 border-b border-dotted border-slate-500 h-5 mt-1" />
+                      )}
+                      {previewLetterItem.customer_address && !['.', 'N/A', 'NO ADDRESS'].includes(String(previewLetterItem.customer_address).trim().toUpperCase()) ? (
+                        <div className="text-xs text-slate-700 whitespace-pre-line mt-0.5">
+                          {previewLetterItem.customer_address}
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 mt-2">
+                          <div className="w-72 border-b border-dotted border-slate-500 h-5" />
+                          <div className="w-72 border-b border-dotted border-slate-500 h-5" />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
