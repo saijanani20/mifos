@@ -7,6 +7,7 @@ import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { invalidateClientsCache } from '@/app/api/clients/route';
 import { getSriLankaDate } from '@/lib/date-utils';
 import { syncClientAcrossModules } from '@/lib/cross-sync';
+import { inferGoldItemCodeFromText, resolvePawnItemCode } from '@/lib/gold-items';
 
 export const dynamic = 'force-dynamic';
 
@@ -677,7 +678,7 @@ export async function POST(request: Request) {
           itemMg = Math.round(itemGrams * 1000);
         }
         const itemAppraised = parseFloat(item.appraisedValue || item.appraised_value) || (finalAppraised / items.length);
-        const rawType = item.itemType || item.item_type || itemType || 'Gold';
+        const rawType = resolvePawnItemCode(item.itemType || item.item_type || itemType || 'CH', item.customType || item.description || description);
         const customText = item.customType || item.description || '';
         const itemTypeLabel = (rawType === 'OTHER' || rawType === 'Other') ? (customText || 'Other Gold Item') : rawType;
         const itemDescText = customText || itemTypeLabel;
@@ -711,7 +712,7 @@ export async function POST(request: Request) {
       const totalWeightGrams = pawnItemsPayload.reduce((sum: number, it: any) => sum + (it.weight_grams || 0), 0) || finalWeightGrams;
       
       const itemCodes = items.map((item: any) => {
-        const rawType = item.itemType || item.item_type || itemType || 'CH';
+        const rawType = resolvePawnItemCode(item.itemType || item.item_type || itemType || 'CH', item.customType || item.description || description);
         const is18K = item.purity === '18K' || String(item.purity || '').toUpperCase().startsWith('18');
         return (rawType === 'OTHER' || rawType === 'Other') 
           ? (item.customType || 'OTHER') 
@@ -758,15 +759,21 @@ export async function POST(request: Request) {
       }
     } else {
       // Single default collateral item when items array is empty (guarantees pawn_items is NEVER missing)
+      let defaultCode = resolvePawnItemCode(itemType, description);
+      if (!defaultCode || defaultCode === 'OTHER') {
+        defaultCode = (itemType === 'OTHER' || itemType === 'Other')
+          ? 'OTHER'
+          : (inferGoldItemCodeFromText(description || '') || 'CH');
+      }
       const singleItemPayload = {
         id: crypto.randomUUID(),
         pawn_id: pawnId,
-        item_type: (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || 'Gold'),
+        item_type: defaultCode,
         purity: '22K',
         weight_grams: finalWeightGrams,
         weight_mg: finalWeightMg,
         appraised_value: finalAppraised,
-        description: description || `${itemType || 'Gold'} Collateral (${baseBill})`
+        description: description || `${defaultCode || 'Gold'} Collateral (${baseBill})`
       };
 
       let { error: singleItemErr } = await adminSupabase.from('pawn_items').insert([singleItemPayload]);
@@ -779,19 +786,6 @@ export async function POST(request: Request) {
       if (singleItemErr) {
         await adminSupabase.from('pawns').delete().eq('id', pawnId);
         throw new Error(`Failed to save pawn collateral item: ${singleItemErr.message}`);
-      }
-
-      // Single default stock item
-      let defaultCode = (itemType === 'OTHER' || itemType === 'Other') ? 'OTHER' : (itemType || '');
-      if (!defaultCode) {
-        const d = (description || '').toUpperCase();
-        if (d.includes('RING') || d.includes('මුදුව') || d.includes('මුද්ද')) defaultCode = 'PR';
-        else if (d.includes('CHAIN') || d.includes('මාලය')) defaultCode = 'CH';
-        else if (d.includes('PENDANT') || d.includes('පෙන්ඩන්ට්')) defaultCode = 'PP';
-        else if (d.includes('EARRING') || d.includes('කරාබු')) defaultCode = 'EAR';
-        else if (d.includes('BRACELET') || d.includes('බ්‍රේස්ලට්')) defaultCode = 'BRC';
-        else if (d.includes('BANGLE') || d.includes('වළලු')) defaultCode = 'PB';
-        else defaultCode = 'CH';
       }
 
       const singleStockPayload = {

@@ -27,10 +27,16 @@ import { ItemEvaluationModal } from "@/components/ItemEvaluationModal"
 import { CustomerSelectionModal } from "@/components/CustomerSelectionModal"
 import ChangeRequestModal from "@/components/ChangeRequestModal"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { buildPawnReminderSms } from "@/lib/sms-templates"
 import { compressImage } from "@/lib/image-compression"
+import {
+  PAWN_ITEM_OPTIONS,
+  PAWN_ITEM_GROUPS,
+  resolvePawnItemCode,
+  matchesPawnCategoryFilter,
+} from "@/lib/gold-items"
 
 export default function PawnesPage() {
   const [isOpen, setIsOpen]       = useState(false);
@@ -229,17 +235,7 @@ export default function PawnesPage() {
 
   // Form state
   const BILL_PREFIXES = ['1R', '3M', '3R', '6R', '12R', '6M', 'A'];
-  const ITEM_OPTIONS = [
-    { code: 'CH', label: 'Chain' },
-    { code: 'PP', label: 'Pendant' },
-    { code: 'PR', label: 'Ring' },
-    { code: 'NL', label: 'Necklace' },
-    { code: 'EAR', label: 'Earrings' },
-    { code: 'BRC', label: 'Bracelet' },
-    { code: 'PB', label: 'Bangles' },
-    { code: 'COIN', label: 'Gold Coin / Bar' },
-    { code: 'OTHER', label: 'Other' }
-  ];
+  const ITEM_OPTIONS = PAWN_ITEM_OPTIONS;
 
   const handlePrefixChange = (pref: string) => {
     setBillPrefix(pref);
@@ -272,8 +268,10 @@ export default function PawnesPage() {
   const [itemsList, setItemsList] = useState<any[]>([
     { itemType: 'CH', purity: '22K', description: '', customType: '', weightMg: '', appraisedValue: '' }
   ]);
+  const [itemsTouched, setItemsTouched] = useState(false);
 
   const handleAddItem = () => {
+    setItemsTouched(true);
     setItemsList(prev => [
       ...prev,
       { itemType: 'CH', purity: '22K', description: '', customType: '', weightMg: '', appraisedValue: '' }
@@ -282,8 +280,10 @@ export default function PawnesPage() {
 
   const handleRemoveItem = (idx: number) => {
     if (itemsList.length <= 1) return;
+    setItemsTouched(true);
     setItemsList(prev => {
       const copy = prev.filter((_, i) => i !== idx);
+      setItemType(copy[0]?.itemType || 'CH');
       const totMg = copy.reduce((s, item) => s + (parseFloat(item.weightMg) || 0), 0);
       setWeightMg(totMg > 0 ? String(totMg) : '');
       const totAppraised = copy.reduce((s, item) => s + (parseFloat(item.appraisedValue) || 0), 0);
@@ -293,9 +293,13 @@ export default function PawnesPage() {
   };
 
   const handleUpdateItem = (idx: number, field: string, val: string) => {
+    setItemsTouched(true);
     setItemsList(prev => {
       const copy = [...prev];
       copy[idx] = { ...copy[idx], [field]: val };
+      if (idx === 0 && field === 'itemType') {
+        setItemType(val || 'CH');
+      }
 
       const totMg = copy.reduce((s, item) => s + (parseFloat(item.weightMg) || 0), 0);
       setWeightMg(totMg > 0 ? String(totMg) : '');
@@ -829,7 +833,8 @@ export default function PawnesPage() {
     setWeightGrams(''); setWeightMg('');
     setPawnDate(new Date().toISOString().split('T')[0]);
     setClientPhone(''); setClientAddress('');
-    setItemsList([{ itemType: 'CH', description: '', weightGrams: '', weightMg: '', appraisedValue: '' }]);
+    setItemsList([{ itemType: 'CH', purity: '22K', description: '', customType: '', weightMg: '', appraisedValue: '' }]);
+    setItemsTouched(false);
     setEditingPawn(null); setResolvedName(''); setShowSuggestions(false);
     setShowInlineReg(false); setInlineNic(''); setInlineName(''); setInlinePhone(''); setInlineAddress('');
     setShowKycStep(false); setNewClientId(''); setKycFront(null); setKycBack(null); setKycSign(null);
@@ -1118,6 +1123,36 @@ export default function PawnesPage() {
     setGoldWeight(wNum > 0 ? String(wNum) : '');
     setPeriodMonths(String(pawn.period_months || '3'));
 
+    if (Array.isArray(pawn.items) && pawn.items.length > 0) {
+      const parsedItems = pawn.items.map((it: any) => {
+        const code = resolvePawnItemCode(it.item_type, it.description || desc);
+        const isCustom = code === 'OTHER';
+        const rawMg = parseFloat(it.weight_mg) || (parseFloat(it.weight_grams) ? Math.round(parseFloat(it.weight_grams) * 1000) : 0);
+        return {
+          itemType: code,
+          purity: it.purity || '22K',
+          description: it.description || '',
+          customType: isCustom ? (it.item_type && it.item_type !== 'OTHER' ? String(it.item_type) : getCleanDescription(pawn)) : '',
+          weightMg: rawMg > 0 ? String(rawMg) : '',
+          appraisedValue: it.appraised_value ? String(it.appraised_value) : '',
+        };
+      });
+      setItemsList(parsedItems);
+      setItemType(parsedItems[0]?.itemType || 'CH');
+    } else {
+      const fallbackCode = resolvePawnItemCode(pawn.item_type, desc);
+      setItemsList([{
+        itemType: fallbackCode || 'CH',
+        purity: '22K',
+        description: '',
+        customType: fallbackCode === 'OTHER' ? getCleanDescription(pawn) : '',
+        weightMg: mgVal || (wNum > 0 ? String(Math.round(wNum * 1000)) : ''),
+        appraisedValue: '',
+      }]);
+      setItemType(fallbackCode || 'CH');
+    }
+    setItemsTouched(false);
+
     setAppraisal(String(pawn.disbursed_amount || pawn.appraised_value || ''));
     setAmount(String(pawn.disbursed_amount || ''));
     setIsOpen(true);
@@ -1128,6 +1163,21 @@ export default function PawnesPage() {
       toast.error('Missing required fields', { description: 'Please select a Customer and enter Disbursed Amount.' });
       return;
     }
+
+    const itemDescSummary = itemsList.map(i => {
+      const itemLabel = i.itemType === 'OTHER' 
+        ? (i.customType || i.description || 'Other Item') 
+        : (ITEM_OPTIONS.find(o => o.code === i.itemType)?.name || i.itemType);
+      return `${itemLabel}${i.weightMg ? ` (${i.weightMg}mg)` : ''}`;
+    }).filter(Boolean).join(', ');
+
+    const combinedStockItemType = itemsList.map(i => {
+      const rawCode = i.itemType || itemType || 'CH';
+      if (rawCode === 'OTHER') return i.customType || 'OTHER';
+      return String(i.purity || '').toUpperCase().startsWith('18') ? `18K-${rawCode}` : rawCode;
+    }).filter(Boolean).join(', ');
+
+    const primaryItemType = itemsList[0]?.itemType || itemType || 'CH';
 
     // Intercept Teller edit mutations to route through Change Request system
     if (editingPawn && userRole === 'TELLER') {
@@ -1143,13 +1193,15 @@ export default function PawnesPage() {
           finalBillNo = billPrefix ? `${billPrefix} ${cleanBill}` : cleanBill;
         }
       }
+      const crItemDesc = itemsTouched ? (itemDescSummary || description) : description;
       openChangeRequest(editingPawn, 'UPDATE', {
         bill_no: finalBillNo,
         disbursed_amount: amount,
         appraised_value: editingPawn.appraised_value || appraisal || amount,
         weight_grams: weightGrams,
         weight_mg: weightMg,
-        description: `${finalBillNo} | ${description}`.trim(),
+        description: `${finalBillNo} | ${crItemDesc}`.trim(),
+        ...(itemsTouched ? { item_type: combinedStockItemType } : {}),
         period_months: periodMonths
       });
       setIsOpen(false);
@@ -1210,14 +1262,9 @@ export default function PawnesPage() {
         }
       }
 
-      const itemDescSummary = itemsList.map(i => {
-        const itemLabel = i.itemType === 'OTHER' 
-          ? (i.customType || i.description || 'Other Item') 
-          : (ITEM_OPTIONS.find(o => o.code === i.itemType)?.label || i.itemType);
-        return `${itemLabel}${i.weightMg ? ` (${i.weightMg}mg)` : ''}`;
-      }).filter(Boolean).join(', ');
-
-      const itemDesc = description.trim() || itemDescSummary || `${goldPurity} Gold Collateral (${itemType})`;
+      const itemDesc = (!editingPawn || itemsTouched)
+        ? (itemDescSummary || description.trim() || `${goldPurity} Gold Collateral (${primaryItemType})`)
+        : (description.trim() || itemDescSummary || `${goldPurity} Gold Collateral (${primaryItemType})`);
       const fullDescription = finalBillNo ? `${finalBillNo} | ${itemDesc}` : itemDesc;
 
       // getAuthHeaders() automatically includes Authorization + x-branch-id from localStorage
@@ -1246,7 +1293,7 @@ export default function PawnesPage() {
           weightGrams,
           weightMg,
           periodMonths,
-          itemType,
+          ...((!editingPawn || itemsTouched) ? { itemType: editingPawn ? combinedStockItemType : primaryItemType } : {}),
           items: itemsList,
           date: pawnDate,
           airWeightPhoto: evaluationData?.airWeightPhoto || null,
@@ -1586,30 +1633,8 @@ export default function PawnesPage() {
       if (pStatus !== filterStatus.toUpperCase().trim()) return false;
     }
 
-    // 3. Item Description Filter
-    if (filterDescription && filterDescription !== 'ALL') {
-      const desc = String(p.description || '').toLowerCase();
-      const fDesc = filterDescription.toLowerCase().trim();
-      let descMatch = false;
-      if (fDesc === 'ring') {
-        descMatch = desc.includes('ring') || desc.includes('(pr)') || desc.includes('pr_') || desc.includes('pr-');
-      } else if (fDesc === 'chain') {
-        descMatch = desc.includes('chain');
-      } else if (fDesc === 'earrings') {
-        descMatch = desc.includes('ear') || desc.includes('earring');
-      } else if (fDesc === 'pendant') {
-        descMatch = desc.includes('pendant') || desc.includes('(pp)') || desc.includes('pp_') || desc.includes('pp-');
-      } else if (fDesc === 'bracelet') {
-        descMatch = desc.includes('bracelet') || desc.includes('(brc)') || desc.includes('brc_') || desc.includes('brc-');
-      } else if (fDesc === 'bangle') {
-        descMatch = desc.includes('bangle') || desc.includes('(bgl)') || desc.includes('bgl_');
-      } else if (fDesc === 'necklace') {
-        descMatch = desc.includes('necklace') || desc.includes('(nl)') || desc.includes('nl_');
-      } else {
-        descMatch = desc.includes(fDesc);
-      }
-      if (!descMatch) return false;
-    }
+    // 3. Item Description / Type Filter
+    if (!matchesPawnCategoryFilter(p, filterDescription)) return false;
 
     // 4. Search Query Filter
     if (!searchLower) return true;
@@ -1654,6 +1679,9 @@ export default function PawnesPage() {
     const clientName = (getCustomerName(p) || (pBranch ? clientsMap[`${pBranch}::${cleanId}`] : '') || clientsMap[cleanId] || p.clients?.first_name || p.clients?.firstName || p.clients?.name || '').toLowerCase();
     const clientPhone = String(p.clients?.phone || p.phone || '').toLowerCase();
     const description = String(p.description || '').toLowerCase();
+    const itemsSearch = Array.isArray(p.items)
+      ? p.items.map((it: any) => `${it.item_type || ''} ${it.description || ''}`).join(' ').toLowerCase()
+      : '';
     const id = String(p.id || '').toLowerCase();
     const branch = String(p.branch_id || p.branchId || '').toLowerCase();
     const status = String(p.status || '').toLowerCase();
@@ -1670,6 +1698,7 @@ export default function PawnesPage() {
       clientName.includes(searchLower) ||
       clientPhone.includes(searchLower) ||
       description.includes(searchLower) ||
+      itemsSearch.includes(searchLower) ||
       branch.includes(searchLower) ||
       status.includes(searchLower) ||
       id.includes(searchLower)
@@ -2436,6 +2465,21 @@ export default function PawnesPage() {
 
                   {itemsList.map((item, idx) => {
                     const isOther = item.itemType === 'OTHER';
+                    const renderItemLabel = (val: string | null) =>
+                      ITEM_OPTIONS.find(o => o.code === val)?.name || val || 'Select Item';
+                    const renderGoldItemGroups = () =>
+                      PAWN_ITEM_GROUPS.map(group => (
+                        <SelectGroup key={group.category}>
+                          <SelectLabel className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50/80 rounded">
+                            {group.category}
+                          </SelectLabel>
+                          {group.items.map(opt => (
+                            <SelectItem key={opt.code} value={opt.code} className="text-xs font-medium pl-3">
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ));
                     return (
                       <div key={idx} className="p-2.5 sm:p-2 bg-slate-50 border border-slate-200 rounded-xl space-y-2 transition-all">
                         {/* Mobile View (< sm) */}
@@ -2444,17 +2488,15 @@ export default function PawnesPage() {
                             <div className="flex-1">
                               <Select
                                 value={item.itemType || 'CH'}
-                                onValueChange={v => handleUpdateItem(idx, 'itemType', v)}
+                                onValueChange={v => handleUpdateItem(idx, 'itemType', v || 'CH')}
                               >
                                 <SelectTrigger className="h-9 bg-white border-slate-200 text-xs font-bold w-full">
-                                  <SelectValue placeholder="Select Item" />
+                                  <SelectValue placeholder="Select Item">
+                                    {renderItemLabel}
+                                  </SelectValue>
                                 </SelectTrigger>
-                                <SelectContent className="bg-white border-slate-200">
-                                  {ITEM_OPTIONS.map(opt => (
-                                    <SelectItem key={opt.code} value={opt.code} className="text-xs font-medium">
-                                      {opt.label}
-                                    </SelectItem>
-                                  ))}
+                                <SelectContent alignItemWithTrigger={false} className="bg-white border-slate-200 max-h-[260px] sm:max-h-[320px]">
+                                  {renderGoldItemGroups()}
                                 </SelectContent>
                               </Select>
                             </div>
@@ -2506,17 +2548,15 @@ export default function PawnesPage() {
                           <div className="col-span-5">
                             <Select
                               value={item.itemType || 'CH'}
-                              onValueChange={v => handleUpdateItem(idx, 'itemType', v)}
+                              onValueChange={v => handleUpdateItem(idx, 'itemType', v || 'CH')}
                             >
                               <SelectTrigger className="h-9 bg-white border-slate-200 text-xs font-bold w-full">
-                                <SelectValue placeholder="Select Item" />
+                                <SelectValue placeholder="Select Item">
+                                  {renderItemLabel}
+                                </SelectValue>
                               </SelectTrigger>
-                              <SelectContent className="bg-white border-slate-200">
-                                {ITEM_OPTIONS.map(opt => (
-                                  <SelectItem key={opt.code} value={opt.code} className="text-xs font-medium">
-                                    {opt.label}
-                                  </SelectItem>
-                                ))}
+                              <SelectContent alignItemWithTrigger={false} className="bg-white border-slate-200 max-h-[260px] sm:max-h-[320px]">
+                                {renderGoldItemGroups()}
                               </SelectContent>
                             </Select>
                           </div>
@@ -2830,13 +2870,24 @@ export default function PawnesPage() {
               className="h-11 w-full px-3 pr-8 bg-white/80 border border-slate-200 font-bold text-[11px] uppercase tracking-wider text-slate-700 rounded-xl shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none truncate"
             >
               <option value="ALL">All Items</option>
-              <option value="Ring">Ring (PR)</option>
-              <option value="Chain">Chain</option>
-              <option value="Earrings">Earrings (EAR)</option>
-              <option value="Necklace">Necklace (NL)</option>
-              <option value="Bangle">Bangle (BGL)</option>
-              <option value="Pendant">Pendant (PP)</option>
-              <option value="Bracelet">Bracelet (BRC)</option>
+              <optgroup label="Main Categories">
+                <option value="Ring">Rings (All)</option>
+                <option value="Chain">Chains (All)</option>
+                <option value="Earrings">Earrings &amp; Gypsy (All)</option>
+                <option value="Necklace">Necklace (NL)</option>
+                <option value="Bangle">Bangle (PB)</option>
+                <option value="Pendant">Pendant (PP)</option>
+                <option value="Bracelet">Bracelet (BRC)</option>
+              </optgroup>
+              {PAWN_ITEM_GROUPS.map(group => (
+                <optgroup key={group.category} label={group.category}>
+                  {group.items.map(opt => (
+                    <option key={opt.code} value={opt.code}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
             <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
               <Package className="w-3.5 h-3.5 text-indigo-500" />

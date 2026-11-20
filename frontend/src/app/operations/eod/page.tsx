@@ -60,80 +60,16 @@ import { normalizeBranchId, getBranchSearchTerms, stripBranchPrefix, CANONICAL_B
 import { getAuthHeaders } from "@/lib/getAuthHeaders";
 import { getSriLankaDate } from "@/lib/date-utils";
 import ChangeRequestModal from "@/components/ChangeRequestModal";
+import {
+  GOLD_ITEM_CATALOG,
+  normalizeGoldItemToken,
+  getGoldItemDisplayName,
+} from "@/lib/gold-items";
 
-// Stock item abbreviations
-const ITEM_TYPES = [
-  { code: 'PP', name: 'Pendant (PP)' },
-  { code: 'PR', name: 'Ring (PR)' },
-  { code: 'NL', name: 'Necklace (NL)' },
-  { code: 'EAR', name: 'Earring (EAR)' },
-  { code: 'BRC', name: 'Bracelet (BRC)' },
-  { code: 'BPR', name: 'Baby Ring (BPR)' },
-  { code: 'PB', name: 'Bangle (PB)' },
-  { code: 'CR', name: 'Carved Ring (CR)' },
-  { code: 'WJ', name: 'Wire Gyspy (WJ)' },
-  { code: 'BJ', name: 'Ball Gyspy (BJ)' },
-  { code: 'ANK', name: 'Anklets (ANK)' },
-  { code: 'CH', name: 'Chain (CH)' },
-  { code: 'DCH', name: 'Diamond Chain (DCH)' },
-  { code: 'SPCH', name: 'Singapore Chain (SPCH)' },
-  { code: 'VCH', name: 'V Chain (VCH)' },
-  { code: 'COIN', name: 'Coin (COIN)' },
-  { code: 'NA', name: 'Not Applicable (NA)' },
-  { code: 'TS', name: 'Tassel (TS)' },
-  { code: 'SPJ', name: 'Spring Gyspy (SPJ)' }
-];
-
+// Shared Stock & Gold Item Abbreviations
+const ITEM_TYPES = GOLD_ITEM_CATALOG;
 const VALID_STOCK_CODES = new Set(ITEM_TYPES.map(it => it.code));
-
-// Helper to normalize any messy or legacy item token into standard abbreviation (e.g. EAR, PR, CH, 18K-PP)
-const normalizeItemToken = (rawToken: string): string => {
-  if (!rawToken) return "";
-  let clean = rawToken.trim();
-  if (!clean) return "";
-
-  // Check 18K / 18C prefix
-  let is18K = false;
-  if (/^18[KC][ -]/i.test(clean)) {
-    is18K = true;
-    clean = clean.replace(/^18[KC][ -]/i, '').trim();
-  }
-
-  // 1. Check parenthesized item code e.g. (EAR), (PR), (CH), (PP)
-  const paren = clean.match(/\((EAR|PR|CH|PP|NL|BRC|PB|CR|WJ|BJ|ANK|DCH|SPCH|VCH|COIN|NA|TS|SPJ|BPR)\)/i);
-  if (paren) {
-    const code = paren[1].toUpperCase();
-    return is18K ? `18K-${code}` : code;
-  }
-
-  // 2. Strip purity annotation like (22K), (20K), (24K), (9K), etc.
-  clean = clean.replace(/\s*\(\d+K\)/gi, '').trim();
-
-  // 3. Strip trailing sub-item numbering like -1, -2 or _1, _2
-  clean = clean.replace(/[-_]\d+$/g, '').trim();
-
-  // 4. Exact match of known code or code + count (e.g. EAR3, PR2)
-  const codeMatch = clean.match(/^([A-Za-z]+)(\d*)$/);
-  if (codeMatch && VALID_STOCK_CODES.has(codeMatch[1].toUpperCase())) {
-    const code = codeMatch[1].toUpperCase();
-    const count = codeMatch[2] || '';
-    return (is18K ? `18K-${code}` : code) + count;
-  }
-
-  // 5. Keyword match in English or Sinhala descriptions
-  const upper = clean.toUpperCase();
-  if (upper.includes('CHAIN') || upper.includes('මාලය')) return is18K ? '18K-CH' : 'CH';
-  if (upper.includes('BABY RING')) return is18K ? '18K-BPR' : 'BPR';
-  if (upper.includes('RING') || upper.includes('මුද්ද')) return is18K ? '18K-PR' : 'PR';
-  if (upper.includes('EAR') || upper.includes('කරාබු')) return is18K ? '18K-EAR' : 'EAR';
-  if (upper.includes('PENDANT') || upper.includes('පෙන්ඩන්ට්')) return is18K ? '18K-PP' : 'PP';
-  if (upper.includes('BRACELET') || upper.includes('බ්‍රේස්ලට්')) return is18K ? '18K-BRC' : 'BRC';
-  if (upper.includes('BANGLE') || upper.includes('වළලු') || upper.includes('වලලු')) return is18K ? '18K-PB' : 'PB';
-  if (upper.includes('NECKLACE')) return is18K ? '18K-NL' : 'NL';
-  if (upper.includes('COIN')) return is18K ? '18K-COIN' : 'COIN';
-
-  return is18K ? `18K-${clean.toUpperCase()}` : clean.toUpperCase();
-};
+const normalizeItemToken = normalizeGoldItemToken;
 
 // Helper to compress item type codes into short format (e.g., EAR, EAR, EAR -> EAR3, or 18C-PP, 18C-PP -> 18C-PP2)
 const compressItemTypeString = (str: string): string => {
@@ -2441,39 +2377,7 @@ function EndOfDayContent() {
     return total > 0 ? total : 1;
   };
 
-  const getItemName = (codeWithCount: string): string => {
-    if (!codeWithCount) return "";
-    if (codeWithCount.includes(",")) {
-      return codeWithCount.split(",").map(t => getItemName(t.trim())).filter(Boolean).join(" + ");
-    }
-    if (codeWithCount === 'BLCT' || codeWithCount === 'BKT') return 'Bangle (PB)'; // Backward compatibility
-    
-    let is18K = false;
-    let cleanCode = codeWithCount;
-    if (cleanCode.toUpperCase().startsWith("18K-") || cleanCode.toUpperCase().startsWith("18C-")) {
-      is18K = true;
-      cleanCode = cleanCode.substring(4);
-    } else if (cleanCode.toUpperCase().startsWith("18K ") || cleanCode.toUpperCase().startsWith("18C ")) {
-      is18K = true;
-      cleanCode = cleanCode.substring(4);
-    }
-
-    const match = cleanCode.match(/^([A-Za-z]+)(\d*)$/);
-    if (match) {
-      const baseCode = match[1].toUpperCase();
-      const count = match[2] ? parseInt(match[2], 10) : 1;
-      const found = ITEM_TYPES.find(item => item.code === baseCode);
-      const baseName = found ? found.name : baseCode;
-      const prefixStr = is18K ? "18K " : "";
-      const fullName = `${prefixStr}${baseName}`;
-      return count > 1 ? `${fullName} (${count})` : fullName;
-    }
-    
-    const found = ITEM_TYPES.find(item => item.code === cleanCode.toUpperCase());
-    const baseName = found ? found.name : cleanCode;
-    const prefixStr = is18K ? "18K " : "";
-    return `${prefixStr}${baseName}`;
-  };
+  const getItemName = (codeWithCount: string): string => getGoldItemDisplayName(codeWithCount);
 
   const handleExportExcel = () => {
     const now = new Date();
@@ -4159,16 +4063,16 @@ function EndOfDayContent() {
                 {/* Dropdown */}
                 {isDropdownOpen && (
                   <div className="absolute left-0 top-[70px] z-50 w-full bg-white border border-slate-200 rounded-xl shadow-xl max-h-56 overflow-y-auto animate-in fade-in-50 slide-in-from-top-1 duration-150">
-                    {ITEM_TYPES.filter(it => 
-                      it.code.toLowerCase().includes(itemSearch.toLowerCase()) || 
-                      it.name.toLowerCase().includes(itemSearch.toLowerCase())
-                    ).length === 0 ? (
+                    {ITEM_TYPES.filter(it => {
+                      const q = itemSearch.toLowerCase().replace(/gyspy/g, 'gypsy');
+                      return it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q);
+                    }).length === 0 ? (
                       <div className="px-4 py-3 text-xs font-bold text-slate-400 text-center">No matching items</div>
                     ) : (
-                      ITEM_TYPES.filter(it => 
-                        it.code.toLowerCase().includes(itemSearch.toLowerCase()) || 
-                        it.name.toLowerCase().includes(itemSearch.toLowerCase())
-                      ).map(it => {
+                      ITEM_TYPES.filter(it => {
+                        const q = itemSearch.toLowerCase().replace(/gyspy/g, 'gypsy');
+                        return it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q);
+                      }).map(it => {
                         const targetCheckCode = is18K ? `18K-${it.code}` : it.code;
                         const isSelected = selectedItems.some(item => item.code === targetCheckCode || item.code === it.code);
                         return (

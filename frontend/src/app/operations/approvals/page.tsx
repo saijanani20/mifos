@@ -21,19 +21,12 @@ import {
   Pencil, Save
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { PAWN_ITEM_OPTIONS } from '@/lib/gold-items';
 
-const ITEM_TYPE_OPTIONS = [
-  { code: 'CH', label: 'Chain' },
-  { code: 'PP', label: 'Pendant' },
-  { code: 'PR', label: 'Ring' },
-  { code: 'NL', label: 'Necklace' },
-  { code: 'EAR', label: 'Earrings' },
-  { code: 'BRC', label: 'Bracelet' },
-  { code: 'PB', label: 'Bangles' },
-  { code: 'BGL', label: 'Bangle' },
-  { code: 'COIN', label: 'Gold Coin / Bar' },
-  { code: 'OTHER', label: 'Other' }
-];
+const ITEM_TYPE_OPTIONS = PAWN_ITEM_OPTIONS.map((opt) => ({
+  code: opt.code,
+  label: opt.shortLabel,
+}));
 
 interface PawnItem {
   id: string;

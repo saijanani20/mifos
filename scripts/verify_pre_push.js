@@ -352,6 +352,26 @@ async function runVerification() {
     } else {
       logPass('All SMS Gateway security, schema alignment, branch isolation & auto-trigger guards verified');
     }
+
+    // 6. Gold Item Catalog Consistency Guards (VCH, DCH, SPJ, WJ, BJ & PB=Bangle / legacy BKT removal)
+    const goldItemsLib = fs.readFileSync(path.join(rootDir, 'frontend/src/lib/gold-items.ts'), 'utf8');
+    const loansPage = fs.readFileSync(path.join(rootDir, 'frontend/src/app/loans/page.tsx'), 'utf8');
+    const eodPage = fs.readFileSync(path.join(rootDir, 'frontend/src/app/operations/eod/page.tsx'), 'utf8');
+
+    const goldItemGuards = [
+      { ok: ['VCH', 'DCH', 'SPCH', 'WJ', 'BJ', 'SPJ', 'PB', 'TS', 'CR', 'BPR', 'ANK'].every(c => goldItemsLib.includes(`code: '${c}'`)), name: 'gold-items.ts contains complete pawn & stock item catalog' },
+      { ok: !goldItemsLib.includes("code: 'BKT'") && goldItemsLib.includes("BKT: 'PB'") && goldItemsLib.includes("code: 'PB', shortLabel: 'Bangle'"), name: 'gold-items.ts uses PB=Bangle & removes BKT Biscuit' },
+      { ok: loansPage.includes('PAWN_ITEM_GROUPS') && loansPage.includes('matchesPawnCategoryFilter') && !loansPage.includes("{ code: 'BKT', label: 'Bangles' }"), name: 'loans/page.tsx uses unified PAWN_ITEM_GROUPS & clean Bangle mapping' },
+      { ok: eodPage.includes('GOLD_ITEM_CATALOG') && eodPage.includes('normalizeGoldItemToken'), name: 'operations/eod/page.tsx uses unified GOLD_ITEM_CATALOG' },
+      { ok: apPage.includes('PAWN_ITEM_OPTIONS') && !apPage.includes("{ code: 'BKT', label: 'Bangles' }"), name: 'operations/approvals/page.tsx uses unified PAWN_ITEM_OPTIONS' },
+    ];
+    const failedGold = goldItemGuards.filter(c => !c.ok);
+    if (failedGold.length > 0) {
+      logFail(`REGRESSION: Gold Item Catalog guard failed: ${failedGold.map(f => f.name).join(', ')}`);
+      failureCount++;
+    } else {
+      logPass('All Pawning, Stock/EOD & Approval gold item catalogs verified in sync (VCH, DCH, SPJ, WJ, BJ, PB)');
+    }
   } catch (ruleErr) {
     logFail(`Rule verification exception: ${ruleErr.message}`);
     failureCount++;

@@ -21,6 +21,7 @@ import {
   Power,
   MapPin
 } from "lucide-react";
+import { classifyDashboardLoanCategory } from "@/lib/gold-items";
 import {
   AreaChart,
   Area,
@@ -370,19 +371,11 @@ export default function Home() {
       let otherCount = 0;
 
       (pawnsData || []).forEach((p: any) => {
-        const desc = (p.description || '').toUpperCase();
-        if (desc.includes('RING') || desc.includes('PR') || desc.includes('R)') || desc.includes('(R')) {
-          typeCategories['Rings']++;
-        } else if (desc.includes('CHAIN') || desc.includes('CH') || desc.includes('NECKLACE') || desc.includes('NL')) {
-          typeCategories['Chains & Necklaces']++;
-        } else if (desc.includes('PENDANT') || desc.includes('PP') || desc.includes('PATHASARUM')) {
-          typeCategories['Pendants']++;
-        } else if (desc.includes('EAR') || desc.includes('STUD') || desc.includes('TS')) {
-          typeCategories['Earrings & Studs']++;
-        } else if (desc.includes('BANGLE') || desc.includes('BRC') || desc.includes('BRACELET') || desc.includes('CR')) {
-          typeCategories['Bangles & Bracelets']++;
-        } else {
+        const category = classifyDashboardLoanCategory(p);
+        if (category === 'Other Articles') {
           otherCount++;
+        } else {
+          typeCategories[category] = (typeCategories[category] || 0) + 1;
         }
       });
 
