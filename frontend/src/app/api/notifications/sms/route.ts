@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
-import { getBranchSearchTerms, normalizeBranchId } from '@/lib/branch-mapping';
+import { getBranchName, getBranchSearchTerms, normalizeBranchId } from '@/lib/branch-mapping';
 import {
   checkTextBeeDeviceHealth,
   formatSmsLogRow,
   getSmsGatewayConfig,
+  getSriLankaDateString,
   normalizeSriLankaPhone,
   renderSmsTemplate,
   retrySmsLogEntry,
@@ -15,6 +16,23 @@ import {
 import { SmsTemplateKey } from '@/lib/sms-templates';
 
 export const dynamic = 'force-dynamic';
+
+function getColomboYmd(date: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Colombo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function getErrMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Internal Server Error';
+}
 
 export async function POST(req: Request) {
   try {
@@ -43,19 +61,21 @@ export async function POST(req: Request) {
         allowedBranch: isHead ? null : userBranch,
       });
 
+      const resObj = res as { success: boolean; status?: number; smsStatus?: string; notice?: string; error?: string };
       await recordAuditLog(session, {
         action: 'SMS_RETRY',
         resource: `sms_log:${logId}`,
         branchId: userBranch,
-        details: { logId, success: res.success, smsStatus: (res as any).smsStatus, notice: (res as any).notice, error: res.error },
+        status: resObj.success ? 'SUCCESS' : 'FAILED',
+        details: { logId, success: resObj.success, smsStatus: resObj.smsStatus, notice: resObj.notice, error: resObj.error },
         request: req,
       });
 
-      const httpCode = res.status || (res.success ? 200 : 400);
+      const httpCode = resObj.status || (resObj.success ? 200 : 400);
       return NextResponse.json(res, { status: httpCode });
     }
 
-    // 2. Batch Retry Recent Pending/Failed Logs (last 48 hours safety window)
+    // 2. Batch Retry Pending/Failed Logs (bounded for serverless safety)
     if (body.action === 'RETRY_PENDING') {
       const reqBranch = body.branchId ? String(body.branchId).trim() : 'ALL';
       const effectiveBranch = !isHead
@@ -64,17 +84,23 @@ export async function POST(req: Request) {
         ? normalizeBranchId(reqBranch)
         : null;
 
-      const lookbackHours = Math.min(Math.max(Number(body.lookbackHours) || 48, 1), 168);
-      const sinceIso = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
-      const maxBatch = Math.min(Math.max(Number(body.limit) || 15, 1), 25);
+      // Support up to 30 days lookback (720h), default 168h (7 days); capped at 10 per click to stay well under serverless timeout
+      const lookbackHours = body.lookbackHours === 0 || body.lookbackHours === 'ALL'
+        ? null
+        : Math.min(Math.max(Number(body.lookbackHours) || 168, 1), 720);
+      const maxBatch = Math.min(Math.max(Number(body.limit) || 10, 1), 10);
 
       let q = adminSupabase
         .from('sms_logs')
         .select('id, branch_id')
         .in('status', ['QUEUED', 'FAILED'])
-        .gte('created_at', sinceIso)
         .order('created_at', { ascending: false })
         .limit(maxBatch);
+
+      if (lookbackHours !== null) {
+        const sinceIso = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
+        q = q.gte('created_at', sinceIso);
+      }
 
       if (effectiveBranch) {
         q = q.in('branch_id', getBranchSearchTerms(effectiveBranch));
@@ -85,29 +111,42 @@ export async function POST(req: Request) {
 
       let sentCount = 0;
       let failedCount = 0;
-      const results: any[] = [];
+      const results: Array<{
+        id: string;
+        branch_id: string | null;
+        success: boolean;
+        smsStatus?: string;
+        error?: string;
+      }> = [];
 
       for (const row of pendingRows || []) {
         const retryRes = await retrySmsLogEntry({
-          logId: row.id,
+          logId: String(row.id),
           isAdmin: isHead,
           allowedBranch: isHead ? null : userBranch,
         });
-        if (retryRes.success) sentCount++;
+        const retryObj = retryRes as { success: boolean; smsStatus?: string; error?: string };
+        if (retryObj.success) sentCount++;
         else failedCount++;
-        results.push({ id: row.id, branch_id: row.branch_id, success: retryRes.success, smsStatus: (retryRes as any).smsStatus, error: retryRes.error });
+        results.push({
+          id: String(row.id),
+          branch_id: row.branch_id ? String(row.branch_id) : null,
+          success: retryObj.success,
+          smsStatus: retryObj.smsStatus,
+          error: retryObj.error,
+        });
       }
 
       await recordAuditLog(session, {
         action: 'SMS_BATCH_RETRY',
         resource: `branch:${effectiveBranch || 'ALL'}`,
         branchId: effectiveBranch || userBranch,
-        details: { attempted: (pendingRows || []).length, sentCount, failedCount, lookbackHours },
+        details: { attempted: (pendingRows || []).length, sentCount, failedCount, lookbackHours: lookbackHours ?? 'ALL' },
         request: req,
       });
 
       return NextResponse.json({
-        success: true,
+        success: sentCount > 0 || (pendingRows || []).length === 0,
         attempted: (pendingRows || []).length,
         sentCount,
         failedCount,
@@ -135,17 +174,26 @@ export async function POST(req: Request) {
       let queuedCount = 0;
       let failedCount = 0;
       let invalidCount = 0;
-      const results: any[] = [];
+      const results: Array<{
+        phone: string;
+        ticketNo: string | null;
+        status: string;
+        success: boolean;
+        notice?: string;
+        error?: string;
+      }> = [];
 
+      const todaySl = getSriLankaDateString();
       for (const rec of recipients) {
         const rawBranch = rec.branchId || body.branchId || userBranch;
         const targetBranch = !isHead ? userBranch : normalizeBranchId(String(rawBranch || userBranch));
         if (!isHead && normalizeBranchId(String(rawBranch || userBranch)) !== userBranch) {
           failedCount++;
-          results.push({ phone: rec.phone, status: 'FORBIDDEN', error: 'Cross-branch bulk SMS blocked.' });
+          results.push({ phone: String(rec.phone || ''), ticketNo: null, status: 'FORBIDDEN', success: false, error: 'Cross-branch bulk SMS blocked.' });
           continue;
         }
 
+        const branchLabel = getBranchName(targetBranch);
         const msgText = (typeof rec.message === 'string' && rec.message.trim())
           ? rec.message.trim()
           : renderSmsTemplate(
@@ -155,18 +203,18 @@ export async function POST(req: Request) {
                 ticket_no: rec.ticketNo || 'N/A',
                 amount: (Number(rec.amount) || 0).toLocaleString(),
                 interest_amount: (Number(rec.interestAmount || rec.amount) || 0).toLocaleString(),
-                date: new Date().toLocaleDateString('en-GB'),
-                branch_name: targetBranch,
-                branch_tag: targetBranch ? ` [${targetBranch}]` : '',
+                date: todaySl,
+                branch_name: branchLabel,
+                branch_tag: branchLabel ? ` [${branchLabel}]` : '',
               },
               customTemplate
             );
 
         const res = await sendFreeSms({
-          phone: rec.phone,
+          phone: String(rec.phone || ''),
           message: msgText,
-          ticketNo: rec.ticketNo,
-          amount: rec.amount,
+          ticketNo: rec.ticketNo ? String(rec.ticketNo) : undefined,
+          amount: rec.amount ? Number(rec.amount) : undefined,
           type: body.type || 'REMINDER',
           branchId: targetBranch,
           forceGlobal: Boolean(body.forceGlobal && isHead),
@@ -180,7 +228,7 @@ export async function POST(req: Request) {
 
         results.push({
           phone: res.phone,
-          ticketNo: rec.ticketNo || null,
+          ticketNo: rec.ticketNo ? String(rec.ticketNo) : null,
           status: res.status,
           success: res.success,
           notice: res.notice,
@@ -192,6 +240,7 @@ export async function POST(req: Request) {
         action: 'SMS_BULK_DISPATCH',
         resource: `bulk:${recipients.length}`,
         branchId: userBranch,
+        status: sentCount > 0 ? 'SUCCESS' : queuedCount > 0 ? 'WARNING' : 'FAILED',
         details: { total: recipients.length, sentCount, queuedCount, failedCount, invalidCount },
         request: req,
       });
@@ -209,8 +258,20 @@ export async function POST(req: Request) {
     }
 
     // 4. Single / Manual / Test SMS Dispatch
-    const { phone, message, ticketNo, amount, type, branchId, forceGlobal } = body;
-    if (!phone || !message) {
+    const {
+      phone,
+      message,
+      ticketNo,
+      amount,
+      type,
+      branchId,
+      forceGlobal,
+      templateKey,
+      useSavedTemplate,
+      templateVars,
+    } = body;
+
+    if (!phone) {
       return NextResponse.json({ error: 'Phone number and message are required' }, { status: 400 });
     }
 
@@ -233,9 +294,39 @@ export async function POST(req: Request) {
       ? (reqBranchRaw && reqBranchRaw.toUpperCase() !== 'GLOBAL' ? normalizeBranchId(reqBranchRaw) : userBranch)
       : userBranch;
 
+    let finalMessage = typeof message === 'string' ? message.trim() : '';
+    if (templateKey && (useSavedTemplate || !finalMessage)) {
+      const cfg = await getSmsGatewayConfig();
+      const tKey = String(templateKey) as SmsTemplateKey;
+      const customTmpl = cfg.templates?.[tKey];
+      if (customTmpl || !finalMessage) {
+        const branchLabel = getBranchName(effectiveBranch);
+        const rawVars = (templateVars && typeof templateVars === 'object')
+          ? (templateVars as Record<string, string | number | undefined>)
+          : {};
+        finalMessage = renderSmsTemplate(
+          tKey,
+          {
+            customer_name: rawVars.customer_name || 'Valued Customer',
+            ticket_no: rawVars.ticket_no || ticketNo || 'N/A',
+            amount: rawVars.amount ?? (Number(amount) || 0).toLocaleString(),
+            date: rawVars.date || getSriLankaDateString(),
+            branch_name: rawVars.branch_name || branchLabel,
+            branch_tag: branchLabel ? ` [${branchLabel}]` : '',
+            ...rawVars,
+          },
+          customTmpl
+        );
+      }
+    }
+
+    if (!finalMessage) {
+      return NextResponse.json({ error: 'Phone number and message are required' }, { status: 400 });
+    }
+
     const result = await sendFreeSms({
       phone: normPhone.e164,
-      message: String(message),
+      message: finalMessage,
       ticketNo,
       amount,
       type: type || 'RECEIPT',
@@ -248,6 +339,7 @@ export async function POST(req: Request) {
       action: 'SMS_DISPATCH',
       resource: `sms:${result.phone || phone}`,
       branchId: result.branchId || effectiveBranch,
+      status: result.success ? 'SUCCESS' : result.status === 'QUEUED' ? 'WARNING' : 'FAILED',
       details: {
         phone: result.phone || phone,
         ticketNo,
@@ -260,9 +352,9 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(result);
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Error in /api/notifications/sms POST:', err);
-    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: getErrMessage(err) }, { status: 500 });
   }
 }
 
@@ -278,7 +370,7 @@ export async function GET(req: Request) {
     const userBranch = normalizeBranchId(session.branchId || 'HQ');
     const isHead = isAdmin || userBranch === 'HQ';
 
-    // Optional live TextBee device health check
+    // Live TextBee device health & quota check
     if (searchParams.get('action') === 'health') {
       if (session.role !== 'ADMIN' && session.role !== 'MANAGER') {
         return NextResponse.json({ error: 'Forbidden. Only Admins or Branch Managers can probe gateway health.' }, { status: 403 });
@@ -290,15 +382,15 @@ export async function GET(req: Request) {
       }
       const targetBranch = isHead ? (isGlobal ? 'HQ' : reqBranch || 'HQ') : userBranch;
       const health = await checkTextBeeDeviceHealth(targetBranch, isHead && isGlobal);
-      return NextResponse.json({ success: true, health });
+      return NextResponse.json({ success: true, health, quota: health.quota || null });
     }
 
     const branchParam = searchParams.get('branch') || 'ALL';
     const statusParam = (searchParams.get('status') || 'ALL').toUpperCase();
-    const searchParam = (searchParams.get('search') || '').trim();
+    const rawSearch = (searchParams.get('search') || '').trim();
+    const safeSearch = rawSearch.replace(/[,()\\]/g, ' ').trim();
     const limitParam = Math.min(Math.max(parseInt(searchParams.get('limit') || '100', 10) || 100, 10), 250);
 
-    // Scoped logs query
     let logsQuery = adminSupabase
       .from('sms_logs')
       .select('*')
@@ -315,8 +407,8 @@ export async function GET(req: Request) {
       logsQuery = logsQuery.eq('status', statusParam);
     }
 
-    if (searchParam) {
-      const q = `%${searchParam}%`;
+    if (safeSearch) {
+      const q = `%${safeSearch}%`;
       logsQuery = logsQuery.or(`recipient_phone.ilike.${q},message_text.ilike.${q}`);
     }
 
@@ -325,7 +417,6 @@ export async function GET(req: Request) {
       console.warn('sms_logs query warning:', logsErr.message);
     }
 
-    // Scoped stats query (recent 500 matching caller's branch visibility)
     let statsQuery = adminSupabase
       .from('sms_logs')
       .select('status, created_at, branch_id')
@@ -339,23 +430,31 @@ export async function GET(req: Request) {
     }
 
     const { data: statsRows } = await statsQuery;
-    const todayPrefix = new Date().toISOString().slice(0, 10);
+    const todayPrefix = getColomboYmd();
+    const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const stats = {
       total: (statsRows || []).length,
       sent: 0,
       queued: 0,
       failed: 0,
       todaySent: 0,
+      retryable7d: 0,
     };
+
     for (const r of statsRows || []) {
       const st = String(r.status || '').toUpperCase();
+      const createdMs = r.created_at ? new Date(String(r.created_at)).getTime() : 0;
       if (st === 'SENT') {
         stats.sent++;
-        if (r.created_at && String(r.created_at).startsWith(todayPrefix)) stats.todaySent++;
+        if (r.created_at && getColomboYmd(new Date(String(r.created_at))) === todayPrefix) {
+          stats.todaySent++;
+        }
       } else if (st === 'QUEUED') {
         stats.queued++;
+        if (createdMs >= sevenDaysAgoMs) stats.retryable7d++;
       } else if (st === 'FAILED') {
         stats.failed++;
+        if (createdMs >= sevenDaysAgoMs) stats.retryable7d++;
       }
     }
 
@@ -369,7 +468,7 @@ export async function GET(req: Request) {
     const { data: branchesData } = await branchQuery;
 
     return NextResponse.json({
-      logs: (logsRaw || []).map(formatSmsLogRow),
+      logs: (logsRaw || []).map((row) => formatSmsLogRow(row as Record<string, unknown>)),
       stats,
       isAdmin,
       isHead,
@@ -377,8 +476,14 @@ export async function GET(req: Request) {
       branches: branchesData || [{ id: 'HQ', name: 'Head Office' }],
       config: safeConfig,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Error in /api/notifications/sms GET:', err);
-    return NextResponse.json({ logs: [], stats: { total: 0, sent: 0, queued: 0, failed: 0, todaySent: 0 }, config: {}, branches: [], isAdmin: false });
+    return NextResponse.json({
+      logs: [],
+      stats: { total: 0, sent: 0, queued: 0, failed: 0, todaySent: 0, retryable7d: 0 },
+      config: {},
+      branches: [],
+      isAdmin: false,
+    });
   }
 }

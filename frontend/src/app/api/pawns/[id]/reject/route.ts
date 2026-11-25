@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { getBranchName, stripBranchPrefix } from '@/lib/branch-mapping';
 import { sendFreeSms, buildPawnReturnedSms, getSmsGatewayConfig, resolvePawnCustomerContact } from '@/lib/sms';
 
 export const dynamic = 'force-dynamic';
@@ -124,7 +124,7 @@ export async function POST(
             customerName: contact.name,
             ticketNo: ticketDisplay,
             reason,
-            branchName: normalizeBranchId(pawn.branch_id || ''),
+            branchName: getBranchName(pawn.branch_id || ''),
             customTemplate: smsConfig.templates?.REJECTED,
           });
           await sendFreeSms({

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
-import { normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { normalizeBranchId, getBranchName, stripBranchPrefix } from '@/lib/branch-mapping';
 import { getSriLankaDate } from '@/lib/date-utils';
-import { sendFreeSms, buildPawnApprovedSms, getSmsGatewayConfig, resolvePawnCustomerContact } from '@/lib/sms';
+import { sendFreeSms, buildPawnApprovedSms, getSmsGatewayConfig, resolvePawnCustomerContact, SendSmsResult } from '@/lib/sms';
 
 export const dynamic = 'force-dynamic';
 
@@ -199,6 +199,7 @@ export async function POST(
     }
 
     // 6. Dispatch Automated Loan Approval SMS via Branch TextBee SIM (Non-fatal)
+    let smsResult: SendSmsResult | null = null;
     try {
       const smsConfig = await getSmsGatewayConfig();
       const contact = await resolvePawnCustomerContact(pawn);
@@ -208,10 +209,10 @@ export async function POST(
           customerName: contact.name,
           ticketNo: ticketDisplay,
           amount: principal,
-          branchName: pawnBranch || pawn.branch_id,
+          branchName: getBranchName(pawnBranch || pawn.branch_id),
           customTemplate: smsConfig.templates?.APPROVED,
         });
-        await sendFreeSms({
+        smsResult = await sendFreeSms({
           phone: contact.phone,
           message: approvedMsg,
           ticketNo: ticketDisplay,
@@ -225,7 +226,12 @@ export async function POST(
       console.warn('Approval SMS notice:', smsErr);
     }
 
-    return NextResponse.json({ success: true, pawnId: id, journalEntryId: jeId });
+    return NextResponse.json({
+      success: true,
+      pawnId: id,
+      journalEntryId: jeId,
+      sms: smsResult ? { status: smsResult.status, success: smsResult.success, notice: smsResult.notice, error: smsResult.error } : null,
+    });
   } catch (error: any) {
     console.error('Pawn approval error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -7,10 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
-  Smartphone, Send, RefreshCcw, Save, ShieldCheck,
+  Smartphone, Send, RefreshCcw, Save,
   CheckCircle2, AlertTriangle, MessageSquare, Radio, Server,
   Building2, Lock, Activity, BatteryCharging, Battery, Wifi,
-  RotateCcw, Users, Sliders, FileText, Trash2, Search, CheckSquare, Square
+  RotateCcw, Users, Sliders, FileText, Trash2, Search, CheckSquare, Square,
+  ChevronDown, ChevronRight, Power, Gauge, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAuthHeaders } from '@/lib/getAuthHeaders';
@@ -26,14 +27,94 @@ import {
   calculateSmsParts,
   DEFAULT_SMS_TEMPLATES,
   DEFAULT_SMS_TRIGGERS,
+  getSriLankaDateString,
   normalizeSriLankaPhone,
   SMS_TEMPLATE_LABELS,
   SMS_TRIGGER_META,
   SmsTemplateKey,
   SmsTriggersConfig,
 } from '@/lib/sms-templates';
+import type {
+  TextBeeDiscoveredDevice,
+  TextBeeHealthStatus,
+  TextBeeQuotaStatus,
+  FormattedSmsLogRow,
+} from '@/lib/sms';
 
 type TabKey = 'gateway' | 'dispatch' | 'templates' | 'logs';
+
+interface BranchRow {
+  id: string;
+  name?: string;
+}
+
+interface BranchSanitizedConfig {
+  branchId?: string;
+  branchName?: string;
+  email?: string;
+  deviceId?: string;
+  hasApiKey?: boolean;
+  maskedApiKey?: string;
+  simSlot?: number;
+  enabled?: boolean;
+  updatedAt?: string | null;
+}
+
+interface GatewayConfigDto {
+  enabled?: boolean;
+  email?: string;
+  deviceId?: string;
+  hasApiKey?: boolean;
+  maskedApiKey?: string;
+  simSlot?: number;
+  branches?: Record<string, BranchSanitizedConfig>;
+  configuredBranchCount?: number;
+  triggers?: SmsTriggersConfig;
+  templates?: Partial<Record<SmsTemplateKey, string>>;
+}
+
+interface PawnRecipientRow {
+  id: string;
+  bill_no?: string;
+  display_bill_no?: string;
+  branch_id?: string;
+  phone?: string;
+  client_phone?: string;
+  client_name?: string;
+  customer_name?: string;
+  disbursed_amount?: number;
+  clients?: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+  };
+}
+
+interface BulkDispatchSummary {
+  total: number;
+  sentCount: number;
+  queuedCount: number;
+  failedCount: number;
+  invalidCount: number;
+}
+
+function getErrText(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+function formatResetDate(iso?: string | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-GB', {
+      timeZone: 'Asia/Colombo',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
 
 export default function SmsSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('gateway');
@@ -41,6 +122,7 @@ export default function SmsSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [batchRetrying, setBatchRetrying] = useState(false);
 
@@ -49,10 +131,11 @@ export default function SmsSettingsPage() {
   const [userBranchId, setUserBranchId] = useState('HQ');
 
   /* Branch & Config State */
-  const [branches, setBranches] = useState<any[]>([]);
+  const [branches, setBranches] = useState<BranchRow[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('GLOBAL');
-  const [globalConfig, setGlobalConfig] = useState<any>({});
-  const [branchConfigs, setBranchConfigs] = useState<Record<string, any>>({});
+  const [globalConfig, setGlobalConfig] = useState<GatewayConfigDto>({});
+  const [branchConfigs, setBranchConfigs] = useState<Record<string, BranchSanitizedConfig>>({});
+  const [showBranchOverrides, setShowBranchOverrides] = useState(false);
 
   /* Gateway Form Fields (NO hardcoded API secrets) */
   const [deviceId, setDeviceId] = useState('');
@@ -60,17 +143,18 @@ export default function SmsSettingsPage() {
   const [savedMaskedKey, setSavedMaskedKey] = useState('');
   const [hasSavedKey, setHasSavedKey] = useState(false);
   const [clearApiKey, setClearApiKey] = useState(false);
-  const [email, setEmail] = useState('');
-  const [simSlot, setSimSlot] = useState('1');
+  const [simSlot, setSimSlot] = useState('0');
   const [enabled, setEnabled] = useState(true);
+  const [discoveredDevices, setDiscoveredDevices] = useState<TextBeeDiscoveredDevice[]>([]);
 
-  /* Live Device Health */
-  const [health, setHealth] = useState<any>(null);
+  /* Live Device Health & TextBee Quota */
+  const [health, setHealth] = useState<TextBeeHealthStatus | null>(null);
+  const [quota, setQuota] = useState<TextBeeQuotaStatus | null>(null);
 
   /* Test SMS State */
   const [testBranchId, setTestBranchId] = useState<string>('GLOBAL');
   const [testTemplateKey, setTestTemplateKey] = useState<SmsTemplateKey>('RECEIPT');
-  const [testPhone, setTestPhone] = useState('0771234567');
+  const [testPhone, setTestPhone] = useState('');
   const [testMessage, setTestMessage] = useState(() =>
     buildPawnReceiptSms({ customerName: 'Test Customer', ticketNo: '1R 20743', amount: 50000 })
   );
@@ -81,8 +165,8 @@ export default function SmsSettingsPage() {
   const [activeTemplateKey, setActiveTemplateKey] = useState<SmsTemplateKey>('RECEIPT');
 
   /* Logs & Filters State */
-  const [logs, setLogs] = useState<any[]>([]);
-  const [stats, setStats] = useState({ total: 0, sent: 0, queued: 0, failed: 0, todaySent: 0 });
+  const [logs, setLogs] = useState<FormattedSmsLogRow[]>([]);
+  const [stats, setStats] = useState({ total: 0, sent: 0, queued: 0, failed: 0, todaySent: 0, retryable7d: 0 });
   const [logStatusFilter, setLogStatusFilter] = useState<string>('ALL');
   const [logBranchFilter, setLogBranchFilter] = useState<string>('ALL');
   const [logSearch, setLogSearch] = useState<string>('');
@@ -90,15 +174,15 @@ export default function SmsSettingsPage() {
   /* Bulk Reminders State */
   const [bulkBranch, setBulkBranch] = useState<string>('ALL');
   const [bulkSearch, setBulkSearch] = useState<string>('');
-  const [bulkPawns, setBulkPawns] = useState<any[]>([]);
+  const [bulkPawns, setBulkPawns] = useState<PawnRecipientRow[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [selectedPawnIds, setSelectedPawnIds] = useState<Set<string>>(new Set());
   const [bulkTemplateKey, setBulkTemplateKey] = useState<SmsTemplateKey>('REMINDER');
   const [bulkCustomMsg, setBulkCustomMsg] = useState<string>(DEFAULT_SMS_TEMPLATES.REMINDER);
   const [bulkSending, setBulkSending] = useState(false);
-  const [bulkSummary, setBulkSummary] = useState<any>(null);
+  const [bulkSummary, setBulkSummary] = useState<BulkDispatchSummary | null>(null);
 
-  const populateFields = useCallback((branchId: string, cfg: any) => {
+  const populateFields = useCallback((branchId: string, cfg: GatewayConfigDto) => {
     const bConfigs = cfg?.branches || {};
     if (branchId === 'GLOBAL') {
       setDeviceId(cfg?.deviceId || '');
@@ -106,8 +190,7 @@ export default function SmsSettingsPage() {
       setClearApiKey(false);
       setHasSavedKey(Boolean(cfg?.hasApiKey));
       setSavedMaskedKey(cfg?.maskedApiKey || '');
-      setEmail(cfg?.email || '');
-      setSimSlot(String(cfg?.simSlot || '1'));
+      setSimSlot(String(cfg?.simSlot ?? 0));
       setEnabled(cfg?.enabled !== false);
     } else {
       const norm = normalizeBranchId(branchId);
@@ -117,13 +200,43 @@ export default function SmsSettingsPage() {
       setClearApiKey(false);
       setHasSavedKey(Boolean(bConf.hasApiKey));
       setSavedMaskedKey(bConf.maskedApiKey || '');
-      setEmail(bConf.email || '');
-      setSimSlot(String(bConf.simSlot || '1'));
+      setSimSlot(String(bConf.simSlot ?? 0));
       setEnabled(bConf.enabled !== false);
     }
   }, []);
 
-  const loadSettingsAndLogs = useCallback(async (opts?: { branch?: string; status?: string; search?: string }) => {
+  const fetchLiveHealth = useCallback(async (targetBranch: string, silent = true) => {
+    setHealthLoading(true);
+    try {
+      const res = await fetch(
+        `/api/notifications/sms?action=health&branchId=${encodeURIComponent(targetBranch)}`,
+        { headers: getAuthHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Health check failed');
+      setHealth(data.health || null);
+      if (data.health?.quota || data.quota) {
+        setQuota(data.health?.quota || data.quota);
+      }
+      if (!silent) {
+        if (data.health?.online) {
+          toast.success(`Device Online (${data.health.model || 'TextBee Android'})`, {
+            description: `Battery ${data.health.batteryPercentage ?? '?'}% • Last ping ${data.health.heartbeatAgeMinutes ?? 0}m ago`
+          });
+        } else {
+          toast.warning(`Gateway Status: ${data.health?.status || 'UNKNOWN'}`, {
+            description: data.health?.error || 'Device heartbeat may be delayed.'
+          });
+        }
+      }
+    } catch (err: unknown) {
+      if (!silent) toast.error(getErrText(err, 'Health probe failed'));
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
+  const loadSettingsAndLogs = useCallback(async (opts?: { branch?: string; status?: string; search?: string; skipHealth?: boolean }) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -138,14 +251,21 @@ export default function SmsSettingsPage() {
       if (!res.ok) throw new Error('Failed to load SMS gateway status');
       const data = await res.json();
 
-      setIsAdmin(Boolean(data.isAdmin));
-      setIsHead(Boolean(data.isHead));
-      setUserBranchId(data.userBranchId || 'HQ');
-      setBranches((data.branches || [{ id: 'HQ', name: 'Head Office' }]).filter((br: any) => String(br.id).toUpperCase() !== 'TESTBRANCH'));
+      const adminFlag = Boolean(data.isAdmin);
+      const headFlag = Boolean(data.isHead);
+      const uBranch = String(data.userBranchId || 'HQ');
+
+      setIsAdmin(adminFlag);
+      setIsHead(headFlag);
+      setUserBranchId(uBranch);
+      setBranches(
+        ((data.branches || [{ id: 'HQ', name: 'Head Office' }]) as BranchRow[])
+          .filter((br) => String(br.id).toUpperCase() !== 'TESTBRANCH')
+      );
       setLogs(Array.isArray(data.logs) ? data.logs : []);
       if (data.stats) setStats(data.stats);
 
-      const cfg = data.config || {};
+      const cfg: GatewayConfigDto = data.config || {};
       setGlobalConfig(cfg);
       setBranchConfigs(cfg.branches || {});
 
@@ -155,69 +275,117 @@ export default function SmsSettingsPage() {
       const mergedTemplates = { ...DEFAULT_SMS_TEMPLATES };
       if (cfg.templates) {
         for (const k of Object.keys(DEFAULT_SMS_TEMPLATES) as SmsTemplateKey[]) {
-          if (cfg.templates[k]) mergedTemplates[k] = cfg.templates[k];
+          if (cfg.templates[k]) mergedTemplates[k] = cfg.templates[k] as string;
         }
       }
       setTemplates(mergedTemplates);
 
-      if (!data.isAdmin && !data.isHead && data.userBranchId) {
-        setSelectedBranchId(data.userBranchId);
-        setTestBranchId(data.userBranchId);
-        setBulkBranch(data.userBranchId);
-        populateFields(data.userBranchId, cfg);
-      } else {
-        populateFields(selectedBranchId, cfg);
+      const targetBranch = !adminFlag && !headFlag && uBranch ? uBranch : selectedBranchId;
+      if (!adminFlag && !headFlag && uBranch) {
+        setSelectedBranchId(uBranch);
+        setTestBranchId(uBranch);
+        setBulkBranch(uBranch);
       }
-    } catch (e: any) {
+      populateFields(targetBranch, cfg);
+
+      if (!opts?.skipHealth) {
+        fetchLiveHealth(targetBranch, true);
+      }
+    } catch (e: unknown) {
       console.error(e);
-      toast.error(e?.message || 'Failed to load SMS settings');
+      toast.error(getErrText(e, 'Failed to load SMS settings'));
     } finally {
       setLoading(false);
     }
-  }, [logBranchFilter, logStatusFilter, logSearch, populateFields, selectedBranchId]);
+  }, [fetchLiveHealth, logBranchFilter, logSearch, logStatusFilter, populateFields, selectedBranchId]);
 
   useEffect(() => {
     loadSettingsAndLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleCheckHealth = async (targetBranch = selectedBranchId) => {
-    setHealthLoading(true);
-    try {
-      const res = await fetch(
-        `/api/notifications/sms?action=health&branchId=${encodeURIComponent(targetBranch)}`,
-        { headers: getAuthHeaders() }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Health check failed');
-      setHealth(data.health);
-      if (data.health?.online) {
-        toast.success(`Device Online (${data.health.model || 'TextBee Android'})`, {
-          description: `Battery ${data.health.batteryPercentage ?? '?'}% • Last ping ${data.health.heartbeatAgeMinutes ?? 0}m ago`
-        });
-      } else {
-        toast.warning(`Gateway Status: ${data.health?.status || 'UNKNOWN'}`, {
-          description: data.health?.error || 'Device heartbeat may be delayed.'
-        });
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Health probe failed');
-    } finally {
-      setHealthLoading(false);
-    }
-  };
 
   const handleBranchSelect = (newBranchId: string) => {
     setSelectedBranchId(newBranchId);
     setTestBranchId(newBranchId);
+    setDiscoveredDevices([]);
     populateFields(newBranchId, { ...globalConfig, branches: branchConfigs });
-    setHealth(null);
+    fetchLiveHealth(newBranchId, true);
+  };
+
+  const handleDiscoverDevices = async () => {
+    if (!isAdmin) return;
+    if (!apiKeyInput.trim() && !hasSavedKey) {
+      return toast.error('Paste your TextBee API Key first, then click Detect Device.');
+    }
+    setDiscovering(true);
+    try {
+      const res = await fetch('/api/settings/sms-gateway', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          action: 'DISCOVER_DEVICES',
+          branchId: selectedBranchId === 'GLOBAL' ? 'GLOBAL' : selectedBranchId,
+          apiKey: apiKeyInput.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not detect TextBee devices');
+      const list = Array.isArray(data.devices) ? (data.devices as TextBeeDiscoveredDevice[]) : [];
+      setDiscoveredDevices(list);
+      if (data.quota) setQuota(data.quota);
+
+      if (list.length === 0) {
+        toast.warning('No Android devices registered in this TextBee account yet.', {
+          description: 'Open TextBee app on your Android phone/tablet and link it first.',
+        });
+      } else {
+        const preferred = list.find((d) => d.isDefault) || list[0];
+        setDeviceId(preferred.id);
+        toast.success(`Found ${list.length} device(s) — selected ${preferred.name}`, {
+          description: 'Click "Save & Connect" below to activate.',
+        });
+      }
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Device detection failed'));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const handleToggleGateway = async () => {
+    if (!isAdmin) return toast.error('Only Administrators can pause/enable SMS Gateway.');
+    const nextEnabled = !(globalConfig.enabled !== false);
+    setSaving(true);
+    const toastId = toast.loading(nextEnabled ? 'Enabling TextBee SMS Gateway...' : 'Pausing SMS Gateway...');
+    try {
+      const res = await fetch('/api/settings/sms-gateway', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          action: 'TOGGLE_ENABLED',
+          branchId: 'GLOBAL',
+          enabled: nextEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Toggle failed');
+      toast.success(nextEnabled ? 'SMS Gateway ENABLED' : 'SMS Gateway PAUSED', { id: toastId });
+      await loadSettingsAndLogs();
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Failed to toggle gateway'), { id: toastId });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveConfig = async () => {
     if (!isAdmin) return toast.error('Only Administrators can modify SMS Gateway settings.');
+    if (!deviceId.trim()) return toast.error('Enter or detect a TextBee Device ID before saving.');
+    if (!apiKeyInput.trim() && !hasSavedKey) return toast.error('Enter your TextBee API Key.');
+
     setSaving(true);
     const toastId = toast.loading(
-      `Saving ${selectedBranchId === 'GLOBAL' ? 'Master Default' : `Branch [${selectedBranchId}]`} TextBee Gateway...`
+      `Saving ${selectedBranchId === 'GLOBAL' ? 'Master TextBee' : `Branch [${selectedBranchId}]`} configuration...`
     );
 
     const selectedBranchObj = branches.find((b) => b.id === selectedBranchId);
@@ -229,11 +397,10 @@ export default function SmsSettingsPage() {
           action: 'SAVE_GATEWAY',
           branchId: selectedBranchId === 'GLOBAL' ? 'GLOBAL' : selectedBranchId,
           branchName: selectedBranchObj?.name || selectedBranchId,
-          email,
-          deviceId,
+          deviceId: deviceId.trim(),
           apiKey: apiKeyInput.trim() || undefined,
           clearApiKey,
-          simSlot: parseInt(simSlot, 10) || 1,
+          simSlot: parseInt(simSlot, 10) || 0,
           enabled,
         }),
       });
@@ -241,35 +408,39 @@ export default function SmsSettingsPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to save configuration');
 
       toast.success(
-        `Saved ${selectedBranchId === 'GLOBAL' ? 'Master Gateway' : `${selectedBranchObj?.name || selectedBranchId} SIM`} config`,
+        `Connected ${selectedBranchId === 'GLOBAL' ? 'Master Gateway' : `${selectedBranchObj?.name || selectedBranchId} SIM`}`,
         { id: toastId }
       );
       setApiKeyInput('');
       setClearApiKey(false);
       await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message || 'Error saving settings', { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Error saving settings'), { id: toastId });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleRemoveBranchOverride = async () => {
-    if (!isAdmin || selectedBranchId === 'GLOBAL') return;
+  const handleRemoveBranchOverride = async (targetBranch = selectedBranchId) => {
+    if (!isAdmin || targetBranch === 'GLOBAL') return;
     setSaving(true);
-    const toastId = toast.loading(`Resetting ${selectedBranchId} to Master Fallback...`);
+    const toastId = toast.loading(`Removing branch override for ${targetBranch}...`);
     try {
       const res = await fetch('/api/settings/sms-gateway', {
         method: 'POST',
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ action: 'REMOVE_BRANCH', branchId: selectedBranchId }),
+        body: JSON.stringify({ action: 'REMOVE_BRANCH', branchId: targetBranch }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to remove branch config');
-      toast.success(`Branch ${selectedBranchId} reverted to Master Gateway fallback`, { id: toastId });
+      toast.success(`Branch ${targetBranch} now uses the Master Gateway`, { id: toastId });
+      if (selectedBranchId === targetBranch) {
+        setSelectedBranchId('GLOBAL');
+        setTestBranchId('GLOBAL');
+      }
       await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message, { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Failed to remove branch override'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -287,10 +458,10 @@ export default function SmsSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save triggers');
-      toast.success('Auto-SMS triggers updated successfully!', { id: toastId });
-      await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message, { id: toastId });
+      toast.success('Auto-SMS triggers updated!', { id: toastId });
+      await loadSettingsAndLogs({ skipHealth: true });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Failed to save triggers'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -309,9 +480,9 @@ export default function SmsSettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save templates');
       toast.success('Custom SMS templates saved!', { id: toastId });
-      await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message, { id: toastId });
+      await loadSettingsAndLogs({ skipHealth: true });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Failed to save templates'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -320,13 +491,14 @@ export default function SmsSettingsPage() {
   const applyTestTemplatePreview = (key: SmsTemplateKey) => {
     setTestTemplateKey(key);
     const tmpl = templates[key];
-    const branchLabel = testBranchId === 'GLOBAL' ? 'HQ' : testBranchId;
+    const branchLabel = testBranchId === 'GLOBAL' ? 'Head Office' : testBranchId;
+    const todaySl = getSriLankaDateString();
     if (key === 'RECEIPT') {
-      setTestMessage(buildPawnReceiptSms({ customerName: 'Test Customer', ticketNo: '1R 20743', amount: 50000, customTemplate: tmpl }));
+      setTestMessage(buildPawnReceiptSms({ customerName: 'Test Customer', ticketNo: '1R 20743', amount: 50000, dateStr: todaySl, branchName: branchLabel, customTemplate: tmpl }));
     } else if (key === 'APPROVED') {
       setTestMessage(buildPawnApprovedSms({ customerName: 'Test Customer', ticketNo: '1R 20743', amount: 50000, branchName: branchLabel, customTemplate: tmpl }));
     } else if (key === 'INTEREST') {
-      setTestMessage(buildInterestPaymentSms({ customerName: 'Test Customer', ticketNo: '1R 20743', interestAmount: 2750, branchName: branchLabel, customTemplate: tmpl }));
+      setTestMessage(buildInterestPaymentSms({ customerName: 'Test Customer', ticketNo: '1R 20743', interestAmount: 2750, dateStr: todaySl, branchName: branchLabel, customTemplate: tmpl }));
     } else if (key === 'REDEEM') {
       setTestMessage(buildPawnRedeemSms({ customerName: 'Test Customer', ticketNo: '1R 20743', settlementAmount: 52750, branchName: branchLabel, customTemplate: tmpl }));
     } else if (key === 'REMINDER') {
@@ -344,7 +516,7 @@ export default function SmsSettingsPage() {
     if (!testMessage.trim()) return toast.error('Enter message content.');
 
     setTesting(true);
-    const toastId = toast.loading(`Sending test SMS via ${testBranchId === 'GLOBAL' ? 'Master Gateway' : `Branch ${testBranchId}`}...`);
+    const toastId = toast.loading(`Sending SMS via TextBee (${testBranchId === 'GLOBAL' ? 'Master' : testBranchId})...`);
     try {
       const res = await fetch('/api/notifications/sms', {
         method: 'POST',
@@ -363,15 +535,15 @@ export default function SmsSettingsPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to dispatch SMS');
 
       if (data.status === 'SENT') {
-        toast.success(`SMS Delivered to ${data.phone}`, { description: data.notice, id: toastId });
+        toast.success(`SMS Sent to ${data.phone}`, { description: data.notice, id: toastId });
       } else if (data.status === 'QUEUED') {
-        toast.warning(`SMS Queued (Retryable)`, { description: data.notice, id: toastId });
+        toast.warning('SMS Queued (Limit / Timeout)', { description: data.notice, id: toastId });
       } else {
-        toast.error(`SMS Failed (${data.status})`, { description: data.notice || data.error, id: toastId });
+        toast.error(`SMS Failed (${data.status})`, { description: data.error || data.notice, id: toastId });
       }
       loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message || 'Error sending test SMS', { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Error sending SMS'), { id: toastId });
     } finally {
       setTesting(false);
     }
@@ -393,8 +565,8 @@ export default function SmsSettingsPage() {
         toast.error(data.error || data.notice || 'Retry failed', { id: toastId });
       }
       await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message || 'Retry request failed', { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Retry request failed'), { id: toastId });
     } finally {
       setRetryingId(null);
     }
@@ -402,7 +574,7 @@ export default function SmsSettingsPage() {
 
   const handleRetryPendingBatch = async () => {
     setBatchRetrying(true);
-    const toastId = toast.loading('Retrying queued/failed SMS from last 48h...');
+    const toastId = toast.loading('Retrying up to 10 pending SMS...');
     try {
       const res = await fetch('/api/notifications/sms', {
         method: 'POST',
@@ -410,19 +582,23 @@ export default function SmsSettingsPage() {
         body: JSON.stringify({
           action: 'RETRY_PENDING',
           branchId: logBranchFilter,
-          lookbackHours: 48,
-          limit: 20,
+          lookbackHours: 168,
+          limit: 10,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Batch retry failed');
-      toast.success(`Batch Retry Complete: ${data.sentCount} sent / ${data.attempted} attempted`, {
-        description: data.failedCount > 0 ? `${data.failedCount} still pending.` : 'All recent pending messages delivered.',
-        id: toastId,
-      });
+      if (data.attempted === 0) {
+        toast.info('No pending SMS within the last 7 days. Use row Retry for older logs.', { id: toastId });
+      } else {
+        toast.success(`Batch Retry Complete: ${data.sentCount} sent / ${data.attempted} attempted`, {
+          description: data.failedCount > 0 ? `${data.failedCount} still pending.` : 'Batch delivered cleanly.',
+          id: toastId,
+        });
+      }
       await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message || 'Batch retry error', { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Batch retry error'), { id: toastId });
     } finally {
       setBatchRetrying(false);
     }
@@ -439,11 +615,11 @@ export default function SmsSettingsPage() {
       if (!res.ok) throw new Error('Failed to load active pawn bills');
       const data = await res.json();
       const list = Array.isArray(data) ? data : (data.pawns || data.items || []);
-      setBulkPawns(list);
+      setBulkPawns(list as PawnRecipientRow[]);
       setSelectedPawnIds(new Set());
       setBulkSummary(null);
-    } catch (err: any) {
-      toast.error(err.message || 'Could not load active loans');
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Could not load active loans'));
     } finally {
       setBulkLoading(false);
     }
@@ -463,13 +639,15 @@ export default function SmsSettingsPage() {
       .slice(0, 120);
   }, [bulkPawns, bulkSearch]);
 
+  const bulkLimit = quota?.bulkSendLimit || 50;
+
   const toggleSelectPawn = (id: string, validPhone: boolean) => {
     if (!validPhone) return;
     setSelectedPawnIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
-      else if (next.size < 50) next.add(id);
-      else toast.warning('Maximum 50 recipients per bulk batch.');
+      else if (next.size < bulkLimit) next.add(id);
+      else toast.warning(`Maximum ${bulkLimit} recipients per TextBee batch.`);
       return next;
     });
   };
@@ -477,7 +655,7 @@ export default function SmsSettingsPage() {
   const selectAllValidBulk = () => {
     const validIds = filteredBulkPawns
       .filter((p) => normalizeSriLankaPhone(p.phone || p.client_phone || p.clients?.phone).valid)
-      .slice(0, 50)
+      .slice(0, bulkLimit)
       .map((p) => p.id);
     if (selectedPawnIds.size === validIds.length && validIds.length > 0) {
       setSelectedPawnIds(new Set());
@@ -515,16 +693,16 @@ export default function SmsSettingsPage() {
       if (!res.ok) throw new Error(data.error || 'Bulk SMS dispatch failed');
 
       setBulkSummary(data);
-      toast.success(`Bulk Dispatch Complete: ${data.sentCount} Sent, ${data.queuedCount} Queued`, { id: toastId });
+      toast.success(`Bulk Complete: ${data.sentCount} Sent, ${data.queuedCount} Queued, ${data.failedCount} Failed`, { id: toastId });
       await loadSettingsAndLogs();
-    } catch (err: any) {
-      toast.error(err.message || 'Bulk dispatch error', { id: toastId });
+    } catch (err: unknown) {
+      toast.error(getErrText(err, 'Bulk dispatch error'), { id: toastId });
     } finally {
       setBulkSending(false);
     }
   };
 
-  const phoneCheck = useMemo(() => normalizeSriLankaPhone(testPhone), [testPhone]);
+  const phoneCheck = useMemo(() => (testPhone.trim() ? normalizeSriLankaPhone(testPhone) : null), [testPhone]);
   const testSmsParts = useMemo(() => calculateSmsParts(testMessage), [testMessage]);
   const templateParts = useMemo(() => calculateSmsParts(templates[activeTemplateKey] || ''), [templates, activeTemplateKey]);
 
@@ -533,12 +711,21 @@ export default function SmsSettingsPage() {
     [branches, isHead, userBranchId]
   );
 
+  const customBranchKeys = useMemo(
+    () => Object.entries(branchConfigs).filter(([, v]) => Boolean(v?.deviceId)),
+    [branchConfigs]
+  );
+
+  const dailyPct = quota ? Math.min(100, Math.max(0, quota.dailyUsagePercentage)) : 0;
+  const monthlyPct = quota ? Math.min(100, Math.max(0, quota.monthlyUsagePercentage)) : 0;
+  const gatewayEnabled = globalConfig.enabled !== false;
+
   return (
-    <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-16 max-w-full overflow-x-hidden">
+    <div className="space-y-5 animate-in slide-in-from-bottom-4 duration-500 pb-16 max-w-full overflow-x-hidden">
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center glass p-5 sm:p-7 rounded-3xl border-white/40 shadow-xl gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center glass p-5 sm:p-6 rounded-3xl border-white/40 shadow-xl gap-4">
         <div className="flex items-start sm:items-center gap-3">
-          <div className="p-3 bg-amber-500/10 rounded-2xl border border-amber-500/20 text-amber-500 shrink-0">
+          <div className={`p-3 rounded-2xl border shrink-0 ${health?.online && gatewayEnabled ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600' : 'bg-amber-500/10 border-amber-500/20 text-amber-600'}`}>
             <Smartphone className="w-7 h-7" />
           </div>
           <div>
@@ -546,30 +733,61 @@ export default function SmsSettingsPage() {
               <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-tight">
                 TextBee <span className="bg-gradient-to-r from-amber-500 to-yellow-600 bg-clip-text text-transparent">SMS Gateway</span>
               </h1>
-              <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-700 border border-amber-500/20 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                <Lock className="w-3 h-3" /> {isAdmin ? 'Admin Control' : 'Read Only'}
+              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                !gatewayEnabled
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : health?.online
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-amber-50 text-amber-700 border-amber-200'
+              }`}>
+                {!gatewayEnabled ? 'PAUSED' : (health?.status || (loading ? 'CHECKING...' : 'READY'))}
               </span>
+              {quota && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-900 text-[#ffd100]">
+                  {quota.planName} PLAN
+                </span>
+              )}
+              {!isAdmin && (
+                <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-full text-[10px] font-black uppercase flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Read Only
+                </span>
+              )}
             </div>
             <p className="text-slate-500 font-semibold text-xs mt-1">
-              Multi-branch Android tablet SIM dispatch, live device health, trilingual templates, retry queue & bulk reminders.
+              Simple Android TextBee SMS control, live daily/monthly limits, quick testing, auto-receipts & retry queue.
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          {isAdmin && (
+            <Button
+              onClick={handleToggleGateway}
+              disabled={saving}
+              variant="outline"
+              className={`h-10 px-4 font-black rounded-2xl text-xs cursor-pointer gap-1.5 ${
+                gatewayEnabled
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                  : 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+              }`}
+            >
+              <Power className="w-4 h-4" />
+              {gatewayEnabled ? 'SMS ON' : 'SMS OFF (Enable)'}
+            </Button>
+          )}
           <Button
-            onClick={() => handleCheckHealth(selectedBranchId)}
+            onClick={() => fetchLiveHealth(selectedBranchId, false)}
             disabled={healthLoading}
             variant="outline"
-            className="h-10 px-4 bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-bold rounded-2xl shadow-xs text-xs cursor-pointer"
+            className="h-10 px-4 bg-white border-slate-200 text-slate-800 hover:bg-slate-50 font-bold rounded-2xl text-xs cursor-pointer"
           >
-            <Activity className={`w-4 h-4 mr-1.5 ${healthLoading ? 'animate-pulse' : ''}`} />
-            Check Device Health
+            <Activity className={`w-4 h-4 mr-1.5 ${healthLoading ? 'animate-pulse text-emerald-600' : 'text-emerald-600'}`} />
+            Check Phone & Limits
           </Button>
           <Button
             onClick={() => loadSettingsAndLogs()}
             variant="outline"
-            className="h-10 px-4 bg-white border-slate-200 text-slate-700 font-bold rounded-2xl shadow-xs text-xs cursor-pointer"
+            className="h-10 px-3.5 bg-white border-slate-200 text-slate-700 font-bold rounded-2xl text-xs cursor-pointer"
           >
             <RefreshCcw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin text-amber-500' : ''}`} />
             Refresh
@@ -577,39 +795,169 @@ export default function SmsSettingsPage() {
         </div>
       </div>
 
-      {/* Summary KPI Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <Card className="glass border-white/40 rounded-2xl p-4 shadow-sm">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sent (Recent 500)</p>
-          <p className="text-2xl font-black text-emerald-600 mt-1">{stats.sent}</p>
-          <p className="text-[11px] font-semibold text-slate-500 mt-0.5">Today: {stats.todaySent} delivered</p>
-        </Card>
-        <Card className="glass border-white/40 rounded-2xl p-4 shadow-sm">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Queued / Failed</p>
-          <p className={`text-2xl font-black mt-1 ${stats.queued + stats.failed > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
-            {stats.queued + stats.failed}
+      {/* Live Status & SMS Limit Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* Card 1: Phone Health */}
+        <Card className={`rounded-2xl p-4 border shadow-sm ${
+          health?.online && gatewayEnabled
+            ? 'bg-emerald-50/70 border-emerald-200'
+            : health?.status === 'ERROR' || health?.status === 'NOT_CONFIGURED' || !gatewayEnabled
+            ? 'bg-rose-50/70 border-rose-200'
+            : 'glass border-white/40'
+        }`}>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Connected Phone</p>
+            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+              health?.online && gatewayEnabled ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-white'
+            }`}>
+              {!gatewayEnabled ? 'PAUSED' : (health?.status || (healthLoading ? 'PINGING' : 'PENDING'))}
+            </span>
+          </div>
+          <p className="text-sm font-black text-slate-900 mt-1.5 truncate">
+            {health?.model ? `${health.brand || ''} ${health.model}`.trim() : (globalConfig.deviceId ? `Device ••••${globalConfig.deviceId.slice(-4)}` : 'No Device Linked')}
           </p>
-          <p className="text-[11px] font-semibold text-slate-500 mt-0.5">{stats.queued} queued • {stats.failed} failed</p>
+          {health && !health.error ? (
+            <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold text-slate-600 mt-1.5">
+              <span className="inline-flex items-center gap-1">
+                {health.isCharging ? <BatteryCharging className="w-3.5 h-3.5 text-emerald-600" /> : <Battery className="w-3.5 h-3.5" />}
+                {health.batteryPercentage ?? '—'}%
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Wifi className="w-3.5 h-3.5 text-indigo-600" />
+                {health.networkType || '—'}
+              </span>
+              <span>{health.heartbeatAgeMinutes !== null && health.heartbeatAgeMinutes !== undefined ? `${health.heartbeatAgeMinutes}m ago` : '—'}</span>
+            </div>
+          ) : (
+            <p className="text-[11px] font-semibold text-rose-700 mt-1.5 truncate" title={health?.error || ''}>
+              {health?.error || 'Link TextBee Device ID & API Key below.'}
+            </p>
+          )}
         </Card>
+
+        {/* Card 2: Daily SMS Limit */}
         <Card className="glass border-white/40 rounded-2xl p-4 shadow-sm">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Custom Branch SIMs</p>
-          <p className="text-2xl font-black text-amber-600 mt-1">{globalConfig.configuredBranchCount || 0}</p>
-          <p className="text-[11px] font-semibold text-slate-500 mt-0.5">Fallback: {globalConfig.hasApiKey ? 'Master Active' : 'Not Configured'}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Daily SMS Limit</p>
+            <Gauge className="w-4 h-4 text-indigo-500" />
+          </div>
+          {quota ? (
+            <>
+              <div className="flex items-baseline justify-between mt-1">
+                <p className={`text-2xl font-black ${quota.dailyRemaining <= 0 ? 'text-rose-600' : quota.dailyRemaining <= 10 ? 'text-amber-600' : 'text-slate-900'}`}>
+                  {Math.max(0, quota.dailyRemaining)} <span className="text-xs font-bold text-slate-500">/ {quota.dailyLimit} left</span>
+                </p>
+                <span className="text-[11px] font-mono font-bold text-slate-500">{dailyPct}%</span>
+              </div>
+              <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mt-2">
+                <div
+                  className={`h-full transition-all ${dailyPct >= 95 ? 'bg-rose-600' : dailyPct >= 70 ? 'bg-amber-500' : 'bg-indigo-600'}`}
+                  style={{ width: `${dailyPct}%` }}
+                />
+              </div>
+              <p className="text-[11px] font-semibold text-slate-500 mt-1.5">
+                Used today: {quota.processedSmsToday} • Max {quota.bulkSendLimit}/batch
+              </p>
+            </>
+          ) : (
+            <p className="text-xs font-semibold text-slate-400 mt-2">
+              {healthLoading ? 'Loading TextBee daily quota...' : 'Save valid API Key to show live daily limit.'}
+            </p>
+          )}
         </Card>
+
+        {/* Card 3: Monthly SMS Limit */}
+        <Card className={`rounded-2xl p-4 border shadow-sm ${
+          quota && quota.monthlyRemaining <= 0
+            ? 'bg-rose-50 border-rose-300'
+            : quota && quota.monthlyRemaining <= 40
+            ? 'bg-amber-50/80 border-amber-200'
+            : 'glass border-white/40'
+        }`}>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Monthly SMS Limit</p>
+            {quota && (
+              <span className="text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                Resets {formatResetDate(quota.monthlyResetAt)}
+              </span>
+            )}
+          </div>
+          {quota ? (
+            <>
+              <div className="flex items-baseline justify-between mt-1">
+                <p className={`text-2xl font-black ${quota.monthlyRemaining <= 0 ? 'text-rose-600' : quota.monthlyRemaining <= 40 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  {Math.max(0, quota.monthlyRemaining)} <span className="text-xs font-bold text-slate-500">/ {quota.monthlyLimit} left</span>
+                </p>
+                <span className="text-[11px] font-mono font-bold text-slate-500">{monthlyPct}%</span>
+              </div>
+              <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mt-2">
+                <div
+                  className={`h-full transition-all ${monthlyPct >= 95 ? 'bg-rose-600' : monthlyPct >= 75 ? 'bg-amber-500' : 'bg-emerald-600'}`}
+                  style={{ width: `${monthlyPct}%` }}
+                />
+              </div>
+              <p className="text-[10px] font-semibold text-slate-500 mt-1.5">
+                Used: {quota.processedSmsLastMonth} (sent &amp; received SMS count)
+              </p>
+            </>
+          ) : (
+            <p className="text-xs font-semibold text-slate-400 mt-2">
+              {healthLoading ? 'Loading monthly allowance...' : 'Save valid API Key to show live monthly limit.'}
+            </p>
+          )}
+        </Card>
+
+        {/* Card 4: Delivery Stats */}
         <Card className="glass border-white/40 rounded-2xl p-4 shadow-sm">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Auto Triggers Active</p>
-          <p className="text-2xl font-black text-indigo-600 mt-1">
-            {Object.values(triggers).filter(Boolean).length} / {SMS_TRIGGER_META.length}
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">System SMS Activity</p>
+          <div className="flex items-baseline gap-3 mt-1">
+            <p className="text-2xl font-black text-emerald-600">{stats.todaySent} <span className="text-xs font-bold text-slate-500">today</span></p>
+            <span className="text-xs font-bold text-slate-400">•</span>
+            <p className={`text-lg font-black ${stats.retryable7d > 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+              {stats.queued + stats.failed} <span className="text-[11px] font-semibold text-slate-500">failed/queued</span>
+            </p>
+          </div>
+          <p className="text-[11px] font-semibold text-slate-500 mt-1.5">
+            {Object.values(triggers).filter(Boolean).length}/{SMS_TRIGGER_META.length} Auto-triggers • All Branches → Master
           </p>
-          <p className="text-[11px] font-semibold text-slate-500 mt-0.5">Gateway {globalConfig.enabled !== false ? 'ENABLED' : 'PAUSED'}</p>
         </Card>
       </div>
 
-      {/* Navigation Tabs */}
+      {/* Actionable Hardware / Quota Warnings */}
+      {quota && (quota.monthlyRemaining <= 0 || quota.dailyRemaining <= 0) && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-300 flex items-start gap-3 text-rose-900 text-xs font-bold">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-black">TextBee SMS Quota Reached</p>
+            <p className="font-semibold text-rose-700 mt-0.5">
+              Daily remaining: {quota.dailyRemaining}/{quota.dailyLimit} • Monthly remaining: {quota.monthlyRemaining}/{quota.monthlyLimit}.
+              Sending pauses until {formatResetDate(quota.monthlyResetAt)} or upgrade your TextBee plan.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {health?.online && ((health.sims && health.sims.length === 0) || health.batteryOptimizationIgnored === false) && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2 text-amber-900 text-xs font-semibold">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              {health.sims && health.sims.length === 0
+                ? 'Device online, but TextBee has not reported an active SIM card yet — confirm SIM is inserted with SMS balance.'
+                : 'Android Battery Optimization is still ON on the gateway device — turn battery optimization OFF for TextBee so background SMS never stalls.'}
+            </span>
+          </div>
+          {health.batteryOptimizationIgnored === false && health.sims && health.sims.length === 0 && (
+            <span className="text-[10px] font-bold text-amber-700">Tip: Disable Battery Optimization in TextBee app settings</span>
+          )}
+        </div>
+      )}
+
+      {/* Clean Navigation Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
         {[
-          { key: 'gateway', label: 'Gateway & Devices', icon: Server },
-          { key: 'dispatch', label: 'Test & Bulk Reminders', icon: Send },
+          { key: 'gateway', label: 'Device & Quick Test', icon: Server },
+          { key: 'dispatch', label: 'Bulk Reminders', icon: Users },
           { key: 'templates', label: 'Auto Triggers & Templates', icon: Sliders },
           { key: 'logs', label: `Logs & Retry (${stats.queued + stats.failed})`, icon: FileText },
         ].map(({ key, label, icon: Icon }) => (
@@ -628,594 +976,542 @@ export default function SmsSettingsPage() {
         ))}
       </div>
 
-      {!isAdmin && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-amber-900 font-bold text-xs shadow-xs">
-          <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0" />
-          <span>Read-Only Configuration: Only System Administrators can change TextBee credentials, auto-triggers, or templates.</span>
-        </div>
-      )}
-
-      {/* TAB 1: GATEWAY & DEVICES */}
+      {/* TAB 1: SIMPLE SETUP + QUICK TEST SMS */}
       {activeTab === 'gateway' && (
-        <div className="space-y-6">
-          {/* Live Health Result Banner */}
-          {health && (
-            <Card className={`rounded-3xl p-5 border shadow-md ${health.online ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div className={`p-2.5 rounded-2xl ${health.online ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                    <Activity className="w-5 h-5" />
-                  </div>
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Simple TextBee Connection Card */}
+            <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 lg:col-span-7 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+                <div className="flex items-center gap-2.5">
+                  <Server className="w-5 h-5 text-amber-500" />
                   <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-black text-sm text-slate-900">
-                        {health.brand || ''} {health.model || `Device ••••${health.deviceIdTail || ''}`}
-                      </h3>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${health.online ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
-                        {health.status}
+                    <h2 className="font-black text-base text-slate-900">
+                      {selectedBranchId === 'GLOBAL'
+                        ? 'Main TextBee Android Phone (All Branches)'
+                        : `Branch Override: ${branches.find((b) => b.id === selectedBranchId)?.name || selectedBranchId}`}
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      1. Paste API Key → 2. Click Detect Device → 3. Save &amp; Connect.
+                    </p>
+                  </div>
+                </div>
+                {selectedBranchId !== 'GLOBAL' && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleBranchSelect('GLOBAL')}
+                    className="h-8 px-3 rounded-xl text-[11px] font-bold cursor-pointer"
+                  >
+                    Back to Main Phone
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                {/* Step 1: API Key + Detect */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-slate-700">1. TextBee API Key</Label>
+                    {hasSavedKey && !clearApiKey && (
+                      <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        Saved ({savedMaskedKey})
                       </span>
-                      <span className="text-[11px] font-mono text-slate-500">
-                        Scope: {health.usedBranchDevice ? `Branch [${health.branchId}] SIM` : 'Master Default SIM'}
-                      </span>
-                    </div>
-                    {health.error ? (
-                      <p className="text-xs font-bold text-rose-700 mt-1">{health.error}</p>
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-700 mt-1.5">
-                        <span className="inline-flex items-center gap-1">
-                          {health.isCharging ? <BatteryCharging className="w-3.5 h-3.5 text-emerald-600" /> : <Battery className="w-3.5 h-3.5 text-slate-600" />}
-                          Battery: {health.batteryPercentage ?? '—'}%
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Wifi className="w-3.5 h-3.5 text-indigo-600" />
-                          Network: {health.networkType || '—'}
-                        </span>
-                        <span>Last Ping: {health.heartbeatAgeMinutes !== null ? `${health.heartbeatAgeMinutes}m ago` : 'Never'}</span>
-                        <span>App v{health.appVersion || '—'}</span>
-                        <span>Total Sent: {health.sentSMSCount ?? '—'}</span>
-                      </div>
-                    )}
-                    {Array.isArray(health.sims) && health.sims.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {health.sims.map((s: any) => (
-                          <span key={s.slot} className="px-2.5 py-0.5 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
-                            SIM {s.slot}: {s.displayName || s.carrier}
-                          </span>
-                        ))}
-                      </div>
                     )}
                   </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input
+                      value={apiKeyInput}
+                      onChange={(e) => {
+                        setApiKeyInput(e.target.value);
+                        if (e.target.value) setClearApiKey(false);
+                      }}
+                      disabled={!isAdmin}
+                      type="password"
+                      placeholder={
+                        clearApiKey
+                          ? 'Key will be cleared on Save'
+                          : hasSavedKey
+                          ? `Keep existing (${savedMaskedKey}) or paste new key`
+                          : 'Paste TextBee API Key (txb_...)'
+                      }
+                      className="h-11 rounded-xl bg-white font-mono text-xs flex-1"
+                    />
+                    {isAdmin && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={discovering}
+                        onClick={handleDiscoverDevices}
+                        className="h-11 px-4 rounded-xl text-xs font-black border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 shrink-0 cursor-pointer gap-1.5"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${discovering ? 'animate-spin' : ''}`} />
+                        {discovering ? 'Checking...' : 'Detect Device'}
+                      </Button>
+                    )}
+                    {isAdmin && hasSavedKey && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setClearApiKey(!clearApiKey);
+                          setApiKeyInput('');
+                        }}
+                        className="h-11 px-3 rounded-xl text-xs font-bold border-rose-200 text-rose-600 hover:bg-rose-50 shrink-0 cursor-pointer"
+                      >
+                        {clearApiKey ? 'Undo' : 'Clear'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Detected Devices Picker */}
+                {discoveredDevices.length > 0 && (
+                  <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-2">
+                    <p className="text-[11px] font-black text-emerald-900">Select Detected Android Device:</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {discoveredDevices.map((dev) => {
+                        const selected = deviceId.trim() === dev.id;
+                        return (
+                          <button
+                            key={dev.id}
+                            type="button"
+                            onClick={() => setDeviceId(dev.id)}
+                            className={`text-left p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                              selected ? 'bg-white border-emerald-500 ring-2 ring-emerald-500/20' : 'bg-white/70 border-slate-200 hover:bg-white'
+                            }`}
+                          >
+                            <div>
+                              <p className="font-black text-slate-900">{dev.name} {dev.osVersion ? `(Android ${dev.osVersion})` : ''}</p>
+                              <p className="text-[10px] font-mono text-slate-500">ID: ••••{dev.id.slice(-6)} • Battery {dev.batteryPercentage ?? '?'}% • App v{dev.appVersion || '?'}</p>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${dev.online ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>
+                              {dev.online ? 'ONLINE' : 'STALE'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 2: Device ID + SIM Slot */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">2. TextBee Device ID</Label>
+                    <Input
+                      value={deviceId}
+                      onChange={(e) => setDeviceId(e.target.value)}
+                      disabled={!isAdmin}
+                      placeholder="Auto-filled or paste Device ID..."
+                      className="h-11 rounded-xl bg-white font-mono text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">3. SIM Selection</Label>
+                    <select
+                      value={simSlot}
+                      onChange={(e) => setSimSlot(e.target.value)}
+                      disabled={!isAdmin}
+                      className="w-full h-11 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
+                    >
+                      <option value="0">Auto / Device Default SIM (Recommended)</option>
+                      <option value="1">SIM Slot 1</option>
+                      <option value="2">SIM Slot 2</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Gateway Active Toggle + Actions */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                  <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={!isAdmin}
+                      onChange={(e) => setEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-amber-500 rounded"
+                    />
+                    Gateway Enabled for Dispatch
+                  </label>
+
+                  {isAdmin && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedBranchId !== 'GLOBAL' && branchConfigs[normalizeBranchId(selectedBranchId)] && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={saving}
+                          onClick={() => handleRemoveBranchOverride(selectedBranchId)}
+                          className="h-10 px-3.5 rounded-xl text-xs font-bold border-rose-200 text-rose-700 hover:bg-rose-50 gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remove Override
+                        </Button>
+                      )}
+                      <Button
+                        onClick={handleSaveConfig}
+                        disabled={saving}
+                        className="h-11 px-6 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs gap-2 shadow-md cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" />
+                        Save &amp; Connect
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
-          )}
 
-          {/* Branch Selector Pills */}
-          <div className="flex flex-wrap items-center gap-2">
-            {isHead && (
-              <button
-                onClick={() => handleBranchSelect('GLOBAL')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-black flex items-center gap-2 border cursor-pointer ${
-                  selectedBranchId === 'GLOBAL'
-                    ? 'bg-slate-950 text-[#ffd100] border-slate-900 shadow-sm'
-                    : 'bg-white/80 text-slate-600 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                <Server className="w-3.5 h-3.5" /> Master Default Gateway
-              </button>
-            )}
-
-            {activeBranchList.map((b) => {
-              const norm = normalizeBranchId(b.id);
-              const bConf = branchConfigs[norm] || branchConfigs[b.id];
-              const hasCustom = Boolean(bConf?.deviceId);
-              const isDisabled = bConf && bConf.enabled === false;
-              return (
-                <button
-                  key={b.id}
-                  onClick={() => handleBranchSelect(b.id)}
-                  className={`px-3.5 py-2 rounded-2xl text-xs font-black flex items-center gap-2 border cursor-pointer ${
-                    selectedBranchId === b.id
-                      ? 'bg-[#ffd100] text-[#202020] border-amber-400 shadow-sm'
-                      : 'bg-white/80 text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  <Building2 className="w-3.5 h-3.5" />
-                  <span>{b.name || b.id} ({norm})</span>
-                  {hasCustom && (
-                    <span className={`w-2 h-2 rounded-full ${isDisabled ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Editor Card */}
-          <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-amber-500" />
-                <h2 className="font-black text-base text-slate-900">
-                  {selectedBranchId === 'GLOBAL'
-                    ? 'Master Default TextBee Config'
-                    : `Branch Config: ${branches.find((b) => b.id === selectedBranchId)?.name || selectedBranchId} (${normalizeBranchId(selectedBranchId)})`}
-                </h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={!isAdmin}
-                    onChange={(e) => setEnabled(e.target.checked)}
-                    className="w-4 h-4 accent-amber-500 rounded"
-                  />
-                  Gateway Enabled
-                </label>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700">Branch Tablet Email Profile</Label>
-                <Input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={!isAdmin}
-                  placeholder="e.g. branch.kht@rupasinghe.lk"
-                  className="h-11 rounded-xl bg-white/80 font-mono text-xs"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700">Preferred SIM Slot Label</Label>
-                <select
-                  value={simSlot}
-                  onChange={(e) => setSimSlot(e.target.value)}
-                  disabled={!isAdmin}
-                  className="w-full h-11 px-3 rounded-xl bg-white/80 border border-slate-200 font-mono text-xs font-bold"
-                >
-                  <option value="1">SIM Slot 1</option>
-                  <option value="2">SIM Slot 2</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700">TextBee Device ID</Label>
-                <Input
-                  value={deviceId}
-                  onChange={(e) => setDeviceId(e.target.value)}
-                  disabled={!isAdmin}
-                  placeholder="Paste TextBee Device ID..."
-                  className="h-11 rounded-xl bg-white/80 font-mono text-xs"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-700">TextBee API Key</Label>
-                  {hasSavedKey && !clearApiKey && (
-                    <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                      Saved ({savedMaskedKey})
-                    </span>
-                  )}
+            {/* Quick Send Test SMS Card (Right Alongside Setup) */}
+            <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 lg:col-span-5 space-y-4">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <MessageSquare className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h2 className="font-black text-base text-slate-900">Quick Send / Test SMS</h2>
+                  <p className="text-[11px] text-slate-500">Test delivery on your phone right after saving.</p>
                 </div>
-                <div className="flex gap-2">
-                  <Input
-                    value={apiKeyInput}
-                    onChange={(e) => {
-                      setApiKeyInput(e.target.value);
-                      if (e.target.value) setClearApiKey(false);
-                    }}
-                    disabled={!isAdmin}
-                    type="password"
-                    placeholder={
-                      clearApiKey
-                        ? 'Key will be cleared on Save'
-                        : hasSavedKey
-                        ? `Leave blank to keep ${savedMaskedKey}`
-                        : 'Enter new TextBee API Key (txb_...)'
-                    }
-                    className="h-11 rounded-xl bg-white/80 font-mono text-xs"
-                  />
-                  {isAdmin && hasSavedKey && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setClearApiKey(!clearApiKey);
-                        setApiKeyInput('');
-                      }}
-                      className="h-11 px-3 rounded-xl text-xs font-bold border-rose-200 text-rose-600 hover:bg-rose-50 shrink-0"
+              </div>
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-bold text-slate-700">Mobile Number</Label>
+                    <Input
+                      value={testPhone}
+                      onChange={(e) => setTestPhone(e.target.value)}
+                      placeholder="0771234567"
+                      className="h-10 rounded-xl bg-white font-mono text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs font-bold text-slate-700">Template Preset</Label>
+                    <select
+                      value={testTemplateKey}
+                      onChange={(e) => applyTestTemplatePreview(e.target.value as SmsTemplateKey)}
+                      className="w-full h-10 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-bold"
                     >
-                      {clearApiKey ? 'Undo' : 'Clear'}
-                    </Button>
-                  )}
+                      {(Object.keys(SMS_TEMPLATE_LABELS) as SmsTemplateKey[]).map((k) => (
+                        <option key={k} value={k}>
+                          {SMS_TEMPLATE_LABELS[k].label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-1.5 md:col-span-2">
-                <Label className="text-xs font-bold text-slate-700">TextBee Cloud Send Endpoint (Auto-Built)</Label>
-                <Input
-                  value={deviceId ? `https://api.textbee.dev/api/v1/gateway/devices/${deviceId.trim()}/send-sms` : ''}
-                  readOnly
-                  placeholder="Enter Device ID above to generate TextBee endpoint..."
-                  className="h-11 rounded-xl bg-slate-50 font-mono text-xs text-slate-600"
-                />
-              </div>
-            </div>
-
-            {isAdmin && (
-              <div className="flex flex-wrap justify-between items-center gap-3 pt-2">
-                {selectedBranchId !== 'GLOBAL' && branchConfigs[normalizeBranchId(selectedBranchId)] ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={saving}
-                    onClick={handleRemoveBranchOverride}
-                    className="h-10 px-4 rounded-xl text-xs font-bold border-rose-200 text-rose-700 hover:bg-rose-50 gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Revert Branch to Master Fallback
-                  </Button>
-                ) : (
-                  <div />
+                {phoneCheck && (
+                  <p className={`text-[11px] font-mono ${phoneCheck.valid ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {phoneCheck.valid ? `Ready: ${phoneCheck.e164}` : phoneCheck.reason}
+                  </p>
                 )}
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-slate-700">Message Preview</Label>
+                    <span className={`text-[10px] font-mono font-bold ${testSmsParts.parts > 2 ? 'text-amber-600' : 'text-slate-500'}`}>
+                      {testSmsParts.chars} chars • {testSmsParts.parts} SMS ({testSmsParts.encoding})
+                    </span>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={testMessage}
+                    onChange={(e) => setTestMessage(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-white border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  />
+                </div>
+
                 <Button
-                  onClick={handleSaveConfig}
-                  disabled={saving}
-                  className="h-11 px-6 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs gap-2 shadow-md cursor-pointer"
+                  onClick={handleSendTestSms}
+                  disabled={testing || !phoneCheck?.valid || !gatewayEnabled}
+                  className="w-full h-11 bg-slate-950 hover:bg-slate-800 text-white font-bold rounded-xl text-xs gap-2 shadow-md cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
-                  Save {selectedBranchId === 'GLOBAL' ? 'Master Gateway' : `Branch [${normalizeBranchId(selectedBranchId)}]`}
+                  <Send className="w-4 h-4" />
+                  {testing ? 'Sending...' : 'Send Test SMS Now'}
                 </Button>
               </div>
-            )}
-          </Card>
+            </Card>
+          </div>
 
-          {/* Branch Gateway Matrix */}
-          <Card className="glass border-white/40 shadow-xl rounded-3xl overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="font-black text-base text-slate-900">Branch SMS Gateway Matrix</h2>
-                <p className="text-xs text-slate-500">Overview of custom Android tablet SIMs vs Master fallback across branches.</p>
-              </div>
-              <span className="text-xs font-bold text-slate-400">Branches: {activeBranchList.length}</span>
-            </div>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader className="bg-slate-950 text-white">
-                    <TableRow className="hover:bg-slate-900 border-slate-800">
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300 py-3.5 pl-5">Branch</TableHead>
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Profile Email</TableHead>
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Device ID</TableHead>
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">API Key</TableHead>
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Mode</TableHead>
-                      <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300 pr-5 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="divide-y divide-slate-100">
-                    {activeBranchList.map((b) => {
-                      const norm = normalizeBranchId(b.id);
-                      const bConf = branchConfigs[norm] || branchConfigs[b.id];
-                      const hasCustom = Boolean(bConf?.deviceId);
-                      const isDisabled = bConf?.enabled === false;
-                      return (
-                        <TableRow key={b.id} className="hover:bg-slate-50">
-                          <TableCell className="pl-5 font-bold text-xs text-slate-900">
-                            <p className="font-black">{b.name || b.id}</p>
-                            <p className="text-[10px] font-mono text-slate-400">Code: {norm}</p>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-slate-600">{bConf?.email || '—'}</TableCell>
-                          <TableCell className="font-mono text-xs font-semibold text-slate-800">
-                            {bConf?.deviceId || (globalConfig.deviceId ? `${globalConfig.deviceId} (Master)` : 'Not Configured')}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-slate-500">
-                            {bConf?.hasApiKey ? bConf.maskedApiKey : (globalConfig.hasApiKey ? `Master (${globalConfig.maskedApiKey})` : 'None')}
-                          </TableCell>
-                          <TableCell>
-                            {isDisabled ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full text-[10px] font-black">
-                                DISABLED
-                              </span>
-                            ) : hasCustom ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-black">
-                                <CheckCircle2 className="w-3 h-3" /> CUSTOM BRANCH SIM
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-black">
-                                <Radio className="w-3 h-3" /> MASTER FALLBACK
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell className="pr-5 text-right">
-                            <div className="flex justify-end gap-1.5">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleCheckHealth(b.id)}
-                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl cursor-pointer"
-                              >
-                                Ping
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleBranchSelect(b.id)}
-                                className="h-8 px-3 text-[11px] font-black text-amber-700 bg-amber-50 border-amber-300 rounded-xl cursor-pointer"
-                              >
-                                Configure
-                              </Button>
-                            </div>
-                          </TableCell>
+          {/* Collapsible Optional Per-Branch Overrides (Hidden by Default to Keep UI Simple) */}
+          {isHead && (
+            <Card className="glass border-white/40 shadow-sm rounded-3xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowBranchOverrides((prev) => !prev)}
+                className="w-full px-5 py-4 flex items-center justify-between gap-2 text-left hover:bg-white/50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  {showBranchOverrides ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                  <Building2 className="w-4 h-4 text-amber-500" />
+                  <div>
+                    <p className="text-xs font-black text-slate-900">
+                      Optional: Separate Branch Phones ({customBranchKeys.length} custom override{customBranchKeys.length === 1 ? '' : 's'})
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Currently all branches use your Main TextBee Device automatically. Only open if a branch uses its own tablet SIM.
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-bold text-amber-700 shrink-0">
+                  {showBranchOverrides ? 'Hide' : 'Configure Branch SIMs'}
+                </span>
+              </button>
+
+              {showBranchOverrides && (
+                <CardContent className="p-0 border-t border-slate-100">
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader className="bg-slate-950 text-white">
+                        <TableRow className="hover:bg-slate-900 border-slate-800">
+                          <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300 py-3 pl-5">Branch</TableHead>
+                          <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Device</TableHead>
+                          <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Mode</TableHead>
+                          <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300 pr-5 text-right">Actions</TableHead>
                         </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
+                      </TableHeader>
+                      <TableBody className="divide-y divide-slate-100">
+                        {activeBranchList.map((b) => {
+                          const norm = normalizeBranchId(b.id);
+                          const bConf = branchConfigs[norm] || branchConfigs[b.id];
+                          const hasCustom = Boolean(bConf?.deviceId);
+                          return (
+                            <TableRow key={b.id} className="hover:bg-slate-50">
+                              <TableCell className="pl-5 font-bold text-xs text-slate-900">
+                                {b.name || b.id} <span className="font-mono text-[10px] text-slate-400">({norm})</span>
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-slate-600">
+                                {bConf?.deviceId ? `••••${bConf.deviceId.slice(-6)}` : (globalConfig.deviceId ? `Master (••••${globalConfig.deviceId.slice(-4)})` : 'Not Configured')}
+                              </TableCell>
+                              <TableCell>
+                                {hasCustom ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-black">
+                                    <CheckCircle2 className="w-3 h-3" /> CUSTOM BRANCH SIM
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-black">
+                                    <Radio className="w-3 h-3" /> MASTER SHARED
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell className="pr-5 text-right">
+                                <div className="flex justify-end gap-1.5">
+                                  {hasCustom && isAdmin && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleRemoveBranchOverride(b.id)}
+                                      className="h-8 px-2.5 text-[11px] font-bold text-rose-700 border-rose-200 rounded-xl cursor-pointer"
+                                    >
+                                      Use Master
+                                    </Button>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleBranchSelect(b.id)}
+                                    className="h-8 px-3 text-[11px] font-black text-amber-700 bg-amber-50 border-amber-300 rounded-xl cursor-pointer"
+                                  >
+                                    Set Custom
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          )}
         </div>
       )}
 
-      {/* TAB 2: TEST & BULK REMINDERS */}
+      {/* TAB 2: BULK REMINDERS */}
       {activeTab === 'dispatch' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Single Test / Manual SMS */}
-          <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <MessageSquare className="w-5 h-5 text-indigo-600" />
-              <h2 className="font-black text-base text-slate-900">Single / Branch Test SMS</h2>
-            </div>
-
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700">Dispatch Via Branch Gateway</Label>
-                <select
-                  value={testBranchId}
-                  onChange={(e) => setTestBranchId(e.target.value)}
-                  disabled={!isHead}
-                  className="w-full h-10 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
-                >
-                  {isHead && <option value="GLOBAL">Master Default Gateway (HQ)</option>}
-                  {activeBranchList.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name || b.id} ({normalizeBranchId(b.id)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700">Customer / Test Mobile Number</Label>
-                <Input
-                  value={testPhone}
-                  onChange={(e) => setTestPhone(e.target.value)}
-                  placeholder="0771234567 or +9477..."
-                  className="h-10 rounded-xl bg-white font-mono text-xs"
-                />
-                <p className={`text-[11px] font-mono ${phoneCheck.valid ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {phoneCheck.valid ? `Normalized: ${phoneCheck.e164}` : phoneCheck.reason}
+        <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-amber-500" />
+              <div>
+                <h2 className="font-black text-base text-slate-900">Bulk Active Loan Reminders (Max {bulkLimit} / batch)</h2>
+                <p className="text-xs text-slate-500">
+                  Load active loans, select valid numbers, and send personalized reminders.
+                  {quota ? ` Monthly remaining: ${quota.monthlyRemaining} SMS.` : ''}
                 </p>
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={bulkBranch}
+                onChange={(e) => setBulkBranch(e.target.value)}
+                disabled={!isHead}
+                className="h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
+              >
+                {isHead && <option value="ALL">All Branches</option>}
+                {activeBranchList.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name || b.id} ({normalizeBranchId(b.id)})</option>
+                ))}
+              </select>
+              <Button
+                onClick={loadBulkRecipients}
+                disabled={bulkLoading}
+                variant="outline"
+                className="h-9 px-3.5 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${bulkLoading ? 'animate-spin' : ''}`} />
+                Load Active Loans
+              </Button>
+            </div>
+          </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700">Load Template Preset</Label>
-                <select
-                  value={testTemplateKey}
-                  onChange={(e) => applyTestTemplatePreview(e.target.value as SmsTemplateKey)}
-                  className="w-full h-10 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
-                >
-                  {(Object.keys(SMS_TEMPLATE_LABELS) as SmsTemplateKey[]).map((k) => (
-                    <option key={k} value={k}>
-                      {SMS_TEMPLATE_LABELS[k].label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {bulkSummary && (
+            <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex flex-wrap gap-4">
+              <span>Total: {bulkSummary.total}</span>
+              <span className="text-emerald-700">Sent: {bulkSummary.sentCount}</span>
+              <span className="text-amber-700">Queued: {bulkSummary.queuedCount}</span>
+              <span className="text-rose-700">Failed/Invalid: {bulkSummary.failedCount + bulkSummary.invalidCount}</span>
+            </div>
+          )}
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-700">Message Content</Label>
-                  <span className="text-[10px] font-mono text-slate-500">
-                    {testSmsParts.chars} chars • {testSmsParts.parts} SMS ({testSmsParts.encoding})
-                  </span>
-                </div>
-                <textarea
-                  rows={6}
-                  value={testMessage}
-                  onChange={(e) => setTestMessage(e.target.value)}
-                  className="w-full p-3 rounded-xl bg-white border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs font-bold text-slate-700">Filter Recipients</Label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                <Input
+                  value={bulkSearch}
+                  onChange={(e) => setBulkSearch(e.target.value)}
+                  placeholder="Search bill #, customer name, or phone..."
+                  className="h-9 pl-8 rounded-xl bg-white text-xs"
                 />
               </div>
-
-              <Button
-                onClick={handleSendTestSms}
-                disabled={testing || !phoneCheck.valid}
-                className="w-full h-11 bg-slate-950 hover:bg-slate-800 text-white font-bold rounded-xl text-xs gap-2 shadow-md cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                {testing ? 'Sending...' : 'Dispatch SMS Now'}
-              </Button>
             </div>
-          </Card>
-
-          {/* Bulk Customer / Loan Reminders */}
-          <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 lg:col-span-2 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-500" />
-                <div>
-                  <h2 className="font-black text-base text-slate-900">Bulk Active Loan Reminders (Max 50 / batch)</h2>
-                  <p className="text-xs text-slate-500">Load active loans, select valid customer phones, and send personalized reminders.</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={bulkBranch}
-                  onChange={(e) => setBulkBranch(e.target.value)}
-                  disabled={!isHead}
-                  className="h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
-                >
-                  {isHead && <option value="ALL">All Branches</option>}
-                  {activeBranchList.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name || b.id} ({normalizeBranchId(b.id)})</option>
-                  ))}
-                </select>
-                <Button
-                  onClick={loadBulkRecipients}
-                  disabled={bulkLoading}
-                  variant="outline"
-                  className="h-9 px-3.5 rounded-xl text-xs font-bold cursor-pointer"
-                >
-                  <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${bulkLoading ? 'animate-spin' : ''}`} />
-                  Load Active Loans
-                </Button>
-              </div>
-            </div>
-
-            {bulkSummary && (
-              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex flex-wrap gap-4">
-                <span>Total: {bulkSummary.total}</span>
-                <span className="text-emerald-700">Sent: {bulkSummary.sentCount}</span>
-                <span className="text-amber-700">Queued: {bulkSummary.queuedCount}</span>
-                <span className="text-rose-700">Failed/Invalid: {bulkSummary.failedCount + bulkSummary.invalidCount}</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700">Filter Recipients</Label>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                  <Input
-                    value={bulkSearch}
-                    onChange={(e) => setBulkSearch(e.target.value)}
-                    placeholder="Search bill #, customer name, or phone..."
-                    className="h-9 pl-8 rounded-xl bg-white text-xs"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700">Bulk Template Base</Label>
-                <select
-                  value={bulkTemplateKey}
-                  onChange={(e) => {
-                    const k = e.target.value as SmsTemplateKey;
-                    setBulkTemplateKey(k);
-                    setBulkCustomMsg(templates[k] || DEFAULT_SMS_TEMPLATES[k]);
-                  }}
-                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
-                >
-                  <option value="REMINDER">Payment Reminder</option>
-                  <option value="INTEREST">Interest Reminder / Notice</option>
-                  <option value="FORFEITURE">Overdue Warning</option>
-                </select>
-              </div>
-            </div>
-
             <div className="space-y-1">
+              <Label className="text-xs font-bold text-slate-700">Bulk Template Base</Label>
+              <select
+                value={bulkTemplateKey}
+                onChange={(e) => {
+                  const k = e.target.value as SmsTemplateKey;
+                  setBulkTemplateKey(k);
+                  setBulkCustomMsg(templates[k] || DEFAULT_SMS_TEMPLATES[k]);
+                }}
+                className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold"
+              >
+                <option value="REMINDER">Payment Reminder</option>
+                <option value="INTEREST">Interest Reminder / Notice</option>
+                <option value="FORFEITURE">Overdue Warning</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
               <Label className="text-xs font-bold text-slate-700">
-                Message Pattern (variables: {'{{customer_name}}, {{ticket_no}}, {{amount}}, {{branch_name}}'})
+                Message Pattern ({'{{customer_name}}, {{ticket_no}}, {{amount}}, {{branch_name}}'})
               </Label>
-              <textarea
-                rows={4}
-                value={bulkCustomMsg}
-                onChange={(e) => setBulkCustomMsg(e.target.value)}
-                className="w-full p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium"
-              />
+              <span className="text-[10px] font-mono text-slate-500">
+                ~{calculateSmsParts(bulkCustomMsg).parts} SMS parts/msg ({calculateSmsParts(bulkCustomMsg).encoding})
+              </span>
             </div>
+            <textarea
+              rows={4}
+              value={bulkCustomMsg}
+              onChange={(e) => setBulkCustomMsg(e.target.value)}
+              className="w-full p-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium"
+            />
+          </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={selectAllValidBulk}
-                disabled={filteredBulkPawns.length === 0}
-                className="h-8 px-3 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                {selectedPawnIds.size > 0 ? 'Clear / Toggle Selection' : 'Select All Valid (Max 50)'}
-              </Button>
-              <Button
-                type="button"
-                onClick={handleSendBulkReminders}
-                disabled={bulkSending || selectedPawnIds.size === 0}
-                className="h-9 px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs gap-1.5 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                Send Bulk Reminders ({selectedPawnIds.size})
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={selectAllValidBulk}
+              disabled={filteredBulkPawns.length === 0}
+              className="h-8 px-3 rounded-xl text-xs font-bold cursor-pointer"
+            >
+              {selectedPawnIds.size > 0 ? 'Clear Selection' : `Select All Valid (Max ${bulkLimit})`}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSendBulkReminders}
+              disabled={bulkSending || selectedPawnIds.size === 0 || !gatewayEnabled}
+              className="h-9 px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs gap-1.5 cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              Send Bulk Reminders ({selectedPawnIds.size})
+            </Button>
+          </div>
 
-            <div className="max-h-72 overflow-y-auto overflow-x-auto border border-slate-200 rounded-2xl bg-white/70">
-              <Table>
-                <TableHeader className="bg-slate-900 text-white">
+          <div className="max-h-72 overflow-y-auto overflow-x-auto border border-slate-200 rounded-2xl bg-white/70">
+            <Table>
+              <TableHeader className="bg-slate-900 text-white">
+                <TableRow>
+                  <TableHead className="w-10 text-slate-300 text-[10px]">Pick</TableHead>
+                  <TableHead className="text-slate-300 text-[10px] uppercase">Bill #</TableHead>
+                  <TableHead className="text-slate-300 text-[10px] uppercase">Customer</TableHead>
+                  <TableHead className="text-slate-300 text-[10px] uppercase">Phone</TableHead>
+                  <TableHead className="text-slate-300 text-[10px] uppercase text-right">Principal</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-slate-100">
+                {filteredBulkPawns.length === 0 ? (
                   <TableRow>
-                    <TableHead className="w-10 text-slate-300 text-[10px]">Pick</TableHead>
-                    <TableHead className="text-slate-300 text-[10px] uppercase">Bill #</TableHead>
-                    <TableHead className="text-slate-300 text-[10px] uppercase">Customer</TableHead>
-                    <TableHead className="text-slate-300 text-[10px] uppercase">Phone</TableHead>
-                    <TableHead className="text-slate-300 text-[10px] uppercase text-right">Principal</TableHead>
+                    <TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400 font-semibold">
+                      Click &quot;Load Active Loans&quot; above to view eligible customers.
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody className="divide-y divide-slate-100">
-                  {filteredBulkPawns.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-xs text-slate-400 font-semibold">
-                        Click &quot;Load Active Loans&quot; above to view eligible customers.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredBulkPawns.map((p) => {
-                      const rawPhone = p.phone || p.client_phone || p.clients?.phone || '';
-                      const pNorm = normalizeSriLankaPhone(rawPhone);
-                      const checked = selectedPawnIds.has(p.id);
-                      const name = p.client_name || p.customer_name || `${p.clients?.first_name || ''} ${p.clients?.last_name || ''}`.trim() || 'Unknown';
-                      return (
-                        <TableRow
-                          key={p.id}
-                          onClick={() => toggleSelectPawn(p.id, pNorm.valid)}
-                          className={`cursor-pointer ${!pNorm.valid ? 'opacity-50' : checked ? 'bg-amber-50/70' : 'hover:bg-slate-50'}`}
-                        >
-                          <TableCell>
-                            {checked ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs font-bold text-slate-900">
-                            {p.display_bill_no || p.bill_no} <span className="text-[10px] text-slate-400">[{normalizeBranchId(p.branch_id)}]</span>
-                          </TableCell>
-                          <TableCell className="text-xs font-semibold text-slate-800">{name}</TableCell>
-                          <TableCell className="font-mono text-xs">
-                            {pNorm.valid ? (
-                              <span className="text-emerald-700 font-bold">{pNorm.e164}</span>
-                            ) : (
-                              <span className="text-rose-600 text-[11px]">Invalid/Missing</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-xs font-bold">
-                            Rs. {(Number(p.disbursed_amount) || 0).toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </Card>
-        </div>
+                ) : (
+                  filteredBulkPawns.map((p) => {
+                    const rawPhone = p.phone || p.client_phone || p.clients?.phone || '';
+                    const pNorm = normalizeSriLankaPhone(rawPhone);
+                    const checked = selectedPawnIds.has(p.id);
+                    const name = p.client_name || p.customer_name || `${p.clients?.first_name || ''} ${p.clients?.last_name || ''}`.trim() || 'Unknown';
+                    return (
+                      <TableRow
+                        key={p.id}
+                        onClick={() => toggleSelectPawn(p.id, pNorm.valid)}
+                        className={`cursor-pointer ${!pNorm.valid ? 'opacity-50' : checked ? 'bg-amber-50/70' : 'hover:bg-slate-50'}`}
+                      >
+                        <TableCell>
+                          {checked ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4 text-slate-400" />}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs font-bold text-slate-900">
+                          {p.display_bill_no || p.bill_no} <span className="text-[10px] text-slate-400">[{normalizeBranchId(p.branch_id)}]</span>
+                        </TableCell>
+                        <TableCell className="text-xs font-semibold text-slate-800">{name}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {pNorm.valid ? (
+                            <span className="text-emerald-700 font-bold">{pNorm.e164}</span>
+                          ) : (
+                            <span className="text-rose-600 text-[11px]">Invalid/Missing</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs font-bold">
+                          Rs. {(Number(p.disbursed_amount) || 0).toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
       )}
 
       {/* TAB 3: AUTO TRIGGERS & TEMPLATES */}
       {activeTab === 'templates' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Auto-SMS Trigger Toggles */}
           <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="font-black text-base text-slate-900">Automated SMS Triggers</h2>
-                <p className="text-xs text-slate-500">Control which system actions automatically send customer SMS.</p>
+                <p className="text-xs text-slate-500">Turn individual customer notifications On or Off.</p>
               </div>
               {isAdmin && (
                 <Button
@@ -1256,12 +1552,11 @@ export default function SmsSettingsPage() {
             </div>
           </Card>
 
-          {/* Trilingual Template Customizer */}
           <Card className="glass border-white/40 shadow-xl rounded-3xl p-5 sm:p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h2 className="font-black text-base text-slate-900">Trilingual Template Editor</h2>
-                <p className="text-xs text-slate-500">Customize Sinhala / Tamil / English SMS templates per event.</p>
+                <h2 className="font-black text-base text-slate-900">SMS Template Editor</h2>
+                <p className="text-xs text-slate-500">Keep English-only for 1–2 GSM segments, or include Sinhala/Tamil.</p>
               </div>
               {isAdmin && (
                 <Button
@@ -1297,8 +1592,8 @@ export default function SmsSettingsPage() {
                 <Label className="text-xs font-bold text-slate-700">
                   Template: {SMS_TEMPLATE_LABELS[activeTemplateKey].label}
                 </Label>
-                <span className="text-[10px] font-mono text-slate-500">
-                  {templateParts.chars} chars • {templateParts.parts} SMS ({templateParts.encoding})
+                <span className={`text-[10px] font-mono font-bold ${templateParts.parts > 2 ? 'text-amber-600' : 'text-emerald-700'}`}>
+                  {templateParts.chars} chars • {templateParts.parts} SMS parts ({templateParts.encoding})
                 </span>
               </div>
               <textarea
@@ -1353,10 +1648,16 @@ export default function SmsSettingsPage() {
         <Card className="glass border-white/40 shadow-xl rounded-3xl overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
-              <h2 className="font-black text-base text-slate-900">SMS Dispatch Logs & Retry Queue</h2>
+              <h2 className="font-black text-base text-slate-900">SMS Dispatch Logs &amp; Retry Queue</h2>
               <p className="text-xs text-slate-500">Live branch-scoped delivery history with TextBee responses and retry controls.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                loadSettingsAndLogs();
+              }}
+              className="flex flex-wrap items-center gap-2"
+            >
               <Input
                 value={logSearch}
                 onChange={(e) => setLogSearch(e.target.value)}
@@ -1394,25 +1695,26 @@ export default function SmsSettingsPage() {
                 </select>
               )}
               <Button
+                type="submit"
                 size="sm"
                 variant="outline"
-                onClick={() => loadSettingsAndLogs()}
                 className="h-9 px-3 rounded-xl text-xs font-bold cursor-pointer"
               >
-                Apply
+                Search
               </Button>
-              {stats.queued + stats.failed > 0 && (
+              {stats.retryable7d > 0 && (
                 <Button
+                  type="button"
                   size="sm"
-                  disabled={batchRetrying}
+                  disabled={batchRetrying || !gatewayEnabled}
                   onClick={handleRetryPendingBatch}
                   className="h-9 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs gap-1.5 cursor-pointer"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${batchRetrying ? 'animate-spin' : ''}`} />
-                  Retry Recent Pending (48h)
+                  Retry Recent ({Math.min(stats.retryable7d, 10)})
                 </Button>
               )}
-            </div>
+            </form>
           </div>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
@@ -1424,7 +1726,7 @@ export default function SmsSettingsPage() {
                     <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Mobile</TableHead>
                     <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Ticket / Type</TableHead>
                     <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Message</TableHead>
-                    <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Status & Notice</TableHead>
+                    <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300">Status &amp; Notice</TableHead>
                     <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-300 pr-5 text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1436,12 +1738,14 @@ export default function SmsSettingsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    logs.map((log) => {
-                      const dateStr = log.created_at ? new Date(log.created_at).toLocaleString('en-GB') : '—';
+                    logs.map((log, idx) => {
+                      const dateStr = log.created_at
+                        ? new Date(log.created_at).toLocaleString('en-GB', { timeZone: 'Asia/Colombo' })
+                        : '—';
                       const isSent = log.status === 'SENT';
-                      const canRetry = log.status === 'QUEUED' || log.status === 'FAILED';
+                      const canRetry = (log.status === 'QUEUED' || log.status === 'FAILED') && Boolean(log.id);
                       return (
-                        <TableRow key={log.id} className="hover:bg-slate-50">
+                        <TableRow key={log.id || `log-${idx}`} className="hover:bg-slate-50">
                           <TableCell className="pl-5 font-mono text-[11px] font-semibold text-slate-600 whitespace-nowrap">
                             {dateStr}
                           </TableCell>
@@ -1468,18 +1772,18 @@ export default function SmsSettingsPage() {
                                 {isSent ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
                                 {log.status} {log.attempts > 1 ? `(${log.attempts}x)` : ''}
                               </span>
-                              <span className="text-[10px] text-slate-500 font-mono truncate" title={log.notice}>
-                                {log.notice || '—'}
+                              <span className="text-[10px] text-slate-500 font-mono truncate" title={log.error || log.notice}>
+                                {log.error || log.notice || '—'}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell className="pr-5 text-right">
-                            {canRetry ? (
+                            {canRetry && log.id ? (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={retryingId === log.id}
-                                onClick={() => handleRetrySingle(log.id)}
+                                disabled={retryingId === log.id || !gatewayEnabled}
+                                onClick={() => handleRetrySingle(log.id!)}
                                 className="h-7 px-2.5 text-[11px] font-bold text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100 rounded-lg cursor-pointer"
                               >
                                 <RotateCcw className={`w-3 h-3 mr-1 ${retryingId === log.id ? 'animate-spin' : ''}`} />

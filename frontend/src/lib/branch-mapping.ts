@@ -102,6 +102,15 @@ export function normalizeBranchId(branchId: string | null | undefined): string {
 }
 
 /**
+ * Returns human-friendly canonical branch name (e.g. 'PND' -> 'Panadura')
+ */
+export function getBranchName(branchId: string | null | undefined): string {
+  const norm = normalizeBranchId(branchId);
+  const found = CANONICAL_BRANCHES.find((b) => b.id === norm);
+  return found ? found.name : norm;
+}
+
+/**
  * Returns all potential aliases for a given branch to ensure backward-compatible DB searches
  */
 export function getBranchSearchTerms(branchId: string | null | undefined): string[] {

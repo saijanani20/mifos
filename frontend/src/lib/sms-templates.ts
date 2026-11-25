@@ -267,13 +267,27 @@ export function calculateSmsParts(message: string): {
   };
 }
 
+export function getSriLankaDateString(date: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Colombo',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString('en-GB');
+  }
+}
+
 export function renderSmsTemplate(
   templateKey: SmsTemplateKey,
   vars: Record<string, string | number | undefined | null>,
   customTemplate?: string
 ): string {
   const base = (customTemplate && customTemplate.trim()) ? customTemplate : DEFAULT_SMS_TEMPLATES[templateKey];
-  return base.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => {
+  return base.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\{\s*([a-zA-Z0-9_]+)\s*\}/g, (_, k1: string, k2: string) => {
+    const key = k1 || k2;
     const val = vars[key];
     return val !== undefined && val !== null ? String(val) : '';
   });
@@ -290,16 +304,19 @@ export function buildPawnReceiptSms(params: {
   ticketNo: string;
   amount: number;
   dateStr?: string;
+  branchName?: string;
   customTemplate?: string;
 }): string {
-  const { customerName, ticketNo, amount, dateStr, customTemplate } = params;
+  const { customerName, ticketNo, amount, dateStr, branchName, customTemplate } = params;
   return renderSmsTemplate(
     'RECEIPT',
     {
       customer_name: cleanCustomerName(customerName),
       ticket_no: ticketNo,
       amount: (Number(amount) || 0).toLocaleString(),
-      date: dateStr || new Date().toLocaleDateString('en-GB'),
+      date: dateStr || getSriLankaDateString(),
+      branch_name: branchName || '',
+      branch_tag: branchName ? ` [${branchName}]` : '',
     },
     customTemplate
   );
@@ -362,7 +379,7 @@ export function buildInterestPaymentSms(params: {
       customer_name: cleanCustomerName(customerName),
       ticket_no: ticketNo,
       interest_amount: (Number(interestAmount) || 0).toLocaleString(),
-      date: dateStr || new Date().toLocaleDateString('en-GB'),
+      date: dateStr || getSriLankaDateString(),
       branch_name: branchName || '',
       branch_tag: branchName ? ` [${branchName}]` : '',
     },
@@ -387,6 +404,7 @@ export function buildPawnRedeemSms(params: {
       settlement_amount: (Number(settlementAmount) || 0).toLocaleString(),
       principal: (Number(principalAmount) || 0).toLocaleString(),
       branch_name: branchName || '',
+      branch_tag: branchName ? ` [${branchName}]` : '',
     },
     customTemplate
   );
@@ -407,6 +425,7 @@ export function buildPawnReminderSms(params: {
       ticket_no: ticketNo,
       amount: (Number(amount) || 0).toLocaleString(),
       branch_name: branchName || '',
+      branch_tag: branchName ? ` [${branchName}]` : '',
     },
     customTemplate
   );

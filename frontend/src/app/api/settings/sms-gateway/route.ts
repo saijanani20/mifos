@@ -5,8 +5,10 @@ import { normalizeBranchId } from '@/lib/branch-mapping';
 import {
   BranchSmsConfig,
   buildTextBeeSendUrl,
+  discoverTextBeeDevices,
   findBranchConfig,
   getSmsGatewayConfig,
+  parseSimSlot,
   sanitizeSmsGatewayConfig,
   SmsGatewayConfig,
 } from '@/lib/sms';
@@ -47,17 +49,64 @@ export async function POST(req: Request) {
     } = body;
 
     const existingConfig = await getSmsGatewayConfig();
+
+    // Read-only TextBee device auto-discovery using provided or stored API Key
+    if (action === 'DISCOVER_DEVICES') {
+      const targetBranch = branchId && String(branchId).toUpperCase() !== 'GLOBAL'
+        ? normalizeBranchId(String(branchId))
+        : 'GLOBAL';
+      const branchExisting = targetBranch !== 'GLOBAL'
+        ? findBranchConfig(existingConfig.branches || {}, targetBranch)?.config
+        : null;
+
+      const resolvedKey = shouldKeepExistingKey(apiKey, false)
+        ? (branchExisting?.apiKey || existingConfig.apiKey || '')
+        : String(apiKey || '').trim();
+
+      if (!resolvedKey) {
+        return NextResponse.json({ error: 'Paste your TextBee API Key first to detect connected devices.' }, { status: 400 });
+      }
+
+      const disc = await discoverTextBeeDevices(resolvedKey);
+      if (!disc.ok) {
+        return NextResponse.json({ error: disc.error || 'Could not detect TextBee devices.', quota: disc.quota }, { status: 400 });
+      }
+      return NextResponse.json({
+        success: true,
+        devices: disc.devices,
+        quota: disc.quota,
+        account: disc.account,
+      });
+    }
+
     const updatedBranches: Record<string, BranchSmsConfig> = { ...(existingConfig.branches || {}) };
     const nowIso = new Date().toISOString();
 
-    let nextConfig: SmsGatewayConfig = {
+    const nextConfig: SmsGatewayConfig = {
       ...existingConfig,
       provider: 'TEXTBEE',
       branches: updatedBranches,
       updatedAt: nowIso,
     };
 
-    if (action === 'REMOVE_BRANCH' && branchId && String(branchId).toUpperCase() !== 'GLOBAL') {
+    if (action === 'TOGGLE_ENABLED') {
+      if (branchId && String(branchId).toUpperCase() !== 'GLOBAL') {
+        const normBranch = normalizeBranchId(String(branchId));
+        const matched = findBranchConfig(updatedBranches, normBranch);
+        if (matched) {
+          updatedBranches[matched.key] = {
+            ...matched.config,
+            enabled: Boolean(enabled),
+            updatedAt: nowIso,
+          };
+          nextConfig.branches = updatedBranches;
+        } else {
+          nextConfig.enabled = Boolean(enabled);
+        }
+      } else {
+        nextConfig.enabled = Boolean(enabled);
+      }
+    } else if (action === 'REMOVE_BRANCH' && branchId && String(branchId).toUpperCase() !== 'GLOBAL') {
       const normBranch = normalizeBranchId(String(branchId));
       const matched = findBranchConfig(updatedBranches, normBranch);
       if (matched) {
@@ -108,7 +157,7 @@ export async function POST(req: Request) {
         deviceId: finalDeviceId,
         apiKey: finalApiKey,
         gatewayUrl: finalDeviceId ? buildTextBeeSendUrl(finalDeviceId) : '',
-        simSlot: parseInt(String(simSlot ?? prevBranch?.simSlot ?? 1), 10) || 1,
+        simSlot: parseSimSlot(simSlot, parseSimSlot(prevBranch?.simSlot, 0)),
         enabled: enabled !== undefined ? enabled !== false : (prevBranch?.enabled !== false),
         updatedAt: nowIso,
       };
@@ -123,11 +172,10 @@ export async function POST(req: Request) {
       nextConfig.deviceId = finalDeviceId;
       nextConfig.apiKey = finalApiKey;
       nextConfig.gatewayUrl = finalDeviceId ? buildTextBeeSendUrl(finalDeviceId) : '';
-      nextConfig.simSlot = parseInt(String(simSlot ?? existingConfig.simSlot ?? 1), 10) || 1;
+      nextConfig.simSlot = parseSimSlot(simSlot, parseSimSlot(existingConfig.simSlot, 0));
       nextConfig.enabled = enabled !== undefined ? enabled !== false : existingConfig.enabled;
     }
 
-    // Apply inline triggers/templates too if passed alongside config
     if (triggers && typeof triggers === 'object') {
       for (const k of Object.keys(nextConfig.triggers) as SmsTriggerKey[]) {
         if (typeof triggers[k] === 'boolean') {
@@ -154,7 +202,7 @@ export async function POST(req: Request) {
         {
           key: 'sms_gateway_config',
           value: nextConfig,
-          description: 'Multi-branch TextBee SMS gateway config, triggers, and templates',
+          description: 'TextBee SMS gateway config, triggers, and templates',
           updated_at: nowIso,
           updated_by: session.user?.email || session.user?.id || 'ADMIN',
         },
@@ -180,8 +228,9 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ success: true, config: safeConfig });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Internal Server Error';
     console.error('Error in /api/settings/sms-gateway:', err);
-    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -495,6 +495,11 @@ export default function InterestPaymentPage() {
       }
 
       toast.success(`Interest Rs. ${numericAmount.toLocaleString()} recorded for Bill ${selectedBill.bill_no} ✓`, { id: toastId });
+      if (result.sms && ['FAILED', 'QUEUED', 'NOT_CONFIGURED', 'INVALID_PHONE'].includes(result.sms.status)) {
+        toast.warning(`Payment saved, SMS ${result.sms.status}`, {
+          description: result.sms.error || result.sms.notice || 'Check SMS Gateway settings or customer mobile number.',
+        });
+      }
 
       // Build receipt data
       const receiptData = {

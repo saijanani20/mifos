@@ -3,8 +3,8 @@ import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { getSriLankaDate } from '@/lib/date-utils';
 import { recordAuditLog } from '@/lib/audit-logger';
-import { getBranchSearchTerms, isSameNumericBill, normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
-import { buildInterestPaymentSms, getSmsGatewayConfig, resolvePawnCustomerContact, sendFreeSms } from '@/lib/sms';
+import { getBranchName, getBranchSearchTerms, isSameNumericBill, normalizeBranchId, stripBranchPrefix } from '@/lib/branch-mapping';
+import { buildInterestPaymentSms, getSmsGatewayConfig, resolvePawnCustomerContact, sendFreeSms, SendSmsResult } from '@/lib/sms';
 export const dynamic = 'force-dynamic';
 
 // GET: Fetch interest records for a specific bill, branch, item, or all bills
@@ -144,6 +144,7 @@ export async function POST(req: Request) {
     let insertedData: any = payload;
     let savedToSupabase = false;
     const supabaseError: string | null = null;
+    let smsResult: SendSmsResult | null = null;
 
     if (adminSupabase) {
       try {
@@ -306,10 +307,10 @@ export async function POST(req: Request) {
                 ticketNo: ticketDisplay,
                 interestAmount: numericValue,
                 dateStr: date || getSriLankaDate(),
-                branchName: cleanBranch,
+                branchName: getBranchName(cleanBranch),
                 customTemplate: smsConfig.templates?.INTEREST,
               });
-              await sendFreeSms({
+              smsResult = await sendFreeSms({
                 phone: contactPhone,
                 message: interestMsg,
                 ticketNo: ticketDisplay,
@@ -342,7 +343,8 @@ export async function POST(req: Request) {
       success: true, 
       data: insertedData, 
       savedToSupabase,
-      warning: supabaseError ? `Supabase: ${supabaseError}` : undefined 
+      warning: supabaseError ? `Supabase: ${supabaseError}` : undefined,
+      sms: smsResult ? { status: smsResult.status, success: smsResult.success, notice: smsResult.notice, error: smsResult.error } : null,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });

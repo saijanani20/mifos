@@ -29,7 +29,8 @@ import {
   Package,
   AlertTriangle,
   Landmark,
-  Percent
+  Percent,
+  Smartphone
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
@@ -93,6 +94,7 @@ const navGroups = [
       { name: 'Audit Dashboard', href: '/dashboard/auditor', icon: ShieldCheck },
       { name: 'Approvals', href: '/operations/approvals', icon: CheckSquare },
       { name: 'End-of-Day', href: '/operations/eod', icon: ShieldCheck },
+      { name: 'SMS Gateway', href: '/operations/sms-settings', icon: Smartphone, adminOnly: true },
       { name: 'Audit Logs', href: '/operations/audit-logs', icon: ShieldCheck },
       { name: 'Reports', href: '/reports', icon: BarChart3 },
       { name: 'Staff', href: '/employees', icon: Users, adminOnly: true },

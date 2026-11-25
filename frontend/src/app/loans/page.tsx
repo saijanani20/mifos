@@ -128,6 +128,8 @@ export default function PawnesPage() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false);
   const branchDropdownRef                         = useRef<HTMLDivElement>(null);
   const [redemptionReceiptData, setRedemptionReceiptData] = useState<any>(null);
+  const [smsPromptState, setSmsPromptState] = useState<{ pawn: any; phone: string } | null>(null);
+  const [smsPromptSending, setSmsPromptSending] = useState(false);
 
   // Close branch dropdown popover when clicking outside
   useEffect(() => {
@@ -1312,6 +1314,11 @@ export default function PawnesPage() {
       const savedData = await res.json();
 
       toast.success(editingPawn ? 'Pawn ticket updated!' : 'Pawn ticket created & synced to vault stock!', { id: toastId });
+      if (!editingPawn && savedData?.sms && ['FAILED', 'QUEUED', 'NOT_CONFIGURED', 'INVALID_PHONE'].includes(savedData.sms.status)) {
+        toast.warning(`Ticket saved, SMS ${savedData.sms.status}`, {
+          description: savedData.sms.error || savedData.sms.notice || 'Customer SMS could not be dispatched.',
+        });
+      }
       setIsOpen(false);
       resetForm();
       try {
@@ -1485,6 +1492,11 @@ export default function PawnesPage() {
 
       const data = await res.json();
       toast.success(`Pawn redeemed! Posted GL Journal Entry: ${data.journalEntryId}`, { id: toastId });
+      if (data?.sms && ['FAILED', 'QUEUED', 'NOT_CONFIGURED', 'INVALID_PHONE'].includes(data.sms.status)) {
+        toast.warning(`Redeemed, SMS ${data.sms.status}`, {
+          description: data.sms.error || data.sms.notice || 'Redemption SMS could not be dispatched.',
+        });
+      }
 
       const calc = calculateRedemption(
         redeemingPawn.disbursed_amount || 0,
@@ -1523,38 +1535,31 @@ export default function PawnesPage() {
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ approvedBy: `Branch Office / ${userRole}` })
       });
+      const approveData = await res.json();
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Approval failed');
+        throw new Error(approveData.error || 'Approval failed');
       }
       toast.success('Pawn ticket approved successfully!', { id: toastId });
+      if (approveData?.sms && ['FAILED', 'QUEUED', 'NOT_CONFIGURED', 'INVALID_PHONE'].includes(approveData.sms.status)) {
+        toast.warning(`Approved, SMS ${approveData.sms.status}`, {
+          description: approveData.sms.error || approveData.sms.notice || 'Approval SMS could not be dispatched.',
+        });
+      }
       loadPawns();
     } catch (err: any) {
       toast.error('Approval failed', { description: err.message, id: toastId });
     }
   };
 
-  const handleSendReminder = async (pawn: any) => {
-    let custPhone = pawn.client_phone || pawn.phone;
-    if (!custPhone && pawn.clients) custPhone = pawn.clients.phone;
-    if (!custPhone && pawn.client_id) {
-      const matched = clientsList.find(c => String(c.id).toLowerCase() === String(pawn.client_id).toLowerCase() || String(c.nationalId).toLowerCase() === String(pawn.client_id).toLowerCase());
-      custPhone = matched?.phone;
-    }
-
-    if (!custPhone) {
-      const inputPhone = prompt("Enter customer mobile number for SMS reminder:");
-      if (!inputPhone) return;
-      custPhone = inputPhone;
-    }
-
+  const dispatchReminderForPawn = async (pawn: any, custPhone: string) => {
     const billDisplay = getBillNo(pawn);
     const amountVal = pawn.disbursed_amount || 0;
     const cName = getCustomerName(pawn) || 'Valued Customer';
     const reminderMsg = buildPawnReminderSms({
       customerName: cName,
       ticketNo: billDisplay,
-      amount: amountVal
+      amount: amountVal,
+      branchName: pawn.branch_id || undefined,
     });
 
     const toastId = toast.loading(`Dispatching SMS reminder to ${custPhone}...`);
@@ -1565,6 +1570,13 @@ export default function PawnesPage() {
         body: JSON.stringify({
           phone: custPhone,
           message: reminderMsg,
+          useSavedTemplate: true,
+          templateKey: 'REMINDER',
+          templateVars: {
+            customer_name: cName,
+            ticket_no: billDisplay,
+            amount: (Number(amountVal) || 0).toLocaleString(),
+          },
           ticketNo: billDisplay,
           amount: amountVal,
           type: 'REMINDER',
@@ -1580,15 +1592,33 @@ export default function PawnesPage() {
         });
       } else if (res.ok && data.status === 'QUEUED') {
         toast.warning(`SMS Queued for Retry (${data.phone || custPhone})`, {
-          description: data.notice || 'Gateway offline — saved in SMS Retry Queue.',
+          description: data.notice || 'Limit or gateway offline — saved in SMS Retry Queue.',
           id: toastId
         });
       } else {
         toast.error(data.error || data.notice || 'Failed to send SMS reminder', { id: toastId });
       }
+      return res.ok && (data.status === 'SENT' || data.status === 'QUEUED');
     } catch (err: any) {
       toast.error('Error sending SMS reminder: ' + err.message, { id: toastId });
+      return false;
     }
+  };
+
+  const handleSendReminder = async (pawn: any) => {
+    let custPhone = pawn.client_phone || pawn.phone;
+    if (!custPhone && pawn.clients) custPhone = pawn.clients.phone;
+    if (!custPhone && pawn.client_id) {
+      const matched = clientsList.find(c => String(c.id).toLowerCase() === String(pawn.client_id).toLowerCase() || String(c.nationalId).toLowerCase() === String(pawn.client_id).toLowerCase());
+      custPhone = matched?.phone;
+    }
+
+    if (!custPhone) {
+      setSmsPromptState({ pawn, phone: '' });
+      return;
+    }
+
+    await dispatchReminderForPawn(pawn, custPhone);
   };
 
   const openDetails = (pawn: any) => {
@@ -3406,6 +3436,45 @@ export default function PawnesPage() {
         getClientNic={getClientNic}
         getCleanDescription={getCleanDescription}
       />
+
+      {/* Missing Phone Prompt Modal for SMS Reminder */}
+      <Dialog open={Boolean(smsPromptState)} onOpenChange={(v) => !v && setSmsPromptState(null)}>
+        <DialogContent className="w-[95vw] sm:max-w-md bg-white border border-slate-200 rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black text-slate-900">Enter Customer Mobile Number</DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              No mobile number is saved on Bill #{smsPromptState?.pawn ? getBillNo(smsPromptState.pawn) : ''}. Enter a Sri Lankan number (e.g. 0771234567) to send the reminder SMS.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!smsPromptState?.phone?.trim()) return toast.error('Enter a valid mobile number.');
+              setSmsPromptSending(true);
+              const ok = await dispatchReminderForPawn(smsPromptState.pawn, smsPromptState.phone.trim());
+              setSmsPromptSending(false);
+              if (ok) setSmsPromptState(null);
+            }}
+            className="space-y-4 mt-2"
+          >
+            <Input
+              value={smsPromptState?.phone || ''}
+              onChange={(e) => setSmsPromptState((prev) => (prev ? { ...prev, phone: e.target.value } : null))}
+              placeholder="0771234567"
+              className="h-11 rounded-xl font-mono text-sm"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setSmsPromptState(null)} className="rounded-xl text-xs font-bold">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={smsPromptSending} className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs">
+                {smsPromptSending ? 'Sending...' : 'Send Reminder SMS'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Captured Weight Photos Viewer Modal */}
       <Dialog 

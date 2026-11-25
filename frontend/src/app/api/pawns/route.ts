@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
-import { sendFreeSms, buildPawnReceiptSms, getSmsGatewayConfig } from '@/lib/sms';
-import { normalizeBranchId, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix, extractNumericBillNo, isSameNumericBill, generateUniqueOrderTag } from '@/lib/branch-mapping';
+import { sendFreeSms, buildPawnReceiptSms, getSmsGatewayConfig, SendSmsResult } from '@/lib/sms';
+import { normalizeBranchId, getBranchName, getBranchSearchTerms, isNationalId, normalizeNationalId, formatBranchScopedId, formatBranchScopedBillNo, stripBranchPrefix, extractNumericBillNo, isSameNumericBill, generateUniqueOrderTag } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { invalidateClientsCache } from '@/app/api/clients/route';
 import { getSriLankaDate } from '@/lib/date-utils';
@@ -921,6 +921,7 @@ export async function POST(request: Request) {
     }
 
     // 6. Dispatch Free SMS Receipt via Android SIM Gateway
+    let smsResult: SendSmsResult | null = null;
     const targetPhone = clientPhone || fullClientObj?.phone;
     if (targetPhone) {
       try {
@@ -931,9 +932,10 @@ export async function POST(request: Request) {
           customerName: cName,
           ticketNo: ticketDisplay,
           amount: finalDisbursed,
+          branchName: getBranchName(targetBranchId),
           customTemplate: smsConfig.templates?.RECEIPT,
         });
-        await sendFreeSms({
+        smsResult = await sendFreeSms({
           phone: targetPhone,
           message: smsMessage,
           ticketNo: ticketDisplay,
@@ -954,6 +956,14 @@ export async function POST(request: Request) {
     }
     newPawn.items = Array.isArray(items) ? items : [];
     newPawn.weight = finalWeightGrams || (finalWeightMg / 1000) || 0;
+    if (smsResult) {
+      newPawn.sms = {
+        status: smsResult.status,
+        success: smsResult.success,
+        notice: smsResult.notice,
+        error: smsResult.error,
+      };
+    }
 
     return NextResponse.json(newPawn, { status: 201 });
   } catch (error: any) {

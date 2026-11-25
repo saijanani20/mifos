@@ -228,11 +228,11 @@ Please settle immediately to avoid collateral forfeiture/auction.
   // Open Bulk SMS Modal
   const openBulkSmsModal = () => {
     const defaultTemplate = `RUPASINGHA CAPITAL
-Dear {customer_name},
-URGENT: Pawn Ticket #{bill_no} [{branch}] (Date: {origination_date})
-Principal: Rs. {principal} | Expired: {expiry_date}
-Interest Paid: Rs. {interest_paid}
-Due Overdue Interest: Rs. {interest_due}
+Dear {{customer_name}},
+URGENT: Pawn Ticket #{{ticket_no}} [{{branch_name}}] (Date: {{origination_date}})
+Principal: Rs. {{principal}} | Expired: {{expiry_date}}
+Interest Paid: Rs. {{interest_paid}}
+Due Overdue Interest: Rs. {{interest_due}}
 Please settle immediately to avoid collateral forfeiture/auction.
 කරුණාකර භාණ්ඩ සින්න වීම වැළැක්වීමට වහාම ශාඛාව අමතන්න.`;
     setBulkCustomTemplate(defaultTemplate);
@@ -268,12 +268,21 @@ Please settle immediately to avoid collateral forfeiture/auction.
       });
 
       const data = await res.json();
+      const smsStatus = data.smsResult?.status || data.status;
       if (res.ok && data.success) {
-        toast.success(`Warning SMS sent to ${smsModalItem.customer_phone}!`);
+        toast.success(`Warning SMS sent to ${smsModalItem.customer_phone}!`, {
+          description: data.smsResult?.notice || 'Delivered via TextBee Gateway'
+        });
+        setSmsModalItem(null);
+        loadData(true);
+      } else if (res.ok && smsStatus === 'QUEUED') {
+        toast.warning(`SMS queued (${smsModalItem.customer_phone})`, {
+          description: data.smsResult?.notice || data.error || 'TextBee quota or connectivity paused; retry from SMS Gateway Logs.'
+        });
         setSmsModalItem(null);
         loadData(true);
       } else {
-        toast.error(data.error || 'Failed to dispatch SMS');
+        toast.error(data.error || data.smsResult?.error || data.smsResult?.notice || 'Failed to dispatch SMS');
       }
     } catch (err: any) {
       toast.error(err.message || 'Network error sending SMS');
@@ -317,12 +326,14 @@ Please settle immediately to avoid collateral forfeiture/auction.
 
       const data = await res.json();
       if (res.ok && data.success) {
-        toast.success(`Bulk SMS dispatched! Sent: ${data.sentCount}, Skipped (No phone): ${data.skippedNoPhone}`);
+        toast.success(
+          `Bulk SMS complete — Sent: ${data.sentCount}, Queued: ${data.queuedCount || 0}, Failed: ${data.failedCount || 0}, Skipped: ${data.skippedNoPhone || 0}`
+        );
         setBulkSmsModalOpen(false);
         setSelectedIds([]);
         loadData(true);
       } else {
-        toast.error(data.error || 'Bulk SMS dispatch failed');
+        toast.error(data.error || `Bulk SMS failed (${data.failedCount || 0} failed, ${data.skippedNoPhone || 0} skipped)`);
       }
     } catch (err: any) {
       toast.error(err.message || 'Network error');
@@ -2059,11 +2070,11 @@ Please settle immediately to avoid collateral forfeiture/auction.
                       type="button"
                       onClick={() => {
                         setBulkCustomTemplate(`RUPASINGHA CAPITAL
-Dear {customer_name},
-URGENT: Pawn Ticket #{bill_no} [{branch}] (Date: {origination_date})
-Principal: Rs. {principal} | Expired: {expiry_date}
-Interest Paid: Rs. {interest_paid}
-Due Overdue Interest: Rs. {interest_due}
+Dear {{customer_name}},
+URGENT: Pawn Ticket #{{ticket_no}} [{{branch_name}}] (Date: {{origination_date}})
+Principal: Rs. {{principal}} | Expired: {{expiry_date}}
+Interest Paid: Rs. {{interest_paid}}
+Due Overdue Interest: Rs. {{interest_due}}
 Please settle immediately to avoid collateral forfeiture/auction.
 කරුණාකර භාණ්ඩ සින්න වීම වැළැක්වීමට වහාම ශාඛාව අමතන්න.`);
                       }}
@@ -2083,14 +2094,14 @@ Please settle immediately to avoid collateral forfeiture/auction.
 
                   <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
                     <span>Tags:</span>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{customer_name}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{bill_no}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{branch}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{principal}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{interest_due}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{interest_paid}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{expiry_date}"}</code>
-                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{origination_date}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{customer_name}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{ticket_no}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{branch_name}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{principal}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{interest_due}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{interest_paid}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{expiry_date}}"}</code>
+                    <code className="bg-slate-100 px-1 rounded text-indigo-700">{"{{origination_date}}"}</code>
                   </div>
                 </div>
 

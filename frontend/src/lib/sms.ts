@@ -19,7 +19,7 @@ export interface BranchSmsConfig {
   deviceId?: string;
   apiKey?: string;
   gatewayUrl?: string;
-  simSlot?: number;
+  simSlot?: number; // 0 = Device Default SIM, 1 = SIM 1, 2 = SIM 2
   enabled?: boolean;
   updatedAt?: string;
 }
@@ -31,7 +31,7 @@ export interface SmsGatewayConfig {
   deviceId: string;
   apiKey: string;
   gatewayUrl: string;
-  simSlot: number;
+  simSlot: number; // 0 = Device Default SIM, 1 = SIM 1, 2 = SIM 2
   branches: Record<string, BranchSmsConfig>;
   triggers: SmsTriggersConfig;
   templates: SmsTemplatesConfig;
@@ -63,6 +63,36 @@ export interface SendSmsResult {
   usedBranchDevice?: boolean;
 }
 
+export interface TextBeeSimInfo {
+  slot: number;
+  subscriptionId?: number | null;
+  carrier: string;
+  displayName: string;
+  serviceState?: string | null;
+  signalLevel?: number | null;
+}
+
+export interface TextBeeQuotaStatus {
+  planName: string;
+  isActive: boolean;
+  paymentHold: boolean;
+  dailyLimit: number;
+  dailyRemaining: number;
+  processedSmsToday: number;
+  dailyUsagePercentage: number;
+  monthlyLimit: number;
+  monthlyRemaining: number;
+  processedSmsLastMonth: number;
+  monthlyUsagePercentage: number;
+  bulkSendLimit: number;
+  deviceLimit: number;
+  monthlyPeriodStart?: string | null;
+  monthlyResetAt?: string | null;
+  totalDeviceCount?: number | null;
+  totalSentAllTime?: number | null;
+  totalReceivedAllTime?: number | null;
+}
+
 export interface TextBeeHealthStatus {
   configured: boolean;
   enabled: boolean;
@@ -71,6 +101,7 @@ export interface TextBeeHealthStatus {
   branchId: string;
   usedBranchDevice: boolean;
   deviceIdTail?: string;
+  deviceName?: string | null;
   brand?: string | null;
   model?: string | null;
   osVersion?: string | null;
@@ -81,8 +112,70 @@ export interface TextBeeHealthStatus {
   isCharging?: boolean | null;
   networkType?: string | null;
   sentSMSCount?: number | null;
-  sims?: Array<{ slot: number; carrier: string; displayName: string }>;
+  receivedSMSCount?: number | null;
+  receiveSMSEnabled?: boolean | null;
+  batteryOptimizationIgnored?: boolean | null;
+  permissionsOk?: boolean | null;
+  sims?: TextBeeSimInfo[];
+  quota?: TextBeeQuotaStatus | null;
   error?: string | null;
+}
+
+export interface TextBeeDiscoveredDevice {
+  id: string;
+  name: string;
+  brand?: string | null;
+  model?: string | null;
+  enabled: boolean;
+  isDefault?: boolean;
+  osVersion?: string | null;
+  appVersion?: string | null;
+  lastHeartbeat?: string | null;
+  heartbeatAgeMinutes?: number | null;
+  online: boolean;
+  batteryPercentage?: number | null;
+  isCharging?: boolean | null;
+  networkType?: string | null;
+  sentSMSCount?: number | null;
+  sims: TextBeeSimInfo[];
+}
+
+export interface FormattedSmsLogRow {
+  id?: string;
+  branch_id: string;
+  phone: string;
+  recipient_phone: string;
+  message: string;
+  message_text: string;
+  ticket_no: string | null;
+  amount: number | null;
+  type: string;
+  status: string;
+  notice: string;
+  dispatch_notice: string;
+  error: string | null;
+  http_status: number | null;
+  attempts: number;
+  sim_slot: number | null;
+  used_branch_device: boolean;
+  device_id_tail: string | null;
+  retried_at: string | null;
+  created_at?: string;
+}
+
+function getErrMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err.trim()) return err;
+  return fallback;
+}
+
+export function parseSimSlot(val: unknown, fallback = 0): number {
+  if (val === undefined || val === null || val === '') return fallback;
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  if (n <= 0) return 0;
+  if (n === 1 || n === 2) return n;
+  return fallback;
 }
 
 export function maskApiKey(key?: string | null): string {
@@ -96,6 +189,25 @@ export function buildTextBeeSendUrl(deviceId: string): string {
   return `https://api.textbee.dev/api/v1/gateway/devices/${encodeURIComponent(deviceId)}/send-sms`;
 }
 
+function parseSimList(rawDevice: Record<string, unknown>): TextBeeSimInfo[] {
+  const simInfo = rawDevice?.simInfo as Record<string, unknown> | undefined;
+  const simsRaw = Array.isArray(simInfo?.sims) ? simInfo.sims : [];
+  return simsRaw.map((item, idx) => {
+    const s = (item && typeof item === 'object') ? (item as Record<string, unknown>) : {};
+    const slotIdx = typeof s.simSlotIndex === 'number' ? s.simSlotIndex + 1 : idx + 1;
+    const carrier = String(s.carrierName || s.displayName || 'SIM');
+    const displayName = String(s.displayName || s.carrierName || `SIM ${slotIdx}`);
+    return {
+      slot: slotIdx,
+      subscriptionId: typeof s.subscriptionId === 'number' ? s.subscriptionId : null,
+      carrier,
+      displayName,
+      serviceState: s.serviceState ? String(s.serviceState) : null,
+      signalLevel: typeof s.signalLevel === 'number' ? s.signalLevel : null,
+    };
+  });
+}
+
 export async function getSmsGatewayConfig(): Promise<SmsGatewayConfig> {
   const { data: settingsData } = await adminSupabase
     .from('system_settings')
@@ -103,14 +215,18 @@ export async function getSmsGatewayConfig(): Promise<SmsGatewayConfig> {
     .eq('key', 'sms_gateway_config')
     .maybeSingle();
 
-  const raw = (settingsData?.value && typeof settingsData.value === 'object') ? settingsData.value : {};
+  const raw = (settingsData?.value && typeof settingsData.value === 'object')
+    ? (settingsData.value as Record<string, unknown>)
+    : {};
   const envDeviceId = process.env.TEXTBEE_DEVICE_ID || '';
   const envApiKey = process.env.TEXTBEE_API_KEY || '';
   const deviceId = String(raw.deviceId || envDeviceId || '').trim();
   const apiKey = String(raw.apiKey || envApiKey || '').trim();
   const gatewayUrl = String(raw.gatewayUrl || (deviceId ? buildTextBeeSendUrl(deviceId) : '')).trim();
 
-  const rawTriggers = (raw.triggers && typeof raw.triggers === 'object') ? raw.triggers : {};
+  const rawTriggers = (raw.triggers && typeof raw.triggers === 'object')
+    ? (raw.triggers as Record<string, unknown>)
+    : {};
   const triggers: SmsTriggersConfig = {
     onPawnCreate: rawTriggers.onPawnCreate !== false,
     onPawnApprove: rawTriggers.onPawnApprove !== false,
@@ -121,13 +237,19 @@ export async function getSmsGatewayConfig(): Promise<SmsGatewayConfig> {
   };
 
   const templates: SmsTemplatesConfig = {};
-  if (raw.templates && typeof raw.templates === 'object') {
-    for (const key of ['RECEIPT', 'APPROVED', 'REJECTED', 'INTEREST', 'REDEEM', 'REMINDER', 'FORFEITURE'] as SmsTemplateKey[]) {
-      if (typeof raw.templates[key] === 'string' && raw.templates[key].trim()) {
-        templates[key] = raw.templates[key];
-      }
+  const rawTemplates = (raw.templates && typeof raw.templates === 'object')
+    ? (raw.templates as Record<string, unknown>)
+    : {};
+  for (const key of ['RECEIPT', 'APPROVED', 'REJECTED', 'INTEREST', 'REDEEM', 'REMINDER', 'FORFEITURE'] as SmsTemplateKey[]) {
+    const val = rawTemplates[key];
+    if (typeof val === 'string' && val.trim()) {
+      templates[key] = val;
     }
   }
+
+  const branches = (raw.branches && typeof raw.branches === 'object' && !Array.isArray(raw.branches))
+    ? (raw.branches as Record<string, BranchSmsConfig>)
+    : {};
 
   return {
     enabled: raw.enabled !== false,
@@ -136,11 +258,11 @@ export async function getSmsGatewayConfig(): Promise<SmsGatewayConfig> {
     deviceId,
     apiKey,
     gatewayUrl,
-    simSlot: Number(raw.simSlot) || 1,
-    branches: (raw.branches && typeof raw.branches === 'object') ? raw.branches : {},
+    simSlot: parseSimSlot(raw.simSlot, 0),
+    branches,
     triggers,
     templates,
-    updatedAt: raw.updatedAt,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : undefined,
   };
 }
 
@@ -187,7 +309,7 @@ export function resolveBranchSmsConfig(
   const targetApiKey = (branchConfig?.apiKey && branchConfig.apiKey.trim())
     ? branchConfig.apiKey.trim()
     : globalConfig.apiKey;
-  const targetSimSlot = Number(branchConfig?.simSlot || globalConfig.simSlot || 1) || 1;
+  const targetSimSlot = parseSimSlot(branchConfig?.simSlot, parseSimSlot(globalConfig.simSlot, 0));
   const targetEnabled = branchConfig
     ? (branchConfig.enabled !== false && globalConfig.enabled !== false)
     : globalConfig.enabled !== false;
@@ -207,7 +329,7 @@ export function resolveBranchSmsConfig(
 }
 
 export function sanitizeSmsGatewayConfig(config: SmsGatewayConfig, isAdmin: boolean) {
-  const sanitizedBranches: Record<string, any> = {};
+  const sanitizedBranches: Record<string, unknown> = {};
   if (isAdmin && config.branches) {
     for (const [k, b] of Object.entries(config.branches)) {
       if (!b) continue;
@@ -220,7 +342,7 @@ export function sanitizeSmsGatewayConfig(config: SmsGatewayConfig, isAdmin: bool
         hasApiKey: Boolean(keyStr),
         maskedApiKey: maskApiKey(keyStr),
         gatewayUrl: b.deviceId ? buildTextBeeSendUrl(b.deviceId) : (b.gatewayUrl || ''),
-        simSlot: Number(b.simSlot) || 1,
+        simSlot: parseSimSlot(b.simSlot, 0),
         enabled: b.enabled !== false,
         updatedAt: b.updatedAt || null,
       };
@@ -235,7 +357,7 @@ export function sanitizeSmsGatewayConfig(config: SmsGatewayConfig, isAdmin: bool
     hasApiKey: Boolean(config.apiKey),
     maskedApiKey: isAdmin ? maskApiKey(config.apiKey) : '',
     gatewayUrl: isAdmin && config.deviceId ? buildTextBeeSendUrl(config.deviceId) : '',
-    simSlot: config.simSlot || 1,
+    simSlot: parseSimSlot(config.simSlot, 0),
     branches: sanitizedBranches,
     configuredBranchCount: Object.values(config.branches || {}).filter((b) => Boolean(b?.deviceId)).length,
     triggers: config.triggers,
@@ -244,14 +366,190 @@ export function sanitizeSmsGatewayConfig(config: SmsGatewayConfig, isAdmin: bool
   };
 }
 
+function formatTextBeeError(status: number, parsed: unknown, rawText: string): string {
+  if (typeof parsed === 'object' && parsed !== null) {
+    const obj = parsed as Record<string, unknown>;
+    const msg = String(obj.message || obj.error || '');
+    if (status === 429 && typeof obj.monthlyRemaining === 'number' && typeof obj.monthlyLimit === 'number') {
+      const resetNote = obj.monthlyResetAt
+        ? `, resets ${new Date(String(obj.monthlyResetAt)).toLocaleDateString('en-GB', { timeZone: 'Asia/Colombo' })}`
+        : '';
+      return `TextBee limit reached (${obj.monthlyRemaining}/${obj.monthlyLimit} monthly left, daily left: ${obj.dailyRemaining ?? '?'}${resetNote}). ${msg}`.trim();
+    }
+    if (msg) return msg;
+    return JSON.stringify(parsed);
+  }
+  return rawText;
+}
+
+export async function fetchTextBeeQuota(apiKey: string): Promise<TextBeeQuotaStatus | null> {
+  if (!apiKey || !apiKey.trim()) return null;
+  const headers = { 'x-api-key': apiKey.trim() };
+
+  try {
+    const [subRes, statsRes] = await Promise.allSettled([
+      fetch('https://api.textbee.dev/api/v1/billing/current-subscription', {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      }),
+      fetch('https://api.textbee.dev/api/v1/gateway/stats', {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      }),
+    ]);
+
+    if (subRes.status !== 'fulfilled' || !subRes.value.ok) {
+      return null;
+    }
+
+    const subJson = (await subRes.value.json()) as Record<string, unknown>;
+    const plan = (subJson?.plan && typeof subJson.plan === 'object') ? (subJson.plan as Record<string, unknown>) : {};
+    const usage = (subJson?.usage && typeof subJson.usage === 'object') ? (subJson.usage as Record<string, unknown>) : {};
+
+    let statsData: Record<string, unknown> = {};
+    if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+      try {
+        const stJson = (await statsRes.value.json()) as Record<string, unknown>;
+        if (stJson?.data && typeof stJson.data === 'object') {
+          statsData = stJson.data as Record<string, unknown>;
+        }
+      } catch {}
+    }
+
+    const dailyLimit = Number(usage.dailyLimit ?? plan.dailyLimit ?? 50);
+    const monthlyLimit = Number(usage.monthlyLimit ?? plan.monthlyLimit ?? 300);
+    const dailyRemaining = Number(usage.dailyRemaining ?? dailyLimit);
+    const monthlyRemaining = Number(usage.monthlyRemaining ?? monthlyLimit);
+
+    return {
+      planName: String(plan.name || 'free').toUpperCase(),
+      isActive: subJson.isActive !== false,
+      paymentHold: Boolean(usage.paymentHold),
+      dailyLimit,
+      dailyRemaining,
+      processedSmsToday: Number(usage.processedSmsToday ?? Math.max(0, dailyLimit - dailyRemaining)),
+      dailyUsagePercentage: Number(usage.dailyUsagePercentage ?? 0),
+      monthlyLimit,
+      monthlyRemaining,
+      processedSmsLastMonth: Number(usage.processedSmsLastMonth ?? Math.max(0, monthlyLimit - monthlyRemaining)),
+      monthlyUsagePercentage: Number(usage.monthlyUsagePercentage ?? 0),
+      bulkSendLimit: Number(usage.bulkSendLimit ?? plan.bulkSendLimit ?? 50),
+      deviceLimit: Number(usage.deviceLimit ?? plan.deviceLimit ?? 1),
+      monthlyPeriodStart: usage.monthlyPeriodStart ? String(usage.monthlyPeriodStart) : null,
+      monthlyResetAt: usage.monthlyResetAt ? String(usage.monthlyResetAt) : null,
+      totalDeviceCount: typeof statsData.totalDeviceCount === 'number' ? statsData.totalDeviceCount : null,
+      totalSentAllTime: typeof statsData.totalSentSMSCount === 'number' ? statsData.totalSentSMSCount : null,
+      totalReceivedAllTime: typeof statsData.totalReceivedSMSCount === 'number' ? statsData.totalReceivedSMSCount : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function discoverTextBeeDevices(apiKey: string): Promise<{
+  ok: boolean;
+  devices: TextBeeDiscoveredDevice[];
+  quota: TextBeeQuotaStatus | null;
+  account?: { name?: string; email?: string } | null;
+  error?: string;
+}> {
+  const cleanKey = apiKey.trim();
+  if (!cleanKey) {
+    return { ok: false, devices: [], quota: null, error: 'TextBee API Key is required.' };
+  }
+
+  try {
+    const headers = { 'x-api-key': cleanKey };
+    const [devRes, quota, whoRes] = await Promise.all([
+      fetch('https://api.textbee.dev/api/v1/gateway/devices', {
+        headers,
+        signal: AbortSignal.timeout(7000),
+      }),
+      fetchTextBeeQuota(cleanKey),
+      fetch('https://api.textbee.dev/api/v1/auth/who-am-i', {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => null),
+    ]);
+
+    const rawText = await devRes.text();
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {}
+
+    if (!devRes.ok) {
+      return {
+        ok: false,
+        devices: [],
+        quota,
+        error: formatTextBeeError(devRes.status, parsed, rawText) || `TextBee API returned HTTP ${devRes.status}`,
+      };
+    }
+
+    const rawList = Array.isArray(parsed.data) ? parsed.data : [];
+    const devices: TextBeeDiscoveredDevice[] = rawList
+      .filter((d): d is Record<string, unknown> => Boolean(d && typeof d === 'object'))
+      .map((d) => {
+        const lastHeartbeat = d.lastHeartbeat ? String(d.lastHeartbeat) : null;
+        const ageMinutes = lastHeartbeat
+          ? Math.max(0, Math.round((Date.now() - new Date(lastHeartbeat).getTime()) / 60000))
+          : null;
+        const enabled = d.enabled !== false;
+        const battery = (d.batteryInfo && typeof d.batteryInfo === 'object') ? (d.batteryInfo as Record<string, unknown>) : {};
+        const network = (d.networkInfo && typeof d.networkInfo === 'object') ? (d.networkInfo as Record<string, unknown>) : {};
+
+        return {
+          id: String(d._id || d.id || ''),
+          name: String(d.name || `${d.brand || ''} ${d.model || ''}`.trim() || 'TextBee Android'),
+          brand: d.brand ? String(d.brand) : null,
+          model: d.model ? String(d.model) : null,
+          enabled,
+          isDefault: Boolean(d.isDefault),
+          osVersion: d.osVersion ? String(d.osVersion) : null,
+          appVersion: d.appVersionName ? String(d.appVersionName) : null,
+          lastHeartbeat,
+          heartbeatAgeMinutes: ageMinutes,
+          online: enabled && ageMinutes !== null && ageMinutes <= 35,
+          batteryPercentage: typeof battery.percentage === 'number' ? battery.percentage : null,
+          isCharging: typeof battery.isCharging === 'boolean' ? battery.isCharging : null,
+          networkType: network.networkType ? String(network.networkType) : null,
+          sentSMSCount: typeof d.sentSMSCount === 'number' ? d.sentSMSCount : null,
+          sims: parseSimList(d),
+        };
+      })
+      .filter((d) => Boolean(d.id));
+
+    let account: { name?: string; email?: string } | null = null;
+    if (whoRes && whoRes.ok) {
+      try {
+        const whoJson = (await whoRes.json()) as { data?: { name?: string; email?: string } };
+        if (whoJson?.data) {
+          account = { name: whoJson.data.name, email: whoJson.data.email };
+        }
+      } catch {}
+    }
+
+    return { ok: true, devices, quota, account };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      devices: [],
+      quota: null,
+      error: getErrMessage(err, 'Failed to connect to TextBee Cloud API'),
+    };
+  }
+}
+
 async function dispatchToTextBeeApi(params: {
   deviceId: string;
   apiKey: string;
   phone: string;
   message: string;
+  simSlot?: number;
   dryRun?: boolean;
 }) {
-  const { deviceId, apiKey, phone, message, dryRun } = params;
+  const { deviceId, apiKey, phone, message, simSlot = 0, dryRun } = params;
   const endpoint = buildTextBeeSendUrl(deviceId);
 
   if (dryRun) {
@@ -266,21 +564,26 @@ async function dispatchToTextBeeApi(params: {
   }
 
   try {
+    const payload: Record<string, unknown> = {
+      recipients: [phone],
+      message,
+    };
+    if (simSlot >= 1 && simSlot <= 2) {
+      payload.simSlotIndex = simSlot - 1;
+    }
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
       },
-      body: JSON.stringify({
-        recipients: [phone],
-        message,
-      }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
     });
 
     const rawText = await res.text();
-    let parsed: any = rawText;
+    let parsed: unknown = rawText;
     try {
       parsed = JSON.parse(rawText);
     } catch {}
@@ -296,26 +599,25 @@ async function dispatchToTextBeeApi(params: {
       };
     }
 
-    const errMsg = typeof parsed === 'object' && parsed !== null
-      ? (parsed.message || parsed.error || JSON.stringify(parsed))
-      : rawText;
+    const errMsg = formatTextBeeError(res.status, parsed, rawText);
 
     return {
       ok: false,
       transientFailure: res.status >= 500 || res.status === 429,
       httpStatus: res.status,
       responseBody: parsed,
-      notice: `TextBee HTTP ${res.status}: ${String(errMsg).slice(0, 200)}`,
-      error: String(errMsg).slice(0, 300),
+      notice: `TextBee HTTP ${res.status}: ${errMsg.slice(0, 220)}`,
+      error: errMsg.slice(0, 320),
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = getErrMessage(err, 'Gateway unreachable');
     return {
       ok: false,
       transientFailure: true,
       httpStatus: null,
       responseBody: null,
-      notice: `TextBee connection/timeout error: ${err?.message || 'Gateway unreachable'}`,
-      error: err?.message || 'Gateway unreachable',
+      notice: `TextBee connection/timeout error: ${msg}`,
+      error: msg,
     };
   }
 }
@@ -370,6 +672,7 @@ export async function sendFreeSms(params: SendSmsParams): Promise<SendSmsResult>
         phone: normalizedPhone.e164,
         branchId: resolved.normBranch,
         notice: `SMS Gateway is disabled for branch ${resolved.normBranch}.`,
+        error: `SMS Gateway is disabled for branch ${resolved.normBranch}.`,
       };
     }
 
@@ -414,6 +717,7 @@ export async function sendFreeSms(params: SendSmsParams): Promise<SendSmsResult>
       apiKey: resolved.targetApiKey,
       phone: normalizedPhone.e164,
       message,
+      simSlot: resolved.targetSimSlot,
       dryRun,
     });
 
@@ -427,7 +731,7 @@ export async function sendFreeSms(params: SendSmsParams): Promise<SendSmsResult>
       ? 'Master Global Gateway'
       : resolved.hasCustomDevice
       ? `Branch [${resolved.normBranch}] SIM`
-      : `Master Fallback (via ${resolved.normBranch})`;
+      : `Master Gateway (via ${resolved.normBranch})`;
 
     const fullNotice = dispatchRes.ok
       ? `SMS sent via ${scopeLabel}.`
@@ -477,14 +781,14 @@ export async function sendFreeSms(params: SendSmsParams): Promise<SendSmsResult>
       httpStatus: dispatchRes.httpStatus,
       usedBranchDevice: resolved.hasCustomDevice,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.warn('sendFreeSms exception:', err);
     return {
       success: false,
       status: 'FAILED',
       phone: normalizedPhone.e164 || phone,
       branchId: normalizeBranchId(branchId),
-      error: err?.message || 'Failed to dispatch SMS',
+      error: getErrMessage(err, 'Failed to dispatch SMS'),
     };
   }
 }
@@ -524,8 +828,8 @@ export async function retrySmsLogEntry(params: {
     return { success: false, status: 400, error: normalizedPhone.reason || 'Invalid phone number on log.' };
   }
 
-  const prevMeta = (logRow.gateway_response && typeof logRow.gateway_response === 'object')
-    ? logRow.gateway_response
+  const prevMeta: Record<string, unknown> = (logRow.gateway_response && typeof logRow.gateway_response === 'object')
+    ? (logRow.gateway_response as Record<string, unknown>)
     : { legacy_notice: typeof logRow.gateway_response === 'string' ? logRow.gateway_response : '' };
 
   const globalConfig = await getSmsGatewayConfig();
@@ -543,7 +847,8 @@ export async function retrySmsLogEntry(params: {
     deviceId: resolved.targetDeviceId,
     apiKey: resolved.targetApiKey,
     phone: normalizedPhone.e164,
-    message: logRow.message_text,
+    message: String(logRow.message_text || ''),
+    simSlot: resolved.targetSimSlot,
     dryRun,
   });
 
@@ -612,11 +917,13 @@ export async function checkTextBeeDeviceHealth(
       status: 'NOT_CONFIGURED',
       branchId: resolved.normBranch,
       usedBranchDevice: resolved.hasCustomDevice,
+      quota: null,
       error: 'Device ID or API Key is not configured.',
     };
   }
 
   if (!resolved.targetEnabled) {
+    const quota = await fetchTextBeeQuota(resolved.targetApiKey);
     return {
       configured: true,
       enabled: false,
@@ -625,18 +932,22 @@ export async function checkTextBeeDeviceHealth(
       branchId: resolved.normBranch,
       usedBranchDevice: resolved.hasCustomDevice,
       deviceIdTail: resolved.targetDeviceId.slice(-4),
-      error: 'Gateway is disabled for this branch.',
+      quota,
+      error: 'Gateway is paused/disabled in system settings.',
     };
   }
 
   try {
-    const res = await fetch(
-      `https://api.textbee.dev/api/v1/gateway/devices/${encodeURIComponent(resolved.targetDeviceId)}`,
-      {
-        headers: { 'x-api-key': resolved.targetApiKey },
-        signal: AbortSignal.timeout(6000),
-      }
-    );
+    const [res, quota] = await Promise.all([
+      fetch(
+        `https://api.textbee.dev/api/v1/gateway/devices/${encodeURIComponent(resolved.targetDeviceId)}`,
+        {
+          headers: { 'x-api-key': resolved.targetApiKey },
+          signal: AbortSignal.timeout(6000),
+        }
+      ),
+      fetchTextBeeQuota(resolved.targetApiKey),
+    ]);
 
     if (!res.ok) {
       return {
@@ -647,27 +958,38 @@ export async function checkTextBeeDeviceHealth(
         branchId: resolved.normBranch,
         usedBranchDevice: resolved.hasCustomDevice,
         deviceIdTail: resolved.targetDeviceId.slice(-4),
+        quota,
         error: `TextBee API returned HTTP ${res.status}`,
       };
     }
 
-    const json = await res.json();
-    const d = json?.data || json || {};
-    const lastHeartbeat = d.lastHeartbeat || null;
+    const json = (await res.json()) as Record<string, unknown>;
+    const d = (json?.data && typeof json.data === 'object')
+      ? (json.data as Record<string, unknown>)
+      : (json || {});
+
+    const lastHeartbeat = d.lastHeartbeat ? String(d.lastHeartbeat) : null;
     const heartbeatAgeMinutes = lastHeartbeat
       ? Math.max(0, Math.round((Date.now() - new Date(lastHeartbeat).getTime()) / 60000))
       : null;
 
     const deviceEnabled = d.enabled !== false;
-    const isFresh = heartbeatAgeMinutes !== null && heartbeatAgeMinutes <= 30;
+    const heartbeatIntervalMin = Number(d.heartbeatIntervalMinutes) || 30;
+    // Allow 2 heartbeat cycles + 5m grace so active devices aren't flagged STALE on normal jitter
+    const staleThresholdMin = Math.max(45, heartbeatIntervalMin * 2 + 5);
+    const isFresh = heartbeatAgeMinutes !== null && heartbeatAgeMinutes <= staleThresholdMin;
     const online = deviceEnabled && isFresh;
 
-    const simsRaw = Array.isArray(d.simInfo?.sims) ? d.simInfo.sims : [];
-    const sims = simsRaw.map((s: any, idx: number) => ({
-      slot: typeof s.simSlotIndex === 'number' ? s.simSlotIndex + 1 : idx + 1,
-      carrier: String(s.carrierName || s.displayName || 'SIM'),
-      displayName: String(s.displayName || s.carrierName || `SIM ${idx + 1}`),
-    }));
+    const batteryInfo = (d.batteryInfo && typeof d.batteryInfo === 'object') ? (d.batteryInfo as Record<string, unknown>) : {};
+    const networkInfo = (d.networkInfo && typeof d.networkInfo === 'object') ? (d.networkInfo as Record<string, unknown>) : {};
+    const powerInfo = (d.powerInfo && typeof d.powerInfo === 'object') ? (d.powerInfo as Record<string, unknown>) : {};
+    const appState = (d.appStateInfo && typeof d.appStateInfo === 'object') ? (d.appStateInfo as Record<string, unknown>) : {};
+
+    const sims = parseSimList(d);
+    const permissionsOk = (
+      appState.hasSendSmsPermission !== false &&
+      appState.hasPostNotificationsPermission !== false
+    );
 
     return {
       configured: true,
@@ -677,20 +999,28 @@ export async function checkTextBeeDeviceHealth(
       branchId: resolved.normBranch,
       usedBranchDevice: resolved.hasCustomDevice,
       deviceIdTail: resolved.targetDeviceId.slice(-4),
-      brand: d.brand || null,
-      model: d.model || null,
-      osVersion: d.osVersion || null,
-      appVersion: d.appVersionName || null,
+      deviceName: d.name ? String(d.name) : null,
+      brand: d.brand ? String(d.brand) : null,
+      model: d.model ? String(d.model) : null,
+      osVersion: d.osVersion ? String(d.osVersion) : null,
+      appVersion: d.appVersionName ? String(d.appVersionName) : null,
       lastHeartbeat,
       heartbeatAgeMinutes,
-      batteryPercentage: typeof d.batteryInfo?.percentage === 'number' ? d.batteryInfo.percentage : null,
-      isCharging: typeof d.batteryInfo?.isCharging === 'boolean' ? d.batteryInfo.isCharging : null,
-      networkType: d.networkInfo?.networkType || null,
+      batteryPercentage: typeof batteryInfo.percentage === 'number' ? batteryInfo.percentage : null,
+      isCharging: typeof batteryInfo.isCharging === 'boolean' ? batteryInfo.isCharging : null,
+      networkType: networkInfo.networkType ? String(networkInfo.networkType) : null,
       sentSMSCount: typeof d.sentSMSCount === 'number' ? d.sentSMSCount : null,
+      receivedSMSCount: typeof d.receivedSMSCount === 'number' ? d.receivedSMSCount : null,
+      receiveSMSEnabled: typeof d.receiveSMSEnabled === 'boolean' ? d.receiveSMSEnabled : null,
+      batteryOptimizationIgnored: typeof powerInfo.isIgnoringBatteryOptimizations === 'boolean'
+        ? powerInfo.isIgnoringBatteryOptimizations
+        : null,
+      permissionsOk,
       sims,
+      quota,
       error: null,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       configured: true,
       enabled: true,
@@ -699,45 +1029,59 @@ export async function checkTextBeeDeviceHealth(
       branchId: resolved.normBranch,
       usedBranchDevice: resolved.hasCustomDevice,
       deviceIdTail: resolved.targetDeviceId.slice(-4),
-      error: err?.message || 'Failed to reach TextBee Cloud API',
+      quota: null,
+      error: getErrMessage(err, 'Failed to reach TextBee Cloud API'),
     };
   }
 }
 
-export function formatSmsLogRow(row: any) {
+export function formatSmsLogRow(row: Record<string, unknown>): FormattedSmsLogRow {
   const rawMeta = row?.gateway_response;
-  const meta = (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)) ? rawMeta : {};
+  const meta: Record<string, unknown> = (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta))
+    ? (rawMeta as Record<string, unknown>)
+    : {};
   const legacyString = typeof rawMeta === 'string' ? rawMeta : '';
 
-  const phone = row?.recipient_phone || row?.phone || '';
-  const message = row?.message_text || row?.message || '';
-  const notice = meta.notice || meta.legacy_notice || legacyString || (row?.status === 'SENT' ? 'Dispatched via TextBee' : 'Pending / Queued');
+  const phone = String(row?.recipient_phone || row?.phone || '');
+  const message = String(row?.message_text || row?.message || '');
+  const status = String(row?.status || 'QUEUED');
+  const notice = String(
+    meta.notice || meta.legacy_notice || legacyString || (status === 'SENT' ? 'Dispatched via TextBee' : 'Pending / Queued')
+  );
 
   return {
-    id: row?.id,
-    branch_id: row?.branch_id || 'HQ',
+    id: row?.id ? String(row.id) : undefined,
+    branch_id: String(row?.branch_id || 'HQ'),
     phone,
     recipient_phone: phone,
     message,
     message_text: message,
-    ticket_no: row?.ticket_no || meta.ticket_no || null,
-    amount: row?.amount ?? meta.amount ?? null,
-    type: row?.type || meta.type || 'RECEIPT',
-    status: row?.status || 'QUEUED',
+    ticket_no: row?.ticket_no ? String(row.ticket_no) : (meta.ticket_no ? String(meta.ticket_no) : null),
+    amount: row?.amount !== undefined && row?.amount !== null
+      ? Number(row.amount)
+      : (meta.amount !== undefined && meta.amount !== null ? Number(meta.amount) : null),
+    type: String(row?.type || meta.type || 'RECEIPT'),
+    status,
     notice,
     dispatch_notice: notice,
-    error: meta.error || null,
-    http_status: meta.http_status ?? null,
+    error: meta.error ? String(meta.error) : null,
+    http_status: typeof meta.http_status === 'number' ? meta.http_status : null,
     attempts: Number(meta.attempts) || 1,
-    sim_slot: meta.sim_slot ?? null,
+    sim_slot: typeof meta.sim_slot === 'number' ? meta.sim_slot : null,
     used_branch_device: Boolean(meta.used_branch_device),
-    device_id_tail: meta.device_id_tail || null,
-    retried_at: meta.retried_at || null,
-    created_at: row?.created_at,
+    device_id_tail: meta.device_id_tail ? String(meta.device_id_tail) : null,
+    retried_at: meta.retried_at ? String(meta.retried_at) : null,
+    created_at: row?.created_at ? String(row.created_at) : undefined,
   };
 }
 
-export async function resolvePawnCustomerContact(pawn: any): Promise<{ phone: string; name: string }> {
+export async function resolvePawnCustomerContact(pawn: {
+  phone?: string | null;
+  client_phone?: string | null;
+  client_name?: string | null;
+  customer_name?: string | null;
+  client_id?: string | null;
+}): Promise<{ phone: string; name: string }> {
   let phone = String(pawn?.phone || pawn?.client_phone || '').trim();
   let name = String(pawn?.client_name || pawn?.customer_name || '').trim();
 

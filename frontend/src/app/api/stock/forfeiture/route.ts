@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
-import { sendFreeSms, buildForfeitureWarningSms, getSmsGatewayConfig } from '@/lib/sms';
-import { getBranchSearchTerms, normalizeBranchId, extractNumericBillNo, stripBranchPrefix, isSameNumericBill } from '@/lib/branch-mapping';
+import { sendFreeSms, buildForfeitureWarningSms, getSmsGatewayConfig, normalizeSriLankaPhone, renderSmsTemplate } from '@/lib/sms';
+import { getBranchName, getBranchSearchTerms, normalizeBranchId, extractNumericBillNo, stripBranchPrefix, isSameNumericBill } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -43,15 +43,12 @@ function extractBillTag(billNo?: string): string {
 }
 
 function isValidPhone(p?: string | null): boolean {
-  if (!p) return false;
-  const digits = String(p).replace(/\D/g, '');
-  if (!digits || digits.length < 9) return false;
-  if (/^0+$/.test(digits)) return false;
-  if (digits === '07' || digits === '077' || digits === '071') return false;
-  return true;
+  return normalizeSriLankaPhone(p).valid;
 }
 
 function cleanPhoneDisplay(p?: string | null): string {
+  const norm = normalizeSriLankaPhone(p);
+  if (norm.valid && norm.localDisplay) return norm.localDisplay;
   if (!p) return '';
   const digits = String(p).replace(/\D/g, '');
   if (digits.length === 9) return '0' + digits;
@@ -197,11 +194,21 @@ export async function GET(request: Request) {
       }
     });
 
-    // 4. Fetch Clients & Stock Customers for phone/contact resolution
+    // 4. Fetch Clients & Stock Customers for phone/contact resolution (only SENT logs mark items as notified)
+    let smsLogsQuery = adminSupabase
+      .from('sms_logs')
+      .select('recipient_phone, message_text, status, created_at, branch_id')
+      .eq('status', 'SENT')
+      .order('created_at', { ascending: false })
+      .limit(300);
+    if (branchParam !== 'ALL' && branchParam.trim() !== '') {
+      smsLogsQuery = smsLogsQuery.in('branch_id', getBranchSearchTerms(branchParam));
+    }
+
     const [clientsRes, scRes, smsLogsRes] = await Promise.all([
       adminSupabase.from('clients').select('id, national_id, first_name, last_name, phone, address, branch_id'),
       adminSupabase.from('stock_customers').select('name, nic, tp, address, bill_numbers, branch_id'),
-      adminSupabase.from('sms_logs').select('recipient_phone, message_text, status, created_at').order('created_at', { ascending: false }).limit(200)
+      smsLogsQuery
     ]);
 
     const clientsMap: Record<string, any> = {};
@@ -491,6 +498,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'A valid customer mobile phone number is required to send SMS.' }, { status: 400 });
       }
 
+      const branchLabel = getBranchName(branchId || session.branchId || 'HQ');
       const smsConfig = await getSmsGatewayConfig();
       const message = (customMessage && typeof customMessage === 'string' && customMessage.trim() !== '')
         ? customMessage.trim()
@@ -500,7 +508,7 @@ export async function POST(request: Request) {
             principal: parseFloat(principal) || 0,
             interestDue: parseFloat(interestDue) || 0,
             expiryDate: expiryDate || 'N/A',
-            branchName: branchId || 'Rupasingha Capital',
+            branchName: branchLabel,
             originationDate,
             periodMonths: parseInt(periodMonths, 10) || 3,
             interestPaid: parseFloat(interestPaid) || 0,
@@ -522,6 +530,7 @@ export async function POST(request: Request) {
       await recordAuditLog(session, {
         action: 'FORFEITURE_SMS_WARNING',
         resource: `bill:${billNo || itemId}`,
+        status: smsRes.success ? 'SUCCESS' : smsRes.status === 'QUEUED' ? 'WARNING' : 'FAILED',
         details: {
           itemId,
           billNo,
@@ -531,13 +540,18 @@ export async function POST(request: Request) {
           interestDue,
           smsStatus: smsRes.status,
           notice: smsRes.notice,
+          error: smsRes.error,
           isCustom: Boolean(customMessage)
         }
       });
 
       return NextResponse.json({
-        success: true,
-        message: 'Forfeiture warning SMS sent successfully.',
+        success: smsRes.success,
+        status: smsRes.status,
+        message: smsRes.success
+          ? 'Forfeiture warning SMS sent successfully.'
+          : (smsRes.error || smsRes.notice || 'Failed to dispatch SMS warning.'),
+        error: smsRes.success ? undefined : (smsRes.error || smsRes.notice || 'SMS dispatch failed.'),
         smsResult: smsRes
       });
     }
@@ -550,9 +564,10 @@ export async function POST(request: Request) {
       }
 
       let sentCount = 0;
+      let queuedCount = 0;
       let failedCount = 0;
       let skippedNoPhone = 0;
-      const results: any[] = [];
+      const results: Array<{ billNo: string; phone: string; status: string; error?: string }> = [];
       const smsConfig = await getSmsGatewayConfig();
 
       for (const it of items) {
@@ -562,17 +577,26 @@ export async function POST(request: Request) {
         }
 
         try {
+          const branchLabel = getBranchName(it.branchId || session.branchId || 'HQ');
           let message = '';
           if (customTemplate && typeof customTemplate === 'string' && customTemplate.trim() !== '') {
-            message = customTemplate
-              .replace(/\{customer_name\}/gi, it.customerName || 'Valued Customer')
-              .replace(/\{bill_no\}/gi, it.billNo || 'N/A')
-              .replace(/\{branch\}/gi, it.branchId || 'Branch')
-              .replace(/\{principal\}/gi, parseFloat(it.principal || 0).toLocaleString())
-              .replace(/\{interest_due\}/gi, parseFloat(it.interestDue || 0).toLocaleString())
-              .replace(/\{expiry_date\}/gi, it.expiryDate || 'N/A')
-              .replace(/\{origination_date\}/gi, it.originationDate || 'N/A')
-              .replace(/\{interest_paid\}/gi, parseFloat(it.interestPaid || 0).toLocaleString());
+            message = renderSmsTemplate(
+              'FORFEITURE',
+              {
+                customer_name: it.customerName || 'Valued Customer',
+                ticket_no: it.billNo || 'N/A',
+                bill_no: it.billNo || 'N/A',
+                branch_name: branchLabel,
+                branch_tag: branchLabel ? ` [${branchLabel}]` : '',
+                branch: branchLabel,
+                principal: parseFloat(it.principal || 0).toLocaleString(),
+                interest_due: parseFloat(it.interestDue || 0).toLocaleString(),
+                expiry_date: it.expiryDate || 'N/A',
+                origination_date: it.originationDate || 'N/A',
+                interest_paid: parseFloat(it.interestPaid || 0).toLocaleString(),
+              },
+              customTemplate
+            );
           } else {
             message = buildForfeitureWarningSms({
               customerName: it.customerName || 'Valued Customer',
@@ -580,7 +604,7 @@ export async function POST(request: Request) {
               principal: parseFloat(it.principal) || 0,
               interestDue: parseFloat(it.interestDue) || 0,
               expiryDate: it.expiryDate || 'N/A',
-              branchName: it.branchId || 'Rupasingha Capital',
+              branchName: branchLabel,
               originationDate: it.originationDate,
               periodMonths: parseInt(it.periodMonths, 10) || 3,
               interestPaid: parseFloat(it.interestPaid) || 0,
@@ -601,14 +625,16 @@ export async function POST(request: Request) {
           });
 
           if (smsRes.success) sentCount++;
+          else if (smsRes.status === 'QUEUED') queuedCount++;
           else failedCount++;
 
           results.push({
             billNo: it.billNo,
-            phone: it.phone,
-            status: smsRes.status
+            phone: smsRes.phone || it.phone,
+            status: smsRes.status,
+            error: smsRes.error,
           });
-        } catch (smsErr) {
+        } catch {
           failedCount++;
         }
       }
@@ -616,21 +642,26 @@ export async function POST(request: Request) {
       await recordAuditLog(session, {
         action: 'FORFEITURE_BULK_SMS',
         resource: 'forfeiture:bulk_sms',
+        status: sentCount > 0 ? 'SUCCESS' : queuedCount > 0 ? 'WARNING' : 'FAILED',
         details: {
           totalSelected: items.length,
           sentCount,
+          queuedCount,
           failedCount,
           skippedNoPhone,
           hasCustomTemplate: Boolean(customTemplate)
         }
       });
 
+      const anyAccepted = sentCount > 0 || queuedCount > 0;
       return NextResponse.json({
-        success: true,
+        success: anyAccepted,
         sentCount,
+        queuedCount,
         failedCount,
         skippedNoPhone,
         totalProcessed: items.length,
+        error: anyAccepted ? undefined : (results.find((r) => r.error)?.error || 'All SMS dispatches failed or gateway is disabled.'),
         results
       });
     }

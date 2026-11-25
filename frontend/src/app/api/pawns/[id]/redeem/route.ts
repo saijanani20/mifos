@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser, adminSupabase } from '@/lib/auth-server';
 import { recordAuditLog } from '@/lib/audit-logger';
-import { sendFreeSms, buildPawnRedeemSms, getSmsGatewayConfig } from '@/lib/sms';
-import { normalizeBranchId, stripBranchPrefix, getBranchSearchTerms } from '@/lib/branch-mapping';
+import { sendFreeSms, buildPawnRedeemSms, getSmsGatewayConfig, SendSmsResult } from '@/lib/sms';
+import { normalizeBranchId, getBranchName, stripBranchPrefix, getBranchSearchTerms } from '@/lib/branch-mapping';
 import { invalidateBranchInventoryCache } from '@/lib/redis';
 import { getSriLankaDate } from '@/lib/date-utils';
 
@@ -273,6 +273,7 @@ export async function POST(
     });
 
     // 7. Send Free Redemption SMS Receipt via Android Gateway
+    let smsResult: SendSmsResult | null = null;
     try {
       let clientPhone = pawn.phone;
       let clientName = pawn.client_name || pawn.customer_name;
@@ -295,10 +296,10 @@ export async function POST(
           ticketNo: ticketDisplay,
           settlementAmount: settlement,
           principalAmount: principal,
-          branchName: normalizeBranchId(pawn.branch_id || ''),
+          branchName: getBranchName(pawn.branch_id || ''),
           customTemplate: smsConfig.templates?.REDEEM,
         });
-        await sendFreeSms({
+        smsResult = await sendFreeSms({
           phone: clientPhone,
           message: redeemMsg,
           ticketNo: ticketDisplay,
@@ -318,7 +319,8 @@ export async function POST(
       journalEntryId: jeId,
       settlementAmount: settlement,
       principalAmount: principal,
-      interestAmount: interest
+      interestAmount: interest,
+      sms: smsResult ? { status: smsResult.status, success: smsResult.success, notice: smsResult.notice, error: smsResult.error } : null,
     });
   } catch (error: any) {
     console.error('Pawns Redeem API Error:', error);
