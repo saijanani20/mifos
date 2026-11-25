@@ -1276,16 +1276,11 @@ Please settle immediately to avoid collateral forfeiture/auction.
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All Branches</SelectItem>
-                <SelectItem value="KDW">Kaduwela (KDW)</SelectItem>
-                <SelectItem value="KHT">Kiribathgoda (KHT)</SelectItem>
-                <SelectItem value="PND">Panadura (PND)</SelectItem>
-                <SelectItem value="KTW">Kotikawatta (KTW)</SelectItem>
-                <SelectItem value="HMG">Homagama (HMG)</SelectItem>
-                <SelectItem value="DMT">Dematagoda (DMT)</SelectItem>
-                <SelectItem value="W3">Wattala 3 (W3)</SelectItem>
-                <SelectItem value="W4">Wattala 4 (W4)</SelectItem>
-                <SelectItem value="BOR">Boralesgamuwa</SelectItem>
-                <SelectItem value="HQ">Head Office (HQ)</SelectItem>
+                {CANONICAL_BRANCHES.filter((b) => b.id !== 'TEST').map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name} ({b.id})
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
